@@ -60,6 +60,8 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     graph.onBackgroundClick = [this] { select ({}); grabKeyboardFocus(); };
     addAndMakeVisible (viewport);
     addAndMakeVisible (inspector);
+    addChildComponent (ioPanel);
+    ioPanel.onResetOvers = [this] { levels.inOvers = levels.outOvers = 0; };
     addAndMakeVisible (library);
     addAndMakeVisible (divider);
     statusLabel.setFont (mono (11.0f));
@@ -204,6 +206,7 @@ void RigsmithEditor::resized()
     if (libraryVisible) library.setBounds (r.removeFromRight (300));
     const int ih = juce::jlimit (220, juce::jmax (220, r.getHeight() - 160), inspectorHeight);
     inspector.setBounds (r.removeFromBottom (ih));
+    ioPanel.setBounds (inspector.getBounds());
     divider.setBounds (r.removeFromBottom (8));
     viewport.setBounds (r);
     statusLabel.setBounds (r.getX() + 12, r.getBottom() - 46, 260, 34);
@@ -229,9 +232,25 @@ void RigsmithEditor::updateTuner()
 void RigsmithEditor::timerCallback()
 {
     ++tick;
-    inMeter = juce::jmax (engine.inPeak.exchange (0.0f), inMeter * 0.86f);
-    outMeter = juce::jmax (engine.outPeak.exchange (0.0f), outMeter * 0.86f);
-    graph.setMeters (inMeter, outMeter);
+    {
+        auto fall = [] (float& v, std::atomic<float>& src) { v = juce::jmax (src.exchange (0.0f), v * 0.86f); };
+        auto ease = [] (float& v, std::atomic<float>& src) { const float x = src.load(); v += (x - v) * (x > v ? 0.5f : 0.15f); };
+        fall (levels.inPeakL, engine.inMeter.peakL);   fall (levels.inPeakR, engine.inMeter.peakR);
+        fall (levels.outPeakL, engine.outMeter.peakL); fall (levels.outPeakR, engine.outMeter.peakR);
+        ease (levels.inRmsL, engine.inMeter.rmsL);     ease (levels.inRmsR, engine.inMeter.rmsR);
+        ease (levels.outRmsL, engine.outMeter.rmsL);   ease (levels.outRmsR, engine.outMeter.rmsR);
+        levels.inOvers += engine.inMeter.overs.exchange (0);
+        levels.outOvers += engine.outMeter.overs.exchange (0);
+        const float gr = engine.limiterGrDb.exchange (0.0f);
+        levels.grDb = gr < levels.grDb ? gr : levels.grDb * 0.8f;
+        engine.inPeak = 0; engine.outPeak = 0;
+
+        GraphView::Levels gl;
+        gl.inL = levels.inPeakL; gl.inR = levels.inPeakR; gl.outL = levels.outPeakL; gl.outR = levels.outPeakR;
+        gl.grDb = levels.grDb;
+        graph.setMeters (gl);
+        if (ioPanel.isVisible()) ioPanel.setLevels (levels);
+    }
 
     if (engine.tunerActive.load() && tick % 2 == 0)
     {
@@ -272,7 +291,8 @@ void RigsmithEditor::handleAsyncUpdate()
     graph.fitTo (viewport.getLocalBounds().withTrimmedBottom (viewport.getScrollBarThickness()));
     viewport.setViewPosition (viewPos);
     auto* n = engine.findNode (selectedId);
-    if (n == nullptr) selectedId.clear();
+    if (n == nullptr && ! isIoSelected()) selectedId.clear();
+    showPanelFor (selectedId);
     if (inspector.getNode() != n) inspector.setNode (n);
     else if (dynamic_cast<Split*> (n) != nullptr) inspector.setNode (n);  // path count may have changed
 }
@@ -293,11 +313,21 @@ void RigsmithEditor::nodeWillBeDeleted (Node& n)
 }
 
 //==============================================================================
+void RigsmithEditor::showPanelFor (const juce::String& id)
+{
+    const bool io = id == kInputId || id == kOutputId;
+    if (io) ioPanel.setOutput (id == kOutputId);
+    ioPanel.setVisible (io);
+    inspector.setVisible (! io);
+}
+
 void RigsmithEditor::select (const juce::String& id)
 {
+    showPanelFor (id);
     if (selectedId == id) return;
     selectedId = id;
     inspector.setNode (engine.findNode (id));
+    graph.repaint();
     graph.repaint();
 }
 
@@ -437,7 +467,7 @@ static const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtI
         { "Modulation",     { NodeType::Chorus, NodeType::Flanger, NodeType::Phaser, NodeType::Tremolo, NodeType::Vibe, NodeType::Rotary } },
         { "Delay & Reverb", { NodeType::Delay, NodeType::Reverb } },
         { "Pitch",          { NodeType::Pitch } },
-        { "Utility",        { NodeType::Gain } } };
+        { "Utility",        { NodeType::Tuner, NodeType::Gain } } };
     return groups;
 }
 
@@ -467,6 +497,7 @@ static juce::String builtInMenuName (NodeType t)
         case NodeType::Reverb:    return "Reverb (room / hall / plate / spring / shimmer)";
         case NodeType::Pitch:     return "Pitch / Octave / Doubler";
         case NodeType::Gain:      return "Volume / Pan";
+        case NodeType::Tuner:     return "Tuner (strobe + needle)";
         default:                  return "Block";
     }
 }
@@ -646,7 +677,6 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
     m.addItem (8, "MIDI learn: bypass footswitch");
     m.addSeparator();
     m.addItem (40, "Randomise settings  (R)");
-    m.addItem (41, "Mutate settings (subtle)");
     if (split == nullptr)
     {
         m.addItem (42, "Random " + categoryName (Randomiser::categoryOf (node)) + " block  (Shift+R)");
@@ -708,7 +738,6 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
             case 9: engine.remove (id); break;
             case 30: n->autoGain = ! n->autoGain.load(); if (n->autoGain.load()) n->requestRelearn(); engine.markDirty(); break;
             case 40: randomise (*n, RandomSettings); break;
-            case 41: randomise (*n, RandomMutate); break;
             case 42: randomise (*n, RandomType); break;
             case 43: toggleLock (*n); break;
             case 44: showBlockPresetMenu (*n, &inspector); break;
@@ -1163,7 +1192,6 @@ void RigsmithEditor::showRigRandomMenu()
     m.addItem (1, "New random rig  (Ctrl+Shift+R)");
     m.addItem (2, "New blocks, same layout");
     m.addItem (3, "Randomise every block's settings");
-    m.addItem (4, "Mutate every block's settings (subtle)");
     m.addSeparator();
     m.addItem (10, "Use VST plug-ins too", true, randomiser.options.usePlugins);
     m.addItem (11, "Allow dual-amp splits", true, randomiser.options.allowSplits);
@@ -1176,7 +1204,6 @@ void RigsmithEditor::showRigRandomMenu()
             case 1: randomiseRig(); break;
             case 2: randomiser.reshuffleBlocks(); showMessage ("New blocks in the same layout - Ctrl+Z to go back"); break;
             case 3: randomiser.randomiseAllSettings (1.0f); showMessage ("Randomised every block's settings"); break;
-            case 4: randomiser.randomiseAllSettings (0.25f); showMessage ("Mutated every block's settings"); break;
             case 10: randomiser.options.usePlugins = ! randomiser.options.usePlugins; engine.setSetting ("randomUsePlugins", randomiser.options.usePlugins); break;
             case 11: randomiser.options.allowSplits = ! randomiser.options.allowSplits; engine.setSetting ("randomSplits", randomiser.options.allowSplits); break;
             default: break;
@@ -1219,13 +1246,12 @@ void RigsmithEditor::showRandomMenu (Node& n, juce::Component* anchor)
     const auto id = n.id;
     juce::PopupMenu m;
     m.addItem (1, "Randomise settings  (R)");
-    m.addItem (2, "Mutate settings (subtle)");
     if (dynamic_cast<Block*> (&n) != nullptr)
         m.addItem (3, "Random " + categoryName (Randomiser::categoryOf (n)) + " block  (Shift+R)");
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor), [this, id] (int r)
     {
         if (auto* node = engine.findNode (id); node != nullptr && r > 0)
-            randomise (*node, r == 1 ? RandomSettings : (r == 2 ? RandomMutate : RandomType));
+            randomise (*node, r == 1 ? RandomSettings : RandomType);
     });
 }
 

@@ -154,11 +154,9 @@ void Engine::prepare (double sr, int block)
         root->prepare (sampleRate, blockSize);
     }
     tuner.prepare (sr);
-    limiter.prepare ({ sr, (juce::uint32) blockSize, 2 });
-    limiter.setThreshold (-0.3f);
-    limiter.setRelease (60.0f);
-    inGain.reset (sr, 0.02);
-    outGain.reset (sr, 0.02);
+    for (auto* v : { &inGain, &outGain, &inPanL, &inPanR, &outPanL, &outPanR, &outWidth })
+        v->reset (sr, 0.02);
+    limGain = 1.0f;
     reportedLatency = -1;
 }
 
@@ -195,15 +193,22 @@ void Engine::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) 
         default: break;
     }
 
-    inGain.setTargetValue (dbToGain (inputGainDb.load()));
-    float peak = 0;
-    for (int i = 0; i < total; ++i)
+    // --- input stage: gain, balance, polarity
     {
-        const float g = inGain.getNextValue();
-        L[i] *= g; R[i] *= g;
-        peak = juce::jmax (peak, std::abs (L[i]), std::abs (R[i]));
+        const float g = dbToGain (inputGainDb.load()) * (inputPhase.load() ? -1.0f : 1.0f);
+        const float p = inputPan.load();
+        inGain.setTargetValue (g);
+        inPanL.setTargetValue (juce::jmin (1.0f, 1.0f - p));
+        inPanR.setTargetValue (juce::jmin (1.0f, 1.0f + p));
+        for (int i = 0; i < total; ++i)
+        {
+            const float gi = inGain.getNextValue();
+            L[i] *= gi * inPanL.getNextValue();
+            R[i] *= gi * inPanR.getNextValue();
+        }
     }
-    inPeak.store (juce::jmax (inPeak.load(), peak));
+    inMeter.write (L, R, total, 0.999f);
+    inPeak.store (juce::jmax (inPeak.load(), inMeter.peakL.load(), inMeter.peakR.load()));
     if (tunerActive.load())
         tuner.push (L, total);
 
@@ -223,26 +228,69 @@ void Engine::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) 
     if (tunerMute.load() && tunerActive.load())
         buffer.clear (0, 0, total), buffer.clear (1, 0, total);
 
-    outGain.setTargetValue (dbToGain (outputGainDb.load()));
-    for (int i = 0; i < total; ++i)
+    // --- output stage: width, balance, master
     {
-        const float g = outGain.getNextValue();
-        L[i] *= g; R[i] *= g;
-    }
-
-    if (limiterOn.load())
-    {
-        for (int off = 0; off < total; off += blockSize)
+        const float p = outputPan.load();
+        outGain.setTargetValue (dbToGain (outputGainDb.load()));
+        outPanL.setTargetValue (juce::jmin (1.0f, 1.0f - p));
+        outPanR.setTargetValue (juce::jmin (1.0f, 1.0f + p));
+        outWidth.setTargetValue (outputWidth.load() * 0.01f);
+        for (int i = 0; i < total; ++i)
         {
-            const int len = juce::jmin (blockSize, total - off);
-            float* ptrs[2] = { L + off, R + off };
-            juce::dsp::AudioBlock<float> blk (ptrs, 2, (size_t) len);
-            limiter.process (juce::dsp::ProcessContextReplacing<float> (blk));
+            const float w = outWidth.getNextValue();
+            const float mid = 0.5f * (L[i] + R[i]), side = 0.5f * (L[i] - R[i]) * w;
+            const float g = outGain.getNextValue();
+            L[i] = (mid + side) * g * outPanL.getNextValue();
+            R[i] = (mid - side) * g * outPanR.getNextValue();
         }
     }
 
-    peak = juce::jmax (buffer.getMagnitude (0, 0, total), buffer.getMagnitude (1, 0, total));
-    outPeak.store (juce::jmax (outPeak.load(), peak));
+    // --- brickwall limiter: instant attack (nothing gets past the ceiling), smooth release, no latency
+    const float ceiling = dbToGain (juce::jlimit (-24.0f, 0.0f, limiterCeilingDb.load()));
+    if (limiterOn.load())
+    {
+        const float rel = 1.0f - std::exp (-1.0f / (juce::jmax (1.0f, limiterReleaseMs.load()) * 0.001f * (float) sampleRate));
+        float minGain = 1.0f;
+        int overs = 0;
+        for (int i = 0; i < total; ++i)
+        {
+            const float pk = juce::jmax (std::abs (L[i]), std::abs (R[i]));
+            const float target = pk > ceiling ? ceiling / pk : 1.0f;
+            if (pk > ceiling) ++overs;
+            limGain = target < limGain ? target : limGain + (target - limGain) * rel;
+            L[i] = juce::jlimit (-ceiling, ceiling, L[i] * limGain);
+            R[i] = juce::jlimit (-ceiling, ceiling, R[i] * limGain);
+            minGain = juce::jmin (minGain, limGain);
+        }
+        limiterGrDb.store (juce::jmin (limiterGrDb.load(), gainToDb (minGain)));
+        outMeter.overs.fetch_add (overs);
+        outMeter.write (L, R, total, 2.0f);
+    }
+    else
+    {
+        limGain = 1.0f;
+        outMeter.write (L, R, total, 0.999f);
+    }
+    outPeak.store (juce::jmax (outPeak.load(), outMeter.peakL.load(), outMeter.peakR.load()));
+}
+
+void Engine::Meter::write (const float* l, const float* r, int n, float clipAt) noexcept
+{
+    float pl = 0, pr = 0;
+    double sl = 0, sr = 0;
+    int o = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const float a = std::abs (l[i]), b = std::abs (r[i]);
+        pl = juce::jmax (pl, a); pr = juce::jmax (pr, b);
+        sl += (double) a * a; sr += (double) b * b;
+        if (a >= clipAt || b >= clipAt) ++o;
+    }
+    peakL.store (juce::jmax (peakL.load(), pl));
+    peakR.store (juce::jmax (peakR.load(), pr));
+    rmsL.store ((float) std::sqrt (sl / juce::jmax (1, n)));
+    rmsR.store ((float) std::sqrt (sr / juce::jmax (1, n)));
+    if (o > 0) overs.fetch_add (o);
 }
 
 //==============================================================================
@@ -513,6 +561,7 @@ std::unique_ptr<Node> Engine::createNode (NodeType type) const
         case NodeType::Delay:     return std::make_unique<DelayBlock>();
         case NodeType::Reverb:    return std::make_unique<ReverbBlock>();
         case NodeType::Pitch:     return std::make_unique<PitchBlock>();
+        case NodeType::Tuner:     return std::make_unique<TunerBlock>();
         case NodeType::Plugin: break;
     }
     return nullptr;
@@ -988,6 +1037,12 @@ juce::ValueTree Engine::getState (bool includeSession) const
         s.setProperty ("inputGain", inputGainDb.load(), nullptr);
         s.setProperty ("outputGain", outputGainDb.load(), nullptr);
         s.setProperty ("limiter", limiterOn.load(), nullptr);
+        s.setProperty ("inputPan", inputPan.load(), nullptr);
+        s.setProperty ("inputPhase", inputPhase.load(), nullptr);
+        s.setProperty ("outputPan", outputPan.load(), nullptr);
+        s.setProperty ("outputWidth", outputWidth.load(), nullptr);
+        s.setProperty ("ceiling", limiterCeilingDb.load(), nullptr);
+        s.setProperty ("limiterRelease", limiterReleaseMs.load(), nullptr);
         s.setProperty ("presetFile", presetFile.getFullPathName(), nullptr);
         s.setProperty ("dirty", dirty, nullptr);
         v.appendChild (s, nullptr);
@@ -1057,6 +1112,12 @@ void Engine::setState (const juce::ValueTree& v, bool includeSession)
             inputGainDb = (float) s.getProperty ("inputGain", 0.0f);
             outputGainDb = (float) s.getProperty ("outputGain", 0.0f);
             limiterOn = (bool) s.getProperty ("limiter", true);
+            inputPan = (float) s.getProperty ("inputPan", 0.0f);
+            inputPhase = (bool) s.getProperty ("inputPhase", false);
+            outputPan = (float) s.getProperty ("outputPan", 0.0f);
+            outputWidth = (float) s.getProperty ("outputWidth", 100.0f);
+            limiterCeilingDb = (float) s.getProperty ("ceiling", -0.3f);
+            limiterReleaseMs = (float) s.getProperty ("limiterRelease", 60.0f);
             presetFile = juce::File (s.getProperty ("presetFile").toString());
             dirty = (bool) s.getProperty ("dirty", false);
         }

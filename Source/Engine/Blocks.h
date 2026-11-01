@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Nodes.h"
+#include "Tuner.h"
 
 namespace rig
 {
@@ -94,6 +95,34 @@ private:
     Biquad hp, lp;
     ChangeWatch watch;
     juce::SmoothedValue<float> level;
+};
+
+//==============================================================================
+/** A tuner you can put anywhere in the rig (e.g. after a capo-style pitch block, or on one
+    path of a split). Passes audio through, optionally muted, and shows note, cents and a strobe. */
+class TunerBlock : public Block
+{
+public:
+    TunerBlock();
+    juce::String getName() const override { return "Tuner"; }
+    juce::String getDetail() const override;
+    Visual getVisual() const override { return Visual::Tuner; }
+    enum { pMute, pReference };
+
+    /** Latest reading (message thread; re-analyses at most every 40 ms). */
+    const Tuner::Reading& getReading();
+
+protected:
+    void prepareImpl (double sr, int block) override;
+    void processImpl (juce::AudioBuffer<float>&, int) noexcept override;
+
+private:
+    Tuner tuner;
+    Tuner::Reading reading;
+    juce::uint32 lastAnalysis = 0;
+    std::atomic<juce::uint32> lastAudio { 0 };
+    juce::SmoothedValue<float> muteGain;
+    float scratch[512] {};
 };
 
 } // namespace rig

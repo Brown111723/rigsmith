@@ -7,7 +7,7 @@ namespace rig
 enum class Icon
 {
     Open, Folder, Power, AutoGain, Dice, Shuffle, Preset, Lock, Unlock,
-    Prev, Next, FullScreen, ExitFullScreen, Library, Undo, Redo, Init, Menu, Save, Caret
+    Prev, Next, FullScreen, ExitFullScreen, Library, Undo, Redo, Init, Menu, Save, Caret, TuningFork
 };
 
 /** Draws an icon into a box (stroked line art, filled where it reads better). */
@@ -40,6 +40,22 @@ private:
     juce::Colour onColour;
     float progress = -1.0f;
     bool highlighted = false;
+};
+
+/** The block footswitch: an LED-lit round switch with a glow when on (cards and the panel share it). */
+void drawFootswitch (juce::Graphics&, juce::Rectangle<float> sw, juce::Colour, bool on);
+
+/** The panel's on / bypass control, drawn exactly like the footswitch on the block's card. */
+class FootswitchButton : public juce::Button
+{
+public:
+    FootswitchButton();
+    void setColour (juce::Colour c) { if (c != colour) { colour = c; repaint(); } }
+    int preferredWidth (int height) const;
+    void paintButton (juce::Graphics&, bool over, bool down) override;
+
+private:
+    juce::Colour colour { theme::accent };
 };
 
 } // namespace rig

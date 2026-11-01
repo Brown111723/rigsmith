@@ -1,5 +1,6 @@
 #include "GraphView.h"
 #include "Icons.h"
+#include "../Engine/Randomiser.h"
 
 namespace rig
 {
@@ -56,6 +57,31 @@ juce::Rectangle<float> BlockCard::footswitchArea() const
     return { 12.0f, (float) getHeight() - 36.0f, 24.0f, 24.0f };
 }
 
+juce::Rectangle<float> BlockCard::diceArea() const
+{
+    return { (float) getWidth() - 34.0f, (float) getHeight() - 35.0f, 22.0f, 22.0f };
+}
+
+bool BlockCard::hasDice() const
+{
+    return dynamic_cast<Block*> (&node) != nullptr && node.getType() != NodeType::Tuner;
+}
+
+juce::String BlockCard::getTooltip()
+{
+    const auto p = getMouseXYRelative().toFloat();
+    if (hasDice() && diceArea().expanded (3.0f).contains (p))
+        return "Random " + categoryName (Randomiser::categoryOf (node)).toLowerCase() + " block (Shift+R). Ctrl+Z undoes it";
+    if (footswitchArea().expanded (6.0f).contains (p))
+        return "On / bypass";
+    return {};
+}
+
+void BlockCard::mouseMove (const juce::MouseEvent&)
+{
+    repaint();
+}
+
 bool BlockCard::acceptsFile (const juce::File& f) const
 {
     return (node.getType() == NodeType::Nam && f.hasFileExtension ("nam"))
@@ -82,40 +108,36 @@ void BlockCard::paint (juce::Graphics& g)
 
     g.setColour (muted.withMultipliedAlpha (alpha));
     g.setFont (font (10.0f, true).withExtraKerningFactor (0.08f));
-    g.drawText (kindLabel (node), 12, 22, getWidth() - 24, 14, juce::Justification::centredLeft);
+    g.drawFittedText (kindLabel (node), 12, 22, getWidth() - 24 - (node.autoGain.load() || node.getLatency() > 0 ? 58 : 0) - (node.locked.load() ? 20 : 0), 14, juce::Justification::centredLeft, 1, 0.8f);
 
     g.setColour (text.withMultipliedAlpha (alpha));
     g.setFont (font (14.0f, true));
     g.drawFittedText (node.getName(), 12, 37, getWidth() - 24, 36, juce::Justification::topLeft, 2, 0.9f);
 
-    g.setColour (muted.withMultipliedAlpha (alpha));
-    g.setFont (font (11.0f));
+    auto detailColour = muted.withMultipliedAlpha (alpha);
+    if (auto* tb = dynamic_cast<TunerBlock*> (&node))
+    {
+        const auto& rd = tb->getReading();   // keeps the card's note live
+        if (rd.valid) detailColour = std::abs (rd.cents) < 3.0f ? teal : (std::abs (rd.cents) < 15.0f ? accent : red);
+    }
+    g.setColour (detailColour);
+    g.setFont (font (11.0f, node.getType() == NodeType::Tuner));
     g.drawFittedText (node.getDetail(), 12, 72, getWidth() - 24, 16, juce::Justification::topLeft, 1, 0.85f);
 
     // footswitch + LED glow
     const auto sw = footswitchArea();
-    if (on)
-    {
-        for (int i = 3; i > 0; --i)
-        {
-            g.setColour (c.withAlpha (0.08f * (float) i));
-            g.fillEllipse (sw.expanded ((float) (4 - i) * 3.0f));
-        }
-    }
-    g.setColour (on ? c : bg);
-    g.fillEllipse (sw);
-    g.setColour (borderHi);
-    g.drawEllipse (sw, 1.5f);
-
+    drawFootswitch (g, sw, c, on);
     g.setColour (on ? text : muted);
     g.setFont (font (11.0f));
     g.drawText (on ? "On" : "Bypassed", (int) sw.getRight() + 8, (int) sw.getY(), 70, (int) sw.getHeight(), juce::Justification::centredLeft);
 
+    // latency or gain-compensation readout, top right
+    const int readoutRight = getWidth() - (node.locked.load() ? 32 : 12);
     if (auto lat = node.getLatency(); lat > 0)
     {
         g.setColour (dim);
         g.setFont (mono (10.0f));
-        g.drawText (juce::String (lat) + " smp", getWidth() - 62, (int) sw.getY(), 52, (int) sw.getHeight(), juce::Justification::centredRight);
+        g.drawText (juce::String (lat) + " smp", readoutRight - 60, 22, 60, 14, juce::Justification::centredRight);
     }
     else if (node.autoGain.load())
     {
@@ -123,7 +145,20 @@ void BlockCard::paint (juce::Graphics& g)
         g.setFont (mono (10.0f));
         const float db = node.autoGainDb.load();
         g.drawText (node.autoGainProgress.load() < 1.0f ? juce::String ("AG ...") : "AG " + juce::String (db > 0.05f ? "+" : "") + juce::String (db, 1),
-                    getWidth() - 72, (int) sw.getY(), 62, (int) sw.getHeight(), juce::Justification::centredRight);
+                    readoutRight - 60, 22, 60, 14, juce::Justification::centredRight);
+    }
+
+    // dice: swap for a random block of the same kind
+    if (hasDice())
+    {
+        const auto d = diceArea();
+        const bool over = isMouseOver() && d.expanded (3.0f).contains (getMouseXYRelative().toFloat());
+        if (over)
+        {
+            g.setColour (c.withAlpha (0.18f));
+            g.fillRoundedRectangle (d.expanded (3.0f), 6.0f);
+        }
+        drawIcon (g, Icon::Dice, d, over ? c : (isMouseOver() || selected ? muted : dim.withAlpha (0.8f)));
     }
 
     if (node.locked.load())
@@ -147,6 +182,13 @@ void BlockCard::mouseDown (const juce::MouseEvent& e)
     {
         host.select (node.id);
         host.showNodeMenu (node, this);
+        return;
+    }
+    if (hasDice() && diceArea().expanded (3.0f).contains (e.position))
+    {
+        pressedSwitch = true;   // not a drag
+        host.select (node.id);
+        host.randomise (node, GraphHost::RandomType);
         return;
     }
     if (footswitchArea().expanded (6.0f).contains (e.position))
@@ -176,9 +218,11 @@ void BlockCard::mouseUp (const juce::MouseEvent&) { dragging = false; pressedSwi
 
 void BlockCard::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (! footswitchArea().expanded (6.0f).contains (e.position))
+    if (! footswitchArea().expanded (6.0f).contains (e.position) && ! (hasDice() && diceArea().expanded (3.0f).contains (e.position)))
         host.openNode (node);
 }
+
+static constexpr int termW = 84, termH = 136;
 
 ChainView* BlockCard::parentChain() const { return dynamic_cast<ChainView*> (getParentComponent()); }
 
@@ -644,7 +688,7 @@ void GraphView::fitTo (juce::Rectangle<int> area)
 {
     viewArea = area;
     const auto p = main->preferredSize();
-    const int w = juce::jmax (area.getWidth(), 24 + 70 + p.x + 70 + 24);
+    const int w = juce::jmax (area.getWidth(), 24 + termW + p.x + termW + 24);
     const int h = juce::jmax (area.getHeight(), p.y + 48);
     setSize (w, h);
     resized();
@@ -654,11 +698,11 @@ void GraphView::resized()
 {
     const auto p = main->preferredSize();
     const int cy = getHeight() / 2;
-    const int contentW = 70 + p.x + 70;
+    const int contentW = termW + p.x + termW;
     const int x0 = juce::jmax (24, (getWidth() - contentW) / 2);
-    inBox = { x0, cy - 56, 70, 112 };
+    inBox = { x0, cy - termH / 2, termW, termH };
     main->setBounds (inBox.getRight(), cy - p.y / 2, p.x, p.y);
-    outBox = { main->getRight(), cy - 56, 70, 112 };
+    outBox = { main->getRight(), cy - termH / 2, termW, termH };
 }
 
 void GraphView::paint (juce::Graphics& g)
@@ -669,31 +713,75 @@ void GraphView::paint (juce::Graphics& g)
         for (int x = 12; x < getWidth(); x += 24)
             g.fillRect (x, y, 2, 2);
 
-    auto drawTerminal = [&] (juce::Rectangle<int> r, const juce::String& label, float lvl, juce::Colour c)
+    auto meterBar = [&] (juce::Rectangle<float> m, float lvl, juce::Colour c)
     {
-        g.setColour (card);
-        g.fillRoundedRectangle (r.toFloat(), 10.0f);
-        g.setColour (border);
-        g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 10.0f, 1.0f);
-        g.setColour (muted);
-        g.setFont (font (11.0f, true));
-        g.drawText (label, r.removeFromTop (24), juce::Justification::centred);
-        const auto meter = r.reduced (0, 8).withSizeKeepingCentre (10, r.getHeight() - 22);
         g.setColour (bg);
-        g.fillRoundedRectangle (meter.toFloat(), 5.0f);
+        g.fillRoundedRectangle (m, 3.0f);
         const float db = gainToDb (lvl);
         const float frac = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
-        auto fill = meter.toFloat();
-        fill = fill.removeFromBottom (fill.getHeight() * frac);
-        g.setColour (db > -1.0f ? red : c);
-        g.fillRoundedRectangle (fill, 5.0f);
-        g.setColour (muted);
-        g.setFont (mono (10.0f));
-        g.drawText (db <= -99.0f ? juce::String ("-inf") : juce::String (db, 1), r.removeFromBottom (14).translated (0, 4),
-                    juce::Justification::centred);
+        auto fill = m.withTop (m.getBottom() - m.getHeight() * frac);
+        juce::ColourGradient grad (c, 0, m.getBottom(), red, 0, m.getY(), false);
+        grad.addColour (0.80, c);
+        grad.addColour (0.92, accent);
+        g.setGradientFill (grad);
+        g.fillRoundedRectangle (fill, 3.0f);
     };
-    drawTerminal (inBox, "IN", inLevel, teal);
-    drawTerminal (outBox, "OUT", outLevel, accent);
+
+    auto drawTerminal = [&] (juce::Rectangle<int> box, bool isOut)
+    {
+        const auto& id = isOut ? kOutputId : kInputId;
+        const bool sel = host.getSelectedId() == id;
+        const bool over = hoverTerminal == (isOut ? 2 : 1);
+        const auto c = isOut ? accent : teal;
+        auto r = box;
+        g.setColour (sel ? cardHi : (over ? cardHi.darker (0.08f) : card));
+        g.fillRoundedRectangle (r.toFloat(), 10.0f);
+        g.setColour (sel ? c : (over ? borderHi : border));
+        g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 10.0f, sel ? 2.0f : 1.0f);
+
+        g.setColour (sel || over ? text : muted);
+        g.setFont (font (11.0f, true).withExtraKerningFactor (0.1f));
+        g.drawText (isOut ? "OUT" : "IN", r.removeFromTop (24).translated (0, 2), juce::Justification::centred);
+
+        auto bottom = r.removeFromBottom (34);
+        auto meters = r.reduced (0, 4).withSizeKeepingCentre (26, r.getHeight() - 8).toFloat();
+        const float l = isOut ? levels.outL : levels.inL, rr = isOut ? levels.outR : levels.inR;
+        meterBar (meters.removeFromLeft (11.0f), l, c);
+        meters.removeFromLeft (4.0f);
+        meterBar (meters, rr, c);
+
+        // gain + (for OUT) limiter readouts
+        const float gainDb = isOut ? host.getEngine().outputGainDb.load() : host.getEngine().inputGainDb.load();
+        g.setFont (mono (10.0f));
+        g.setColour (muted);
+        const float pk = juce::jmax (l, rr);
+        g.drawText (pk < 1.0e-5f ? juce::String ("-inf") : juce::String (gainToDb (pk), 1), bottom.removeFromTop (14), juce::Justification::centred);
+        juce::String sub = (gainDb > 0.05f ? "+" : "") + juce::String (gainDb, 1) + " dB";
+        auto subColour = dim;
+        if (isOut && host.getEngine().limiterOn.load() && levels.grDb < -0.2f)
+        {
+            sub = "LIM " + juce::String (levels.grDb, 1);
+            subColour = accent;
+        }
+        g.setColour (subColour);
+        g.drawText (sub, bottom.removeFromTop (14), juce::Justification::centred);
+    };
+    drawTerminal (inBox, false);
+    drawTerminal (outBox, true);
+}
+
+void GraphView::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.eventComponent != this) return;
+    if (inBox.contains (e.getPosition()))  { host.select (kInputId); return; }
+    if (outBox.contains (e.getPosition())) { host.select (kOutputId); return; }
+    if (onBackgroundClick) onBackgroundClick();
+}
+
+void GraphView::mouseMove (const juce::MouseEvent& e)
+{
+    const int h = inBox.contains (e.getPosition()) ? 1 : (outBox.contains (e.getPosition()) ? 2 : 0);
+    if (h != hoverTerminal) { hoverTerminal = h; setMouseCursor (h != 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor); repaint(); }
 }
 
 bool GraphView::dropFile (const juce::File& f, juce::Point<int> pt)

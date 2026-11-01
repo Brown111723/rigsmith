@@ -247,13 +247,11 @@ Inspector::Inspector (GraphHost& h) : host (h)
     };
 
     diceButton.onClick = [this] { if (node != nullptr) host.randomise (*node, GraphHost::RandomSettings); };
-    diceButton.onRightClick = [this] { if (node != nullptr) host.showRandomMenu (*node, &diceButton); };
-    shuffleButton.onClick = [this] { if (node != nullptr) host.randomise (*node, GraphHost::RandomType); };
     presetButton.onClick = [this] { if (node != nullptr) host.showBlockPresetMenu (*node, &presetButton); };
     lockButton.onClick = [this] { if (node != nullptr) host.toggleLock (*node); };
 
     for (auto* b : std::initializer_list<juce::Component*> { &openButton, &prevFile, &nextFile, &bypassButton, &autoGainButton,
-                                                             &diceButton, &shuffleButton, &presetButton, &lockButton })
+                                                             &diceButton, &presetButton, &lockButton })
         addChildComponent (b);
 
     autoGainSum.setTooltip ("In Parallel mode, turn the sum down when the paths add up to more than 100%");
@@ -304,7 +302,7 @@ void Inspector::clearControls()
     modeButtons.clear();
     strips.clear();
     for (auto* c : std::initializer_list<juce::Component*> { &openButton, &bypassButton, &autoGainButton, &prevFile, &nextFile,
-                                                              &diceButton, &shuffleButton, &presetButton, &lockButton,
+                                                              &diceButton, &presetButton, &lockButton,
                                                               &autoGainSum, &addPathButton, &pluginHeader, &pluginScope })
         c->setVisible (false);
 }
@@ -341,10 +339,12 @@ void Inspector::setNode (Node* n)
     }
 
     bypassButton.setVisible (true);
+    bypassButton.setColour (colourFor (*node));
     bypassButton.setToggleState (! node->bypassed.load(), juce::dontSendNotification);
-    autoGainButton.setVisible (true);
-    diceButton.setVisible (true);
-    lockButton.setVisible (true);
+    const bool isTuner = node->getType() == NodeType::Tuner;
+    autoGainButton.setVisible (! isTuner);
+    diceButton.setVisible (! isTuner);
+    lockButton.setVisible (! isTuner);
 
     if (auto* s = dynamic_cast<Split*> (node)) buildSplit (*s);
     else if (auto* b = dynamic_cast<Block*> (node)) buildBlock (*b);
@@ -357,8 +357,7 @@ void Inspector::setNode (Node* n)
 void Inspector::buildBlock (Block& b)
 {
     const auto c = colourFor (b);
-    shuffleButton.setVisible (true);
-    presetButton.setVisible (true);
+    presetButton.setVisible (b.getType() != NodeType::Tuner);
 
     display = std::make_unique<FxDisplay> (host.getEngine(), b);
     display->onEdited = [this] { host.getEngine().markDirty(); };
@@ -728,10 +727,13 @@ void Inspector::layoutIcons (juce::Rectangle<int> row)
     place (openButton);
     place (prevFile, 2);
     place (nextFile, 10);
-    place (bypassButton);
+    if (bypassButton.isVisible())
+    {
+        bypassButton.setBounds (row.removeFromLeft (juce::jmin (bypassButton.preferredWidth (h), row.getWidth())));
+        row.removeFromLeft (8);
+    }
     place (autoGainButton, 10);
-    place (diceButton);
-    place (shuffleButton, 10);
+    place (diceButton, 10);
     place (presetButton);
     place (lockButton);
 }

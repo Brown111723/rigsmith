@@ -17,8 +17,8 @@ public:
     }
 };
 
-/** Top bar: logo, presets, undo/redo, scenes A-D, tuner readout, status, randomise,
-    library and full-screen toggles, in/out gain, menu. */
+/** Top bar: logo, presets, undo/redo, scenes A-D, then icon buttons for randomise,
+    tuner, library, full screen and the menu. (In / out gain live on the IN / OUT blocks.) */
 class Header : public juce::Component
 {
 public:
@@ -38,16 +38,15 @@ public:
                save { Icon::Save, "Save preset (Ctrl+S)" },
                undo { Icon::Undo, "Undo (Ctrl+Z)" }, redo { Icon::Redo, "Redo (Ctrl+Y)" },
                random { Icon::Dice, "Randomise the whole rig: amps, cabs and effects (locked blocks stay). Ctrl+Z undoes it. Right-click for options" },
-               randomMore { Icon::Caret, "More randomise options" },
+               tunerButton { Icon::TuningFork, "Tuner (T)", theme::teal },
                library { Icon::Library, "Show / hide the library (L)", theme::teal },
                fullScreen { Icon::FullScreen, "Full screen (F11)", theme::teal },
                menu { Icon::Menu, "Menu" };
     SceneButton scenes[kNumScenes];
-    juce::Slider inGain, outGain;
 
 private:
     Engine& engine;
-    juce::Rectangle<int> logoArea, tunerArea, statusArea, inArea, outArea;
+    juce::Rectangle<int> logoArea;
 public:
     bool showFullScreenButton = true;
     Tuner::Reading reading;

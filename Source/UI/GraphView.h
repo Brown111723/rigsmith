@@ -4,6 +4,9 @@
 
 namespace rig
 {
+/** Selection ids for the IN and OUT terminals (not nodes: they open the I/O panel). */
+inline const juce::String kInputId { "__input" }, kOutputId { "__output" };
+
 /** What the graph needs from the editor that owns it. */
 struct GraphHost
 {
@@ -42,7 +45,8 @@ class ChainView;
 
 //==============================================================================
 class BlockCard : public GraphItem,
-                  public juce::DragAndDropTarget
+                  public juce::DragAndDropTarget,
+                  public juce::TooltipClient
 {
 public:
     BlockCard (GraphHost&, Node&);
@@ -55,6 +59,8 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    juce::String getTooltip() override;
 
     // Drop onto the middle of a card to replace it (or swap with a dragged block);
     // near its left/right edge to insert before/after it instead.
@@ -70,6 +76,8 @@ public:
 
 private:
     juce::Rectangle<float> footswitchArea() const;
+    juce::Rectangle<float> diceArea() const;
+    bool hasDice() const;
     ChainView* parentChain() const;
     GraphHost& host;
     Node& node;
@@ -169,13 +177,16 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
 
-    void setMeters (float in, float out) { inLevel = in; outLevel = out; }
+    struct Levels { float inL = 0, inR = 0, outL = 0, outR = 0, grDb = 0; bool limiting = false; };
+    void setMeters (const Levels& l) { levels = l; }
 
     /** Drop a file from the OS: loads into the card under the point or inserts a new block. */
     bool dropFile (const juce::File&, juce::Point<int> localPoint);
 
     std::function<void()> onBackgroundClick;
-    void mouseDown (const juce::MouseEvent& e) override { if (e.eventComponent == this && onBackgroundClick) onBackgroundClick(); }
+    void mouseDown (const juce::MouseEvent& e) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override { hoverTerminal = 0; repaint(); }
 
     /** A normal scroll wheel pans sideways along a long rig. */
     void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override
@@ -197,7 +208,8 @@ private:
     GraphHost& host;
     std::unique_ptr<ChainView> main;
     juce::Rectangle<int> inBox, outBox;
-    float inLevel = 0, outLevel = 0;
+    Levels levels;
+    int hoverTerminal = 0;   // 1 in, 2 out
     juce::Rectangle<int> viewArea;
 };
 

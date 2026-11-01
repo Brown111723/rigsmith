@@ -402,6 +402,87 @@ int main (int argc, char** argv)
         std::printf ("      %.2f Hz %s %+.1f c\n", r.frequency, r.note.toRawUTF8(), r.cents);
     }
 
+    // v0.4: tuner block, I/O stage, brickwall limiter
+    {
+        Engine e;
+        e.prepare (48000.0, 256);
+        auto* t = dynamic_cast<TunerBlock*> (e.insert (e.createNode (NodeType::Tuner), e.getRoot(), 0));
+        CHECK (t != nullptr, "tuner is a block you can add");
+        juce::AudioBuffer<float> buf (2, 256);
+        juce::MidiBuffer midi;
+        double ph = 0;
+        auto sine = [&] (float hz, float amp)
+        {
+            for (int i = 0; i < 256; ++i)
+            {
+                const float x = amp * (float) std::sin (ph);
+                ph += 2.0 * juce::MathConstants<double>::pi * hz / 48000.0;
+                buf.setSample (0, i, x); buf.setSample (1, i, x);
+            }
+            e.process (buf, midi);
+        };
+        for (int b = 0; b < 20; ++b) sine (82.41f, 0.3f);
+        const auto r = t->getReading();
+        CHECK (r.valid && r.note == "E" && std::abs (r.cents) < 5.0f, "tuner block reads low E");
+        std::printf ("      %.2f Hz %s%d %+.1f c  card: %s\n", r.frequency, r.note.toRawUTF8(), r.octave, r.cents, t->getDetail().toRawUTF8());
+        t->set (TunerBlock::pMute, 1.0f);
+        for (int b = 0; b < 8; ++b) sine (82.41f, 0.3f);
+        CHECK (buf.getMagnitude (0, 0, 256) < 1.0e-4f, "tuner mute silences the output");
+        e.remove (t->id);
+
+        // brickwall: +12 dB into a -6 dB ceiling never gets past it
+        e.limiterOn = true;
+        e.limiterCeilingDb = -6.0f;
+        e.outputGainDb = 12.0f;
+        float peak = 0;
+        for (int b = 0; b < 40; ++b) { sine (440.0f, 0.8f); peak = juce::jmax (peak, buf.getMagnitude (0, 0, 256), buf.getMagnitude (1, 0, 256)); }
+        CHECK (peak <= dbToGain (-6.0f) + 1.0e-5f, "brickwall limiter holds the ceiling");
+        const float gr = e.limiterGrDb.exchange (0.0f);
+        CHECK (gr < -6.0f, "limiter reports gain reduction");
+        std::printf ("      peak %.2f dBFS, GR %.1f dB\n", gainToDb (peak), gr);
+        CHECK (e.outMeter.overs.exchange (0) > 0, "output counts overs hitting the limiter");
+
+        // width 0 = mono, balance hard left = silent right
+        e.outputGainDb = 0.0f; e.limiterCeilingDb = -0.3f;
+        e.outputWidth = 0.0f;
+        bool finite = false;
+        juce::Random rnd (3);
+        for (int b = 0; b < 10; ++b)
+        {
+            for (int i = 0; i < 256; ++i) { buf.setSample (0, i, rnd.nextFloat() * 0.2f - 0.1f); buf.setSample (1, i, rnd.nextFloat() * 0.2f - 0.1f); }
+            e.inputMode = Engine::InputStereo;
+            e.process (buf, midi);
+        }
+        float diff = 0;
+        for (int i = 0; i < 256; ++i) diff = juce::jmax (diff, std::abs (buf.getSample (0, i) - buf.getSample (1, i)));
+        CHECK (diff < 1.0e-5f, "width 0% folds the output to mono");
+        e.outputWidth = 100.0f; e.outputPan = -1.0f;
+        runNoise (e, 10, 256, &finite);
+        juce::AudioBuffer<float> b2 (2, 256);
+        for (int i = 0; i < 256; ++i) { b2.setSample (0, i, 0.1f); b2.setSample (1, i, 0.1f); }
+        e.process (b2, midi);
+        CHECK (b2.getMagnitude (1, 0, 256) < 1.0e-4f && b2.getMagnitude (0, 0, 256) > 0.01f, "output balance hard left");
+        e.outputPan = 0.0f;
+        e.inputPhase = true;
+        for (int k = 0; k < 4; ++k) { for (int i = 0; i < 256; ++i) { b2.setSample (0, i, 0.1f); b2.setSample (1, i, 0.1f); } e.process (b2, midi); }
+        CHECK (b2.getSample (0, 100) < 0.0f, "input polarity flip");
+
+        // session state round trip
+        e.limiterCeilingDb = -3.5f; e.outputWidth = 150.0f; e.inputPan = 0.25f;
+        auto st = e.getState (true);
+        Engine e2; e2.prepare (48000.0, 256); e2.setState (st, true);
+        CHECK (std::abs (e2.limiterCeilingDb.load() + 3.5f) < 1e-4f && std::abs (e2.outputWidth.load() - 150.0f) < 1e-3f
+               && e2.inputPhase.load() && std::abs (e2.inputPan.load() - 0.25f) < 1e-4f, "I/O settings saved with the session");
+
+        // randomising the rig keeps tuners
+        auto* t2 = e.insert (e.createNode (NodeType::Tuner), e.getRoot(), 0);
+        const auto tid = t2->id;
+        Randomiser rz (e);
+        rz.randomiseRig();
+        CHECK (e.findNode (tid) != nullptr, "random rig keeps the tuner");
+        CHECK (rz.randomiseType (tid) == nullptr, "a tuner isn't swapped for another block");
+    }
+
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;
 }

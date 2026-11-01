@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.3.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -109,6 +109,7 @@ target_sources(Rigsmith PRIVATE
     Source/UI/Icons.cpp
     Source/UI/GraphView.cpp
     Source/UI/Inspector.cpp
+    Source/UI/IoPanel.cpp
     Source/UI/Library.cpp
     Source/UI/Header.cpp
     Source/UI/FxDisplay.cpp

@@ -119,6 +119,15 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> box, juce::C
         case Icon::Menu:
             line (5, 7, 19, 7); line (5, 12, 19, 12); line (5, 17, 19, 17);
             break;
+        case Icon::TuningFork:   // U-shaped prongs on a stem, with a little vibration either side
+            p.startNewSubPath (P (9, 3));
+            p.lineTo (P (9, 11));
+            p.addCentredArc (P (12, 11).x, P (12, 11).y, 3.0f * s, 3.0f * s, 0.0f, 1.5f * pi, 0.5f * pi, false);
+            p.lineTo (P (15, 3));
+            line (12, 14, 12, 21.5f);
+            p.startNewSubPath (P (5.5f, 4.5f)); p.quadraticTo (P (4, 7), P (5.5f, 9.5f));
+            p.startNewSubPath (P (18.5f, 4.5f)); p.quadraticTo (P (20, 7), P (18.5f, 9.5f));
+            break;
         case Icon::Save:
             poly ({ { 5, 4 }, { 16, 4 }, { 20, 8 }, { 20, 20 }, { 4, 20 }, { 4, 4 }, { 5, 4 } });
             p.addRectangle (R (8, 13, 8, 7));
@@ -126,6 +135,48 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> box, juce::C
             break;
     }
     g.strokePath (p, stroke);
+}
+
+void drawFootswitch (juce::Graphics& g, juce::Rectangle<float> sw, juce::Colour c, bool on)
+{
+    if (on)
+        for (int i = 3; i > 0; --i)
+        {
+            g.setColour (c.withAlpha (0.08f * (float) i));
+            g.fillEllipse (sw.expanded ((float) (4 - i) * 3.0f));
+        }
+    g.setColour (on ? c : bg);
+    g.fillEllipse (sw);
+    g.setColour (borderHi);
+    g.drawEllipse (sw, 1.5f);
+}
+
+FootswitchButton::FootswitchButton() : juce::Button ("On / bypass")
+{
+    setTooltip ("On / bypass (Space)");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+int FootswitchButton::preferredWidth (int h) const
+{
+    return h + juce::GlyphArrangement::getStringWidthInt (font (12.0f), "Bypassed") + 14;
+}
+
+void FootswitchButton::paintButton (juce::Graphics& g, bool over, bool)
+{
+    const bool on = getToggleState();
+    const auto r = getLocalBounds().toFloat();
+    const float d = juce::jmin (24.0f, r.getHeight() - 6.0f);
+    const auto sw = juce::Rectangle<float> (r.getX() + 4.0f, r.getCentreY() - d * 0.5f, d, d);
+    drawFootswitch (g, sw, over && ! on ? colour.withAlpha (0.35f) : colour, on || over);
+    if (over && ! on)
+    {
+        g.setColour (bg);
+        g.fillEllipse (sw.reduced (3.0f));
+    }
+    g.setColour (on ? theme::text : muted);
+    g.setFont (font (12.0f));
+    g.drawText (on ? "On" : "Bypassed", r.withTrimmedLeft (sw.getRight() + 8.0f - r.getX()), juce::Justification::centredLeft, false);
 }
 
 //==============================================================================

@@ -4,6 +4,9 @@ namespace rig
 {
 using namespace theme;
 
+static const juce::String logoText ("RIGSMITH");
+static juce::Font logoFont() { return font (15.0f, true).withExtraKerningFactor (0.14f); }
+
 Header::Header (Engine& e) : engine (e)
 {
     prev.onClick = [this] { engine.stepPreset (-1); };
@@ -14,15 +17,14 @@ Header::Header (Engine& e) : engine (e)
     menu.onClick = [this] { if (onMenu) onMenu(); };
     undo.onClick = [this] { if (onUndo) onUndo(); };
     redo.onClick = [this] { if (onRedo) onRedo(); };
-    random.setLabel ("Randomise");
     random.setHighlighted (true);
     random.onClick = [this] { if (onRandom) onRandom(); };
     random.onRightClick = [this] { if (onRandomMenu) onRandomMenu(); };
-    randomMore.onClick = [this] { if (onRandomMenu) onRandomMenu(); };
+    tunerButton.onClick = [this] { if (onTuner) onTuner(); };
     library.onClick = [this] { if (onLibrary) onLibrary(); };
     fullScreen.onClick = [this] { if (onFullScreen) onFullScreen(); };
     for (auto* b : std::initializer_list<juce::Component*> { &prev, &next, &presetButton, &save, &menu, &undo, &redo,
-                                                             &random, &randomMore, &library, &fullScreen })
+                                                             &random, &tunerButton, &library, &fullScreen })
         addAndMakeVisible (b);
 
     for (int i = 0; i < kNumScenes; ++i)
@@ -33,21 +35,6 @@ Header::Header (Engine& e) : engine (e)
         scenes[i].onRightClick = [this, i] { if (onSceneRightClick) onSceneRightClick (i); };
         addAndMakeVisible (scenes[i]);
     }
-
-    for (auto* s : { &inGain, &outGain })
-    {
-        s->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-        s->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        s->setRange (-24.0, 24.0, 0.1);
-        s->setDoubleClickReturnValue (true, 0.0);
-        s->setRotaryParameters (juce::degreesToRadians (225.0f), juce::degreesToRadians (495.0f), true);
-        addAndMakeVisible (s);
-    }
-    inGain.setColour (juce::Slider::rotarySliderFillColourId, teal);
-    inGain.setTooltip ("Input gain");
-    outGain.setTooltip ("Master output");
-    inGain.onValueChange = [this] { engine.inputGainDb = (float) inGain.getValue(); repaint (inArea); };
-    outGain.onValueChange = [this] { engine.outputGainDb = (float) outGain.getValue(); repaint (outArea); };
 }
 
 void Header::refresh (const Tuner::Reading& r, const juce::String& s)
@@ -56,7 +43,7 @@ void Header::refresh (const Tuner::Reading& r, const juce::String& s)
     status = s;
 
     juce::String name = engine.presetName + (engine.dirty ? " *" : "");
-    if (presetButton.getButtonText() != name) presetButton.setButtonText (name);
+    if (presetButton.getButtonText() != name) { presetButton.setButtonText (name); presetButton.setTooltip (name + " - presets (Init is always first)"); }
 
     for (int i = 0; i < kNumScenes; ++i)
     {
@@ -65,13 +52,7 @@ void Header::refresh (const Tuner::Reading& r, const juce::String& s)
     }
     undo.setEnabled (engine.canUndo());
     redo.setEnabled (engine.canRedo());
-    if (! inGain.isMouseButtonDown()) inGain.setValue (engine.inputGainDb.load(), juce::dontSendNotification);
-    if (! outGain.isMouseButtonDown()) outGain.setValue (engine.outputGainDb.load(), juce::dontSendNotification);
-
-    repaint (tunerArea);
-    repaint (statusArea);
-    repaint (inArea);
-    repaint (outArea);
+    tunerButton.setToggleState (engine.tunerActive.load(), juce::dontSendNotification);
 }
 
 void Header::paint (juce::Graphics& g)
@@ -80,7 +61,7 @@ void Header::paint (juce::Graphics& g)
     g.setColour (border);
     g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
 
-    // logo
+    // logo: the mark, plus the name whenever its full width fits (never cut short)
     auto l = logoArea.toFloat();
     const auto mark = l.removeFromLeft (30.0f).withSizeKeepingCentre (26.0f, 26.0f);
     g.setColour (accent);
@@ -91,59 +72,11 @@ void Header::paint (juce::Graphics& g)
     p.lineTo (mark.getX() + 14, mark.getBottom() - 11);
     p.lineTo (mark.getRight() - 6, mark.getY() + 7);
     g.strokePath (p, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    if (l.getWidth() > 60.0f)
+    if (l.getWidth() > 20.0f)
     {
         g.setColour (text);
-        g.setFont (font (15.0f, true).withExtraKerningFactor (0.14f));
-        g.drawText ("RIGSMITH", l.withTrimmedLeft (8.0f), juce::Justification::centredLeft);
-    }
-
-    // tuner box
-    {
-        const auto t = tunerArea.toFloat();
-        g.setColour (bg);
-        g.fillRoundedRectangle (t, 8.0f);
-        g.setColour (engine.tunerActive.load() ? accent : border);
-        g.drawRoundedRectangle (t.reduced (0.5f), 8.0f, 1.0f);
-        auto r = tunerArea.reduced (10, 0);
-        g.setColour (muted);
-        g.setFont (font (10.0f, true).withExtraKerningFactor (0.08f));
-        g.drawText ("TUNER", r.removeFromLeft (44), juce::Justification::centredLeft);
-        if (reading.valid)
-        {
-            const bool inTune = std::abs (reading.cents) < 3.0f;
-            g.setColour (inTune ? teal : accent);
-            g.setFont (font (18.0f, true));
-            g.drawText (reading.note, r.removeFromLeft (30), juce::Justification::centredLeft);
-            g.setColour (muted);
-            g.setFont (mono (12.0f));
-            g.drawText ((reading.cents >= 0 ? "+" : "") + juce::String (reading.cents, 0) + "c", r, juce::Justification::centredLeft);
-        }
-        else
-        {
-            g.setColour (dim);
-            g.setFont (mono (12.0f));
-            g.drawText (engine.tunerActive.load() ? "listening" : "click", r, juce::Justification::centredLeft);
-        }
-    }
-
-    auto knobLabel = [&] (juce::Rectangle<int> a, const juce::String& lbl, float db)
-    {
-        g.setColour (muted);
-        g.setFont (font (10.0f, true));
-        g.drawText (lbl, a.removeFromTop (a.getHeight() / 2), juce::Justification::bottomLeft);
-        g.setFont (mono (11.0f));
-        g.setColour (text);
-        g.drawText ((db > 0 ? "+" : "") + juce::String (db, 1), a, juce::Justification::topLeft);
-    };
-    knobLabel (inArea, "IN", engine.inputGainDb.load());
-    knobLabel (outArea, "OUT", engine.outputGainDb.load());
-
-    if (! statusArea.isEmpty())
-    {
-        g.setColour (muted);
-        g.setFont (mono (11.0f));
-        g.drawFittedText (status, statusArea, juce::Justification::centredRight, 2);
+        g.setFont (logoFont());
+        g.drawText (logoText, l.withTrimmedLeft (8.0f), juce::Justification::centredLeft, false);
     }
 }
 
@@ -151,35 +84,30 @@ void Header::resized()
 {
     auto r = getLocalBounds().reduced (12, 12);
     const int bh = r.getHeight();
-    const bool narrow = getWidth() < 1400;
-    random.setLabel (getWidth() < 1320 ? juce::String() : juce::String ("Randomise"));
 
-    logoArea = r.removeFromLeft (narrow ? 36 : 124);
-    r.removeFromLeft (6);
-
-    // right side first, so the preset name gets whatever is left
+    // right: icon buttons
     menu.setBounds (r.removeFromRight (bh));
-    r.removeFromRight (10);
-    auto knobArea = r.removeFromRight (176);
-    auto ia = knobArea.removeFromLeft (88);
-    inGain.setBounds (ia.removeFromLeft (40));
-    inArea = ia.withTrimmedLeft (4);
-    outGain.setBounds (knobArea.removeFromLeft (40));
-    outArea = knobArea.withTrimmedLeft (4);
-    r.removeFromRight (10);
+    r.removeFromRight (4);
     fullScreen.setVisible (showFullScreenButton);
     if (showFullScreenButton) { fullScreen.setBounds (r.removeFromRight (bh)); r.removeFromRight (4); }
     library.setBounds (r.removeFromRight (bh));
-    r.removeFromRight (10);
-    randomMore.setBounds (r.removeFromRight (22));
-    r.removeFromRight (2);
-    random.setBounds (r.removeFromRight (random.preferredWidth (bh) + 4));
-    r.removeFromRight (10);
+    r.removeFromRight (12);
+    tunerButton.setBounds (r.removeFromRight (bh));
+    r.removeFromRight (4);
+    random.setBounds (r.removeFromRight (bh));
+    r.removeFromRight (16);
+
+    // left: logo (full name only if there is room for everything else), presets, undo, scenes
+    const int textW = juce::GlyphArrangement::getStringWidthInt (logoFont(), logoText) + 14;
+    const int sceneW = kNumScenes * 49;
+    const int fixed = bh + 4 + 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + sceneW;
+    const bool showName = r.getWidth() - (30 + textW + 10) - fixed >= 150;
+    logoArea = r.removeFromLeft (showName ? 30 + textW : 30);
+    r.removeFromLeft (10);
 
     prev.setBounds (r.removeFromLeft (bh));
     r.removeFromLeft (4);
-    const int fixedAfterPreset = 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + 4 * 49 + 8 + 128 + 10;
-    const int presetW = juce::jlimit (130, 300, r.getWidth() - fixedAfterPreset);
+    const int presetW = juce::jlimit (110, 340, r.getWidth() - fixed + bh + 4);
     presetButton.setBounds (r.removeFromLeft (presetW));
     r.removeFromLeft (4);
     next.setBounds (r.removeFromLeft (bh));
@@ -192,16 +120,9 @@ void Header::resized()
     r.removeFromLeft (14);
 
     for (auto& s : scenes) { s.setBounds (r.removeFromLeft (44)); r.removeFromLeft (5); }
-    r.removeFromLeft (8);
-    tunerArea = r.removeFromLeft (128);
-    statusArea = {};   // the audio status now lives in the corner of the rig view
 }
 
-void Header::mouseUp (const juce::MouseEvent& e)
-{
-    if (tunerArea.contains (e.getPosition()) && onTuner)
-        onTuner();
-}
+void Header::mouseUp (const juce::MouseEvent&) {}
 
 //==============================================================================
 TunerOverlay::TunerOverlay (Engine& e) : engine (e)

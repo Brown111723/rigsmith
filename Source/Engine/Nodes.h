@@ -11,7 +11,9 @@ enum class NodeType
     Limiter, Expander, Transient, Swell,
     Overdrive, Fuzz, Boost, Crusher,
     Wah, Chorus, Flanger, Phaser, Tremolo, Vibe, Rotary,
-    Delay, Reverb, Pitch
+    Delay, Reverb, Pitch,
+    // v0.4
+    Tuner
 };
 
 juce::String nodeTypeToString (NodeType);
@@ -184,7 +186,7 @@ inline ParamSpec Choice (const juce::String& id, const juce::String& name, const
 
 //==============================================================================
 /** How a block's display draws what its knobs are doing. */
-enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope };
+enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope, Tuner };
 
 struct DelayTap { float timeSec, gain; int side; };   // side: -1 left, 0 centre, 1 right
 

@@ -73,12 +73,11 @@ private:
     juce::Label title, subtitle, info;
     IconButton openButton { Icon::Open, "Open" },
                prevFile { Icon::Prev, "Previous file in this folder" }, nextFile { Icon::Next, "Next file in this folder" },
-               bypassButton { Icon::Power, "On / bypass (Space)", theme::teal },
                autoGainButton { Icon::AutoGain, "", theme::teal },
-               diceButton { Icon::Dice, "Randomise this block's settings (R). Right-click for more" },
-               shuffleButton { Icon::Shuffle, "Swap for a random block of the same kind (Shift+R)" },
+               diceButton { Icon::Dice, "Randomise this block's settings (R). Ctrl+Z undoes it" },
                presetButton { Icon::Preset, "Block presets: save, load, init" },
                lockButton { Icon::Unlock, "Lock: keep this block when randomising the rig", theme::accent };
+    FootswitchButton bypassButton;
     std::unique_ptr<FxDisplay> display;
     void layoutIcons (juce::Rectangle<int> row);
 

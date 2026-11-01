@@ -50,6 +50,7 @@ private:
     void drawDelay (juce::Graphics&);
     void drawReverb (juce::Graphics&);
     void drawEnvelope (juce::Graphics&);
+    void drawTuner (juce::Graphics&);
 
     struct Handle { int freqParam, gainParam; juce::Point<float> pos; };
     std::vector<Handle> eqHandles() const;
@@ -69,6 +70,10 @@ private:
 
     std::vector<float> envIn, envGain;      // scrolling history for Envelope / Dynamics
     int dragHandle = -1, hoverHandle = -1;
+
+    Tuner::Reading tunerReading;
+    float strobePhase = 0, needle = 0;
+    std::vector<float> centsHistory;
 };
 
 } // namespace rig

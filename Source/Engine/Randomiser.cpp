@@ -2,6 +2,9 @@
 
 namespace rig
 {
+/** Blocks the dice never touch: locked ones, and tuners (a tool, not a sound). */
+static bool keeps (const Node& n) { return n.locked.load() || n.getType() == NodeType::Tuner; }
+
 static std::vector<NodeType> builtInsFor (Category c)
 {
     switch (c)
@@ -232,7 +235,7 @@ void Randomiser::randomiseRig()
         {
             for (size_t i = 0; i < c.nodes.size();)
             {
-                if (c.nodes[i]->locked.load())
+                if (keeps (*c.nodes[i]))
                 {
                     keep.push_back (std::move (c.nodes[i]));
                     c.nodes.erase (c.nodes.begin() + (long) i);
@@ -291,7 +294,7 @@ void Randomiser::reshuffleBlocks()
     juce::StringArray ids;
     visitNodes (engine.getRoot(), [&ids] (Node& n)
     {
-        if (dynamic_cast<Block*> (&n) != nullptr && ! n.locked.load()) ids.add (n.id);
+        if (dynamic_cast<Block*> (&n) != nullptr && ! keeps (n)) ids.add (n.id);
     });
     for (auto& id : ids)
         randomiseType (id);
@@ -302,7 +305,7 @@ void Randomiser::randomiseAllSettings (float amount)
     Engine::UndoGroup undo (engine);
     visitNodes (engine.getRoot(), [this, amount] (Node& n)
     {
-        if (n.locked.load() || &n == &engine.getRoot()) return;
+        if (keeps (n) || &n == &engine.getRoot()) return;
         if (auto* b = dynamic_cast<Block*> (&n)) b->randomise (rng, amount);
         else if (auto* s = dynamic_cast<Split*> (&n)) randomiseSplit (*s, amount);
     });
@@ -346,7 +349,7 @@ void Randomiser::randomiseSplit (Split& s, float amount)
 Node* Randomiser::randomiseType (const juce::String& id)
 {
     auto* n = engine.findNode (id);
-    if (n == nullptr || dynamic_cast<Block*> (n) == nullptr) return nullptr;
+    if (n == nullptr || dynamic_cast<Block*> (n) == nullptr || n->getType() == NodeType::Tuner) return nullptr;
     auto fresh = makeRandom (categoryOf (*n), n);
     if (fresh == nullptr) return nullptr;
     return engine.replace (id, std::move (fresh));

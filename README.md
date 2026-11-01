@@ -4,6 +4,10 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 ![A delay selected: name, icon row and echo display on the left, every control on the right](docs/screenshot-v3.png)
 
+![The OUT block selected: stereo meters, limiter gain reduction and history, master, width and brickwall ceiling](docs/screenshot-io.png)
+
+![A Tuner block in the rig, with strobe, cents needle and reference pitch](docs/screenshot-tuner.png)
+
 ![A randomised rig: three NAM amps with their cabs in parallel, then delay and shimmer reverb](docs/screenshot-random.png)
 
 ## Features
@@ -25,20 +29,22 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **Automatic latency alignment**: paths with different plug-in latency stay in time, so blends don't comb-filter.
 - Wire thickness shows how much signal each path carries.
 
-**Built-in effects** (22), each with a live FabFilter-style display of what its knobs are doing
+**Built-in effects** (22 + tuner), each with a live FabFilter-style display of what its knobs are doing
 - Dynamics: noise gate, compressor (soft knee, auto makeup, blend), limiter, expander, transient shaper, auto swell
 - Drive (2x oversampled): overdrive, fuzz (with octave), clean boost, bit crusher
 - EQ & filter: studio EQ with **draggable bands**, wah (pedal / envelope / LFO)
 - Modulation: chorus, flanger, phaser, tremolo (incl. harmonic), Uni-Vibe, rotary speaker
 - Time: delay (digital / tape / ping-pong / dual, with ducking), reverb (room / hall / plate / spring / shimmer)
 - Pitch: octave down / up, pitch shift, doubler
+- Utility: tuner, volume / pan
 - Displays: filter curves over a live pre/post spectrum, compressor transfer curves with the signal riding on them, waveshaper curves, LFO shapes, echo taps, reverb decay
 
 **Randomise** (dice icons)
-- **Whole rig** (Randomise, top bar): dynamics, drives, NAM amps picked from your model folders, cabs from your IR folders, modulation, delays and reverbs, sometimes as a 2- or 3-amp split. Musical ranges, levels never randomised.
+- **Whole rig** (dice, top bar; right-click for options): dynamics, drives, NAM amps picked from your model folders, cabs from your IR folders, modulation, delays and reverbs, sometimes as a 2- or 3-amp split. Musical ranges, levels never randomised.
 - **Lock** blocks you like (lock icon, or right-click) and they survive every roll.
-- **Per block**: the dice randomises its settings (right-click for a subtle *mutate*); the shuffle icon swaps it for a random block of the same kind (a delay becomes another delay or a delay plug-in, a NAM amp gets another model).
-- More in the dice's menu: new blocks in the same layout, randomise or mutate every block, include plug-ins, allow splits.
+- **Dice on each block** (bottom-right of its card): swaps it for a random block of the same kind (a delay becomes another delay or a delay plug-in, a NAM amp gets another model).
+- **Dice in the bottom panel**: randomises the selected block's settings.
+- More in the top dice's right-click menu: new blocks in the same layout, randomise every block's settings, include plug-ins, allow splits.
 - Everything is one **undo** step (Ctrl+Z / Ctrl+Y, also the arrows in the top bar).
 
 **Workflow**
@@ -58,9 +64,11 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - Hosts any **VST3** effect (and VST2 in builds made with the VST2 SDK; see below). Plug-in state is saved in your presets, and a missing plug-in keeps its settings until you reinstall it.
 - **Scenes A–D**: per-scene bypass, path levels and mutes, with click-free crossfades.
 - **MIDI learn** for footswitches and expression pedals: scenes, bypass, path levels, an A/B amp blend, any knob, next/previous preset, tuner and master volume. Program Change selects presets.
-- **Tuner** with a mute option; built-in noise gate, compressor, studio EQ and volume/pan blocks.
+- **Tuner**: the tuning fork in the top bar opens a full-screen tuner (`T`), and **Tuner** is also a block you can put anywhere in the rig, with a strobe, a cents needle, a steadiness history, mute and a 430–450 Hz reference.
 - Presets are `.rig` files in `Documents\Rigsmith\Presets`; sub-folders show up as banks.
-- Output safety limiter, input routing (input 1, input 2, summed or stereo) and input/output gain.
+- **Click IN or OUT** for the input / output panel: stereo peak + RMS meters with peak hold and clip counters, and a level history.
+  - Input: gain, balance, source (input 1, input 2, summed or stereo) and polarity flip.
+  - Output: master, balance, stereo width (down to mono), and a zero-latency **brickwall limiter** with ceiling and release controls, a gain-reduction meter and a limiting history.
 
 ## Download
 
@@ -72,7 +80,7 @@ Every push builds on GitHub Actions. Open the **Actions** tab, pick the latest r
 To publish a GitHub Release, push a tag:
 
 ```
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.4.0 && git push origin v0.4.0
 ```
 
 ## Quick start
@@ -135,7 +143,7 @@ build/RigsmithTests_artefacts/Release/RigsmithTests build/_deps/namcore-src/exam
 Source/
   Engine/   audio graph: Node, Chain, Split, NAM/IR blocks, 22 built-in effects (Fx.cpp, Dsp.h),
             VST3 hosting, scenes, MIDI, presets, undo, randomiser, tuner (no UI code)
-  UI/       look & feel, icons, graph view, inspector + effect displays, library, settings, header
+  UI/       look & feel, icons, graph view, inspector + effect displays, I/O panel, library, settings, header
   PluginProcessor.*  /  PluginEditor.*   JUCE glue shared by the exe and the VST3
 Tests/      headless engine tests
 installer/  Inno Setup script used by CI

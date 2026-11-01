@@ -90,6 +90,17 @@ void FxDisplay::pullSpectrum()
 
 void FxDisplay::timerCallback()
 {
+    if (visual == Visual::Tuner)
+    {
+        if (auto* tb = dynamic_cast<TunerBlock*> (&block))
+            tunerReading = tb->getReading();
+        const float target = tunerReading.valid ? juce::jlimit (-50.0f, 50.0f, tunerReading.cents) : 0.0f;
+        needle += (target - needle) * 0.35f;
+        if (tunerReading.valid) strobePhase += tunerReading.cents * 0.012f;
+        if (centsHistory.size() < 120) centsHistory.resize (120, -1000.0f);
+        std::move (centsHistory.begin() + 1, centsHistory.end(), centsHistory.begin());
+        centsHistory.back() = tunerReading.valid ? target : -1000.0f;
+    }
     if (visual == Visual::Spectrum || visual == Visual::Response)
         pullSpectrum();
     if (visual == Visual::Envelope || visual == Visual::Dynamics)
@@ -491,6 +502,7 @@ void FxDisplay::paint (juce::Graphics& g)
         case Visual::Delay:    drawDelay (g); break;
         case Visual::Reverb:   drawReverb (g); break;
         case Visual::Envelope: drawEnvelope (g); break;
+        case Visual::Tuner:    drawTuner (g); break;
         case Visual::Spectrum: drawGrid (g, true, 18.0f); drawSpectrum (g); break;
         case Visual::None:     break;
     }
@@ -503,6 +515,109 @@ void FxDisplay::paint (juce::Graphics& g)
         g.fillRoundedRectangle (r.toFloat(), 6.0f);
         g.setColour (text);
         g.drawText (highlight, r, juce::Justification::centred);
+    }
+}
+
+//==============================================================================
+void FxDisplay::drawTuner (juce::Graphics& g)
+{
+    auto area = getLocalBounds().toFloat().reduced (12.0f, 10.0f);
+    const auto& r = tunerReading;
+    const bool valid = r.valid;
+    const float cents = needle;
+    const bool inTune = valid && std::abs (r.cents) < 3.0f;
+    const auto c = ! valid ? dim : (inTune ? teal : (std::abs (r.cents) < 15.0f ? accent : red));
+    const bool isMuted = block.get (TunerBlock::pMute) > 0.5f && ! block.bypassed.load();
+
+    // left: the note, big
+    auto left = area.removeFromLeft (juce::jmin (area.getWidth() * 0.34f, 150.0f));
+    g.setColour (c);
+    g.setFont (font (juce::jmin (left.getHeight() * 0.55f, 76.0f), true));
+    g.drawText (valid ? r.note : juce::String ("-"), left.withTrimmedBottom (left.getHeight() * 0.3f).toNearestInt(), juce::Justification::centred);
+    g.setFont (mono (11.0f));
+    g.setColour (isMuted ? accent : theme::muted);
+    juce::String sub = block.bypassed.load() ? juce::String ("switch on to tune")
+                     : valid ? juce::String (r.frequency, 1) + " Hz" : juce::String ("play a string");
+    g.drawText (sub, left.removeFromBottom (left.getHeight() * 0.3f).toNearestInt(), juce::Justification::centredTop);
+    if (isMuted)
+    {
+        g.setFont (font (10.0f, true));
+        g.drawText ("OUTPUT MUTED", left.removeFromBottom (14).toNearestInt(), juce::Justification::centred);
+    }
+    area.removeFromLeft (10.0f);
+
+    // right top: strobe band (scrolls left when flat, right when sharp, stands still in tune)
+    auto strobe = area.removeFromTop (area.getHeight() * 0.28f);
+    g.setColour (juce::Colour (0xff0c0d10));
+    g.fillRoundedRectangle (strobe, 6.0f);
+    {
+        juce::Graphics::ScopedSaveState ss (g);
+        juce::Path clip;
+        clip.addRoundedRectangle (strobe, 6.0f);
+        g.reduceClipRegion (clip);
+        const float period = 26.0f;
+        const float off = std::fmod (strobePhase * period, period);
+        for (float x = strobe.getX() - period + off; x < strobe.getRight(); x += period)
+        {
+            g.setColour ((valid ? c : dim).withAlpha (valid ? 0.85f : 0.25f));
+            g.fillRect (x, strobe.getY(), period * 0.5f, strobe.getHeight() * 0.5f);
+            g.fillRect (x + period * 0.5f, strobe.getCentreY(), period * 0.5f, strobe.getHeight() * 0.5f);
+        }
+    }
+    area.removeFromTop (10.0f);
+
+    // right middle: cents scale with needle
+    auto scale = area.removeFromTop (area.getHeight() * 0.5f);
+    const float cx = scale.getCentreX(), half = scale.getWidth() * 0.5f - 12.0f;
+    g.setFont (mono (9.5f));
+    for (int i = -50; i <= 50; i += 10)
+    {
+        const float x = cx + (float) i / 50.0f * half;
+        const bool major = i % 50 == 0 || i == 0;
+        g.setColour (i == 0 ? teal : (major ? borderHi : juce::Colour (0xff2a2c33)));
+        const float th = i == 0 ? scale.getHeight() * 0.62f : scale.getHeight() * (major ? 0.42f : 0.28f);
+        g.fillRect (x - (i == 0 ? 1.5f : 0.75f), scale.getY() + 2.0f, i == 0 ? 3.0f : 1.5f, th);
+        if (i % 25 == 0 || i == 0 || std::abs (i) == 50)
+        {
+            g.setColour (dim);
+            g.drawText ((i > 0 ? "+" : "") + juce::String (i), (int) x - 16, (int) (scale.getBottom() - 13.0f), 32, 12, juce::Justification::centred);
+        }
+    }
+    g.setColour (teal.withAlpha (0.10f));
+    g.fillRect (cx - 3.0f / 50.0f * half, scale.getY(), 6.0f / 50.0f * half, scale.getHeight() - 14.0f);
+    if (valid)
+    {
+        const float x = cx + cents / 50.0f * half;
+        g.setColour (c.withAlpha (0.25f));
+        g.fillRoundedRectangle (x - 7.0f, scale.getY() - 2.0f, 14.0f, scale.getHeight() - 10.0f, 7.0f);
+        g.setColour (c);
+        g.fillRoundedRectangle (x - 2.5f, scale.getY(), 5.0f, scale.getHeight() - 14.0f, 2.5f);
+        g.setFont (font (13.0f, true));
+        g.drawText ((r.cents >= 0 ? "+" : "") + juce::String (r.cents, 1) + " c", scale.withTrimmedBottom (14).toNearestInt().removeFromRight (70),
+                    juce::Justification::topRight);
+    }
+    area.removeFromTop (6.0f);
+
+    // right bottom: tuning history (how steady the note is)
+    if (area.getHeight() > 18.0f && ! centsHistory.empty())
+    {
+        g.setColour (juce::Colour (0xff1e2025));
+        g.drawHorizontalLine ((int) area.getCentreY(), area.getX(), area.getRight());
+        juce::Path hp;
+        bool started = false;
+        for (size_t i = 0; i < centsHistory.size(); ++i)
+        {
+            const float v = centsHistory[i];
+            const float x = area.getX() + area.getWidth() * (float) i / (float) (centsHistory.size() - 1);
+            if (v < -999.0f) { started = false; continue; }
+            const float y = area.getCentreY() - juce::jlimit (-50.0f, 50.0f, v) / 50.0f * area.getHeight() * 0.5f;
+            if (! started) { hp.startNewSubPath (x, y); started = true; } else hp.lineTo (x, y);
+        }
+        g.setColour (c.withAlpha (0.8f));
+        g.strokePath (hp, juce::PathStrokeType (1.5f));
+        g.setColour (dim);
+        g.setFont (mono (9.5f));
+        g.drawText ("A = " + juce::String (juce::roundToInt (block.get (TunerBlock::pReference))) + " Hz", area.toNearestInt(), juce::Justification::bottomRight);
     }
 }
 

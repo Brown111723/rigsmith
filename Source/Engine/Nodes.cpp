@@ -10,7 +10,8 @@ static const std::pair<NodeType, const char*> typeNames[] = {
     { NodeType::Fuzz, "fuzz" }, { NodeType::Boost, "boost" }, { NodeType::Crusher, "crusher" }, { NodeType::Wah, "wah" },
     { NodeType::Chorus, "chorus" }, { NodeType::Flanger, "flanger" }, { NodeType::Phaser, "phaser" },
     { NodeType::Tremolo, "tremolo" }, { NodeType::Vibe, "vibe" }, { NodeType::Rotary, "rotary" },
-    { NodeType::Delay, "delay" }, { NodeType::Reverb, "reverb" }, { NodeType::Pitch, "pitch" }
+    { NodeType::Delay, "delay" }, { NodeType::Reverb, "reverb" }, { NodeType::Pitch, "pitch" },
+    { NodeType::Tuner, "tuner" }
 };
 
 juce::String nodeTypeToString (NodeType t)
@@ -86,7 +87,7 @@ Category categoryForBuiltIn (NodeType t)
         case NodeType::Delay:                                                    return Category::Delay;
         case NodeType::Reverb:                                                   return Category::Reverb;
         case NodeType::Pitch:                                                    return Category::Pitch;
-        case NodeType::Gain:                                                     return Category::Utility;
+        case NodeType::Gain: case NodeType::Tuner:                               return Category::Utility;
         case NodeType::Split: case NodeType::Chain:                              return Category::Routing;
         case NodeType::Plugin:                                                   return Category::Other;
     }

@@ -4,6 +4,7 @@
 #include "UI/Theme.h"
 #include "UI/GraphView.h"
 #include "UI/Inspector.h"
+#include "UI/IoPanel.h"
 #include "UI/Library.h"
 #include "UI/Header.h"
 #include "Engine/Randomiser.h"
@@ -116,6 +117,7 @@ private:
     juce::Viewport viewport;
     rig::GraphView graph;
     rig::Inspector inspector;
+    rig::IoPanel ioPanel { *this };
     rig::Library library;
     rig::TunerOverlay tunerOverlay;
     rig::Randomiser randomiser { engine };
@@ -130,7 +132,9 @@ private:
 
     juce::String selectedId, toast;
     juce::uint32 toastTime = 0;
-    float inMeter = 0, outMeter = 0;
+    rig::IoLevels levels;
+    bool isIoSelected() const { return selectedId == rig::kInputId || selectedId == rig::kOutputId; }
+    void showPanelFor (const juce::String& id);
     rig::Tuner::Reading reading;
     int tick = 0;
 

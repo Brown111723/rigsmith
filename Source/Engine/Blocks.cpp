@@ -266,4 +266,69 @@ void IrBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     }
 }
 
+//==============================================================================
+TunerBlock::TunerBlock()
+    : Block (NodeType::Tuner, {
+        Toggle ("mute", "Mute output", false).fixed(),
+        P ("reference", "Reference A", 430.0f, 450.0f, 440.0f, "Hz").fixed() })
+{
+}
+
+juce::String TunerBlock::getDetail() const
+{
+    if (! reading.valid) return "A = " + formatValue (pReference);
+    return reading.note + juce::String (reading.octave) + "  " + (reading.cents >= 0 ? "+" : "") + juce::String (juce::roundToInt (reading.cents)) + " c";
+}
+
+const Tuner::Reading& TunerBlock::getReading()
+{
+    const auto now = juce::Time::getMillisecondCounter();
+    if (bypassed.load() || now - lastAudio.load() > 400)
+    {
+        reading = {};
+        return reading;
+    }
+    if (now - lastAnalysis >= 40)
+    {
+        lastAnalysis = now;
+        tuner.referenceA = get (pReference);
+        reading = tuner.analyse();
+    }
+    return reading;
+}
+
+void TunerBlock::prepareImpl (double sr, int)
+{
+    tuner.prepare (sr);
+    muteGain.reset (sr, 0.01);
+    muteGain.setCurrentAndTargetValue (get (pMute) > 0.5f ? 0.0f : 1.0f);
+}
+
+void TunerBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
+{
+    auto* l = b.getWritePointer (0);
+    auto* r = b.getWritePointer (1);
+    float pk = 0;
+    for (int off = 0; off < n; off += 512)
+    {
+        const int len = juce::jmin (512, n - off);
+        for (int i = 0; i < len; ++i)
+        {
+            scratch[i] = 0.5f * (l[off + i] + r[off + i]);
+            pk = juce::jmax (pk, std::abs (scratch[i]));
+        }
+        tuner.push (scratch, len);
+    }
+    lastAudio.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
+
+    muteGain.setTargetValue (get (pMute) > 0.5f ? 0.0f : 1.0f);
+    if (muteGain.isSmoothing() || muteGain.getCurrentValue() < 0.999f)
+        for (int i = 0; i < n; ++i)
+        {
+            const float g = muteGain.getNextValue();
+            l[i] *= g; r[i] *= g;
+        }
+    updateMeters (pk, pk * muteGain.getCurrentValue(), 0.0f);
+}
+
 } // namespace rig

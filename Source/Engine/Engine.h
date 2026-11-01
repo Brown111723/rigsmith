@@ -50,6 +50,24 @@ public:
     std::atomic<float> inPeak { 0.0f }, outPeak { 0.0f };
     Tuner tuner;
 
+    // v0.4 input / output stage (session settings, shown when you click IN / OUT)
+    std::atomic<float> inputPan { 0.0f };                    // -1..1 balance
+    std::atomic<bool> inputPhase { false };                  // polarity flip
+    std::atomic<float> outputPan { 0.0f };                   // -1..1 balance
+    std::atomic<float> outputWidth { 100.0f };               // 0 (mono) .. 200 % stereo width
+    std::atomic<float> limiterCeilingDb { -0.3f };           // brickwall ceiling
+    std::atomic<float> limiterReleaseMs { 60.0f };
+
+    /** Peak / RMS per channel; the UI takes (and resets) them. */
+    struct Meter
+    {
+        std::atomic<float> peakL { 0 }, peakR { 0 }, rmsL { 0 }, rmsR { 0 };
+        std::atomic<int> overs { 0 };   // samples at or above the clip point since the last reset
+        void write (const float* l, const float* r, int n, float clipAt) noexcept;
+    };
+    Meter inMeter, outMeter;
+    std::atomic<float> limiterGrDb { 0.0f };   // deepest gain reduction since the UI last looked (negative dB)
+
     //--- Graph (message thread only) -------------------------------------------
     Chain& getRoot() noexcept { return *root; }
     Node* findNode (const juce::String& id) const;
@@ -204,8 +222,8 @@ private:
 
     double sampleRate = 48000.0;
     int blockSize = 512;
-    juce::dsp::Limiter<float> limiter;
-    juce::SmoothedValue<float> inGain, outGain;
+    juce::SmoothedValue<float> inGain, outGain, inPanL, inPanR, outPanL, outPanR, outWidth;
+    float limGain = 1.0f;   // zero-latency brickwall limiter state
 
     juce::ValueTree scenes[kNumScenes];
     int activeScene = 0;
