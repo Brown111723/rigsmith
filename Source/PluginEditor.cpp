@@ -80,9 +80,9 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     library.onActivateFile = [this] (const juce::File& f)
     {
         auto* sel = engine.findNode (selectedId);
-        auto* card = sel != nullptr && ((sel->getType() == NodeType::Nam && f.hasFileExtension ("nam"))
-                                        || (sel->getType() == NodeType::Ir && ! f.hasFileExtension ("nam"))) ? sel : nullptr;
-        loadFileInto (card, card == nullptr ? &engine.getRoot() : nullptr, -1, f);
+        auto* target = sel != nullptr && ((sel->getType() == NodeType::Nam && f.hasFileExtension ("nam"))
+                                          || (sel->getType() == NodeType::Ir && ! f.hasFileExtension ("nam"))) ? sel : nullptr;
+        loadFileInto (target, target == nullptr ? &engine.getRoot() : nullptr, -1, f);
     };
     library.onActivatePlugin = [this] (const juce::String& ident) { insertPlugin (ident, engine.getRoot(), -1); };
     library.onScanPlugins = [this] { showPluginScanner(); };
@@ -149,9 +149,9 @@ void RigsmithEditor::resized()
     graph.fitTo (viewport.getLocalBounds().withTrimmedBottom (viewport.getScrollBarThickness()));
 }
 
-void RigsmithEditor::showMessage (const juce::String& text)
+void RigsmithEditor::showMessage (const juce::String& message)
 {
-    toast = text;
+    toast = message;
     toastTime = juce::Time::getMillisecondCounter();
     repaint();
 }

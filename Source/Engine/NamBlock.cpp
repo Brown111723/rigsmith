@@ -201,7 +201,9 @@ void NamBlock::fromState (const juce::ValueTree& v)
     {
         juce::String err;
         if (! loadModel (juce::File (path), err))
+        {
             DBG (err);
+        }
     }
 }
 
