@@ -48,6 +48,7 @@ Engine::Engine() : root (std::make_unique<Chain>())
     if (auto* s = props.getUserSettings())
         if (auto xml = s->getXmlValue ("pluginList"))
             knownPlugins.recreateFromXml (*xml);
+    PluginBlock::autoCategorise = getSetting ("autoCategorise", true);
     knownPlugins.addChangeListener (this);
 
     loadDefaultRig();
@@ -83,6 +84,49 @@ juce::File Engine::getFolder (const juce::String& key) const
     auto f = juce::String (sub).isEmpty() ? base : base.getChildFile (sub);
     f.createDirectory();
     return f;
+}
+
+juce::FileSearchPath Engine::getPaths (const juce::String& key) const
+{
+    juce::FileSearchPath p;
+    if (auto* s = const_cast<juce::ApplicationProperties&> (props).getUserSettings())
+        p = juce::FileSearchPath (s->getValue (key));
+    p.removeNonExistentPaths();
+    if (p.getNumPaths() == 0)
+        p.add (getFolder (key == "modelPaths" ? "modelFolder" : "irFolder"));   // v0.1 single folder, or the default
+    return p;
+}
+
+void Engine::setPaths (const juce::String& key, const juce::FileSearchPath& p)
+{
+    if (auto* s = props.getUserSettings())
+    {
+        s->setValue (key, p.toString());
+        s->saveIfNeeded();
+    }
+}
+
+bool Engine::getSetting (const juce::String& key, bool def) const
+{
+    if (auto* s = const_cast<juce::ApplicationProperties&> (props).getUserSettings())
+        return s->getBoolValue (key, def);
+    return def;
+}
+
+void Engine::setSetting (const juce::String& key, bool value)
+{
+    if (auto* s = props.getUserSettings())
+    {
+        s->setValue (key, value);
+        s->saveIfNeeded();
+    }
+}
+
+void Engine::setAnalyzedNode (Node* n)
+{
+    visitNodes (*root, [] (Node& x) { x.tap = nullptr; });
+    analyzer.reset();
+    if (n != nullptr) n->tap = &analyzer;
 }
 
 void Engine::setFolder (const juce::String& key, const juce::File& f)
@@ -310,6 +354,15 @@ void Engine::applyMapping (const MidiMapping& m, int value)
             s->branches[1]->level = v;
         }
     }
+    else if (auto* pb = dynamic_cast<PluginBlock*> (node); pb != nullptr && m.target == T::Param && m.index >= 1000)
+    {
+        if (auto* inst = pb->getInstance())
+        {
+            auto params = inst->getParameters();
+            if (juce::isPositiveAndBelow (m.index - 1000, params.size()))
+                params[m.index - 1000]->setValueNotifyingHost (v);
+        }
+    }
     else if (auto* b = dynamic_cast<Block*> (node))
     {
         if (m.target == T::Param && juce::isPositiveAndBelow (m.index, b->numParams()))
@@ -362,6 +415,12 @@ juce::String Engine::describe (const MidiMapping& m) const
         case T::Blend:        return nodeName() + " A/B blend";
         case T::Param:
         {
+            if (auto* pb = dynamic_cast<PluginBlock*> (findNode (m.nodeId)); pb != nullptr && m.index >= 1000 && pb->getInstance() != nullptr)
+            {
+                auto params = pb->getInstance()->getParameters();
+                if (juce::isPositiveAndBelow (m.index - 1000, params.size()))
+                    return pb->getName() + " " + params[m.index - 1000]->getName (32);
+            }
             if (auto* b = dynamic_cast<Block*> (findNode (m.nodeId)))
                 if (juce::isPositiveAndBelow (m.index, b->numParams()))
                     return b->getName() + " " + b->getSpecs()[(size_t) m.index].name;
@@ -435,7 +494,25 @@ std::unique_ptr<Node> Engine::createNode (NodeType type) const
         case NodeType::Gate:   return std::make_unique<GateBlock>();
         case NodeType::Eq:     return std::make_unique<EqBlock>();
         case NodeType::Gain:   return std::make_unique<GainBlock>();
-        case NodeType::Comp:   return std::make_unique<CompBlock>();
+        case NodeType::Comp:      return std::make_unique<CompBlock>();
+        case NodeType::Limiter:   return std::make_unique<LimiterBlock>();
+        case NodeType::Expander:  return std::make_unique<ExpanderBlock>();
+        case NodeType::Transient: return std::make_unique<TransientBlock>();
+        case NodeType::Swell:     return std::make_unique<SwellBlock>();
+        case NodeType::Overdrive: return std::make_unique<OverdriveBlock>();
+        case NodeType::Fuzz:      return std::make_unique<FuzzBlock>();
+        case NodeType::Boost:     return std::make_unique<BoostBlock>();
+        case NodeType::Crusher:   return std::make_unique<CrusherBlock>();
+        case NodeType::Wah:       return std::make_unique<WahBlock>();
+        case NodeType::Chorus:    return std::make_unique<ChorusBlock>();
+        case NodeType::Flanger:   return std::make_unique<FlangerBlock>();
+        case NodeType::Phaser:    return std::make_unique<PhaserBlock>();
+        case NodeType::Tremolo:   return std::make_unique<TremoloBlock>();
+        case NodeType::Vibe:      return std::make_unique<VibeBlock>();
+        case NodeType::Rotary:    return std::make_unique<RotaryBlock>();
+        case NodeType::Delay:     return std::make_unique<DelayBlock>();
+        case NodeType::Reverb:    return std::make_unique<ReverbBlock>();
+        case NodeType::Pitch:     return std::make_unique<PitchBlock>();
         case NodeType::Plugin: break;
     }
     return nullptr;
@@ -467,6 +544,34 @@ Node* Engine::insert (std::unique_ptr<Node> node, Chain& target, int index)
         target.nodes.insert (target.nodes.begin() + index, std::move (node));
     }
     storeScene();
+    markDirty();
+    notifyGraphChanged();
+    return raw;
+}
+
+Node* Engine::replace (const juce::String& id, std::unique_ptr<Node> n)
+{
+    auto loc = locate (id);
+    if (loc.chain == nullptr || n == nullptr) return nullptr;
+    auto& slot = loc.chain->nodes[(size_t) loc.index];
+    n->id = id;
+    n->bypassed = slot->bypassed.load();
+    n->autoGain = slot->autoGain.load();
+    prepareNode (*n);
+    auto* raw = n.get();
+    std::unique_ptr<Node> old;
+    {
+        const juce::ScopedLock sl (lock);
+        old = std::move (slot);
+        slot = std::move (n);
+    }
+    announceDeletion (*old);
+    old.reset();
+    // mappings that pointed at parameters of the old block no longer make sense
+    mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [&] (const MidiMapping& m)
+    {
+        return m.nodeId == id && m.target == MidiMapping::Target::Param;
+    }), mappings.end());
     markDirty();
     notifyGraphChanged();
     return raw;

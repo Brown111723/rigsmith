@@ -4,25 +4,13 @@ namespace rig::theme
 {
 juce::Colour colourFor (const Node& n)
 {
-    switch (n.getType())
+    if (n.getType() == NodeType::Split) return accent;
+    if (auto* pb = dynamic_cast<const PluginBlock*> (&n); pb != nullptr && ! PluginBlock::autoCategorise)
     {
-        case NodeType::Nam:    return accent;
-        case NodeType::Ir:     return teal;
-        case NodeType::Gate:   return juce::Colour (0xff8a8f99);
-        case NodeType::Eq:     return green;
-        case NodeType::Gain:   return juce::Colour (0xffb8bcc6);
-        case NodeType::Comp:   return juce::Colour (0xfff0d264);
-        case NodeType::Split:  return accent;
-        case NodeType::Chain:  return muted;
-        case NodeType::Plugin:
-        {
-            // stable colour per plug-in name
-            const auto h = (juce::uint32) n.getName().hashCode();
-            const float hue = (float) (h % 360) / 360.0f;
-            return juce::Colour::fromHSV (hue, 0.45f, 0.95f, 1.0f);
-        }
+        const auto h = (juce::uint32) n.getName().hashCode();   // stable colour per plug-in name
+        return juce::Colour::fromHSV ((float) (h % 360) / 360.0f, 0.45f, 0.95f, 1.0f);
     }
-    return muted;
+    return categoryColour (n.getCategory());
 }
 
 juce::Colour branchColour (int i)
@@ -37,15 +25,13 @@ juce::String kindLabel (const Node& n)
     {
         case NodeType::Nam:    return "NAM";
         case NodeType::Ir:     return "CAB IR";
-        case NodeType::Gate:   return "BUILT-IN";
-        case NodeType::Eq:     return "BUILT-IN";
-        case NodeType::Gain:   return "BUILT-IN";
-        case NodeType::Comp:   return "BUILT-IN";
         case NodeType::Split:  return "SPLIT";
         case NodeType::Chain:  return "CHAIN";
-        case NodeType::Plugin: return "VST3";
+        case NodeType::Plugin:
+            return PluginBlock::autoCategorise ? "VST - " + categoryName (n.getCategory()).toUpperCase() : juce::String ("VST");
+        default: break;
     }
-    return {};
+    return categoryName (n.getCategory()).toUpperCase();
 }
 
 juce::Font font (float size, bool bold)

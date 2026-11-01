@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "UI/Settings.h"
 
 #if JucePlugin_Build_Standalone
  #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
@@ -55,6 +56,8 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     viewport.setViewedComponent (&graph, false);
     viewport.setScrollBarsShown (true, true);
     viewport.setScrollBarThickness (10);
+    viewport.setWantsKeyboardFocus (false);   // keys (scenes, presets, bypass) belong to the rig, not to scrolling
+    graph.onBackgroundClick = [this] { select ({}); grabKeyboardFocus(); };
     addAndMakeVisible (viewport);
     addAndMakeVisible (inspector);
     addAndMakeVisible (library);
@@ -86,6 +89,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     };
     library.onActivatePlugin = [this] (const juce::String& ident) { insertPlugin (ident, engine.getRoot(), -1); };
     library.onScanPlugins = [this] { showPluginScanner(); };
+    library.onManageFolders = [this] { showSettings(); };
 
     engine.addListener (this);
     engine.knownPlugins.addChangeListener (this);
@@ -99,10 +103,21 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
 
     setWantsKeyboardFocus (true);
     setResizable (true, true);
-    setResizeLimits (1180, 700, 4000, 2600);
+    setResizeLimits (1180, 740, 4000, 2600);
     setSize (1440, 900);
     updateTuner();
     startTimerHz (30);
+
+    // once per run: pick up plug-ins installed since last time
+    static bool scannedThisRun = false;
+    if (! scannedThisRun && engine.getSetting ("scanOnStartup", true))
+    {
+        scannedThisRun = true;
+        juce::Timer::callAfterDelay (1500, [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
+        {
+            if (sp != nullptr) sp->scanForNewPlugins (false);
+        });
+    }
 }
 
 RigsmithEditor::~RigsmithEditor()
@@ -143,7 +158,7 @@ void RigsmithEditor::resized()
     auto r = getLocalBounds();
     header.setBounds (r.removeFromTop (64));
     library.setBounds (r.removeFromRight (300));
-    inspector.setBounds (r.removeFromBottom (240));
+    inspector.setBounds (r.removeFromBottom (272));
     viewport.setBounds (r);
     tunerOverlay.setBounds (r);
     graph.fitTo (viewport.getLocalBounds().withTrimmedBottom (viewport.getScrollBarThickness()));
@@ -204,6 +219,8 @@ void RigsmithEditor::handleAsyncUpdate()
     const auto viewPos = viewport.getViewPosition();
     graph.rebuild();
     graph.setVisible (true);
+    if (isShowing() && juce::Component::getCurrentlyFocusedComponent() == nullptr)
+        grabKeyboardFocus();
     graph.fitTo (viewport.getLocalBounds().withTrimmedBottom (viewport.getScrollBarThickness()));
     viewport.setViewPosition (viewPos);
     auto* n = engine.findNode (selectedId);
@@ -273,7 +290,7 @@ void RigsmithEditor::chooseFileFor (Node& n)
     const bool isNam = n.getType() == NodeType::Nam;
     const auto id = n.id;
     chooser = std::make_unique<juce::FileChooser> (isNam ? "Load a NAM model" : "Load a cab IR",
-                                                   engine.getFolder (isNam ? "modelFolder" : "irFolder"),
+                                                   juce::File (engine.getPaths (isNam ? "modelPaths" : "irPaths").getRawString (0)),
                                                    isNam ? "*.nam" : "*.wav;*.aif;*.aiff;*.flac");
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                           [this, id] (const juce::FileChooser& fc)
@@ -357,43 +374,119 @@ bool RigsmithEditor::insertPlugin (const juce::String& identifier, Chain& chain,
 //==============================================================================
 enum AddIds
 {
-    addNam = 1, addIr, addGate, addComp, addEq, addGain,
-    addSplit2 = 10, addSplit3, addXover, addStereo, addScan = 20, addPluginBase = 1000, insertOffset = 50000
+    addSplit2 = 10, addSplit3, addXover, addStereo, addScan = 20,
+    addBuiltInBase = 100,           // + (int) NodeType
+    addPluginBase = 1000,
+    insertOffset = 50000, replaceOffset = 70000
 };
 
-void RigsmithEditor::populateAddMenu (juce::PopupMenu& m, int o)
+static const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups()
+{
+    static const std::vector<std::pair<juce::String, std::vector<NodeType>>> groups {
+        { "Dynamics",       { NodeType::Gate, NodeType::Comp, NodeType::Limiter, NodeType::Expander, NodeType::Transient, NodeType::Swell } },
+        { "Drive",          { NodeType::Overdrive, NodeType::Fuzz, NodeType::Boost, NodeType::Crusher } },
+        { "EQ & Filter",    { NodeType::Eq, NodeType::Wah } },
+        { "Modulation",     { NodeType::Chorus, NodeType::Flanger, NodeType::Phaser, NodeType::Tremolo, NodeType::Vibe, NodeType::Rotary } },
+        { "Delay & Reverb", { NodeType::Delay, NodeType::Reverb } },
+        { "Pitch",          { NodeType::Pitch } },
+        { "Utility",        { NodeType::Gain } } };
+    return groups;
+}
+
+static juce::String builtInMenuName (NodeType t)
+{
+    switch (t)
+    {
+        case NodeType::Gate:      return "Noise Gate";
+        case NodeType::Comp:      return "Compressor";
+        case NodeType::Limiter:   return "Limiter";
+        case NodeType::Expander:  return "Expander";
+        case NodeType::Transient: return "Transient Shaper";
+        case NodeType::Swell:     return "Auto Swell (violin swells)";
+        case NodeType::Overdrive: return "Overdrive";
+        case NodeType::Fuzz:      return "Fuzz";
+        case NodeType::Boost:     return "Clean Boost";
+        case NodeType::Crusher:   return "Bit Crusher";
+        case NodeType::Eq:        return "Studio EQ";
+        case NodeType::Wah:       return "Wah / Auto-Wah";
+        case NodeType::Chorus:    return "Chorus";
+        case NodeType::Flanger:   return "Flanger";
+        case NodeType::Phaser:    return "Phaser";
+        case NodeType::Tremolo:   return "Tremolo";
+        case NodeType::Vibe:      return "Uni-Vibe";
+        case NodeType::Rotary:    return "Rotary Speaker";
+        case NodeType::Delay:     return "Delay (digital / tape / ping-pong / dual)";
+        case NodeType::Reverb:    return "Reverb (room / hall / plate / spring / shimmer)";
+        case NodeType::Pitch:     return "Pitch / Octave / Doubler";
+        case NodeType::Gain:      return "Volume / Pan";
+        default:                  return "Block";
+    }
+}
+
+void RigsmithEditor::populateAddMenu (juce::PopupMenu& m, int o, bool includeRouting)
 {
     m.addSectionHeader ("Amp & cab");
-    m.addItem (o + addNam, "NAM Amp");
-    m.addItem (o + addIr, "Cab IR");
-    m.addSectionHeader ("Built-in");
-    m.addItem (o + addGate, "Noise Gate");
-    m.addItem (o + addComp, "Compressor");
-    m.addItem (o + addEq, "Studio EQ");
-    m.addItem (o + addGain, "Volume / Pan");
-    m.addSectionHeader ("Routing");
-    m.addItem (o + addSplit2, "Split - 2 paths");
-    m.addItem (o + addSplit3, "Split - 3 paths");
-    m.addItem (o + addXover, "Crossover - lows / mids / highs");
-    m.addItem (o + addStereo, "Stereo L/R - dual amp");
-    m.addSectionHeader ("VST3");
+    m.addItem (o + addBuiltInBase + (int) NodeType::Nam, "NAM Amp");
+    m.addItem (o + addBuiltInBase + (int) NodeType::Ir, "Cab IR");
+    m.addSectionHeader ("Built-in effects");
+    for (auto& [group, types] : builtInGroups())
+    {
+        juce::PopupMenu sub;
+        for (auto t : types) sub.addItem (o + addBuiltInBase + (int) t, builtInMenuName (t));
+        m.addSubMenu (group, sub);
+    }
+    if (includeRouting)
+    {
+        m.addSectionHeader ("Routing");
+        m.addItem (o + addSplit2, "Split - 2 paths");
+        m.addItem (o + addSplit3, "Split - 3 paths");
+        m.addItem (o + addXover, "Crossover - lows / mids / highs");
+        m.addItem (o + addStereo, "Stereo L/R - dual amp");
+    }
+    m.addSectionHeader ("Plug-ins");
 
     auto types = engine.knownPlugins.getTypes();
     if (types.isEmpty())
     {
-        m.addItem (o + addScan, "Scan for VST3 plug-ins...");
+        m.addItem (o + addScan, "Scan for plug-ins...");
         return;
     }
 
-    std::map<juce::String, juce::PopupMenu> byMaker;
+    std::map<juce::String, juce::PopupMenu> groups;
     for (int i = 0; i < types.size(); ++i)
-        if (! types[i].isInstrument)
-            byMaker[types[i].manufacturerName.isEmpty() ? juce::String ("Other") : types[i].manufacturerName]
-                .addItem (o + addPluginBase + i, types[i].name);
-    for (auto& [maker, sub] : byMaker)
-        m.addSubMenu (maker, sub);
+    {
+        if (types[i].isInstrument) continue;
+        juce::String key = PluginBlock::autoCategorise ? juce::String::formatted ("%02d", (int) categoriseDescription (types[i])) + categoryName (categoriseDescription (types[i]))
+                                                       : (types[i].manufacturerName.isEmpty() ? juce::String ("Other") : types[i].manufacturerName);
+        groups[key].addItem (o + addPluginBase + i, types[i].name + (PluginBlock::autoCategorise ? "  (" + types[i].manufacturerName + ")" : juce::String()));
+    }
+    for (auto& [key, sub] : groups)
+        m.addSubMenu (PluginBlock::autoCategorise ? key.substring (2) : key, sub);
     m.addSeparator();
     m.addItem (o + addScan, "Scan for new plug-ins...");
+}
+
+std::unique_ptr<Node> RigsmithEditor::createFromMenu (int r, bool& openAfter)
+{
+    openAfter = false;
+    if (r >= addPluginBase)
+    {
+        auto types = engine.knownPlugins.getTypes();
+        const int i = r - addPluginBase;
+        if (! juce::isPositiveAndBelow (i, types.size())) return nullptr;
+        juce::String err;
+        auto n = engine.createPlugin (types[i], err);
+        if (n == nullptr) showMessage ("Couldn't load " + types[i].name + ": " + err);
+        openAfter = n != nullptr;
+        return n;
+    }
+    if (r >= addBuiltInBase)
+    {
+        const auto t = (NodeType) (r - addBuiltInBase);
+        openAfter = t == NodeType::Nam || t == NodeType::Ir;
+        return engine.createNode (t);
+    }
+    return nullptr;
 }
 
 void RigsmithEditor::handleAdd (int r, const juce::String& chainId, int index)
@@ -401,15 +494,8 @@ void RigsmithEditor::handleAdd (int r, const juce::String& chainId, int index)
     auto* chain = chainById (chainId);
     if (r <= 0 || chain == nullptr) return;
 
-    std::unique_ptr<Node> n;
     switch (r)
     {
-        case addNam:  n = engine.createNode (NodeType::Nam); break;
-        case addIr:   n = engine.createNode (NodeType::Ir); break;
-        case addGate: n = engine.createNode (NodeType::Gate); break;
-        case addComp: n = engine.createNode (NodeType::Comp); break;
-        case addEq:   n = engine.createNode (NodeType::Eq); break;
-        case addGain: n = engine.createNode (NodeType::Gain); break;
         case addScan: showPluginScanner(); return;
         case addSplit2: case addSplit3: case addXover: case addStereo:
         {
@@ -428,29 +514,69 @@ void RigsmithEditor::handleAdd (int r, const juce::String& chainId, int index)
             selectedId = s->id;
             return;
         }
-        default:
-        {
-            auto types = engine.knownPlugins.getTypes();
-            const int i = r - addPluginBase;
-            if (juce::isPositiveAndBelow (i, types.size()))
-                insertPlugin (types[i].createIdentifierString(), *chain, index);
-            return;
-        }
+        default: break;
     }
 
-    if (n != nullptr)
+    bool openAfter = false;
+    if (auto n = createFromMenu (r, openAfter))
         if (auto* added = engine.insert (std::move (n), *chain, index))
         {
             selectedId = added->id;
-            if (added->getType() == NodeType::Nam || added->getType() == NodeType::Ir)
-                chooseFileFor (*added);
+            if (openAfter) openNode (*added);
         }
+}
+
+void RigsmithEditor::handleReplace (int r, const juce::String& id)
+{
+    if (r == addScan) { showPluginScanner(); return; }
+    bool openAfter = false;
+    if (auto n = createFromMenu (r, openAfter))
+        if (auto* replaced = engine.replace (id, std::move (n)))
+        {
+            selectedId = replaced->id;
+            showMessage ("Replaced with " + replaced->getName());
+            if (openAfter) openNode (*replaced);
+        }
+}
+
+void RigsmithEditor::showReplaceMenu (Node& node, juce::Component* anchor)
+{
+    const auto id = node.id;
+    juce::PopupMenu m;
+    if (node.getType() == NodeType::Nam) { m.addItem (1, "Different model..."); m.addSeparator(); }
+    if (node.getType() == NodeType::Ir)  { m.addItem (1, "Different IR...");    m.addSeparator(); }
+    populateAddMenu (m, replaceOffset, false);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor), [this, id] (int r)
+    {
+        auto* n = engine.findNode (id);
+        if (n == nullptr || r == 0) return;
+        if (r == 1) { chooseFileFor (*n); return; }
+        handleReplace (r - replaceOffset, id);
+    });
+}
+
+void RigsmithEditor::browseFile (Node& n, int delta)
+{
+    juce::File current;
+    if (auto* nb = dynamic_cast<NamBlock*> (&n)) current = nb->getFile();
+    else if (auto* ir = dynamic_cast<IrBlock*> (&n)) current = ir->getFile();
+    const bool isNam = n.getType() == NodeType::Nam;
+
+    juce::Array<juce::File> files;
+    const auto folder = current.existsAsFile() ? current.getParentDirectory()
+                                               : juce::File (engine.getPaths (isNam ? "modelPaths" : "irPaths").getRawString (0));
+    files = folder.findChildFiles (juce::File::findFiles, false, isNam ? "*.nam" : "*.wav;*.aif;*.aiff;*.flac");
+    if (files.isEmpty()) { showMessage ("No other files in " + folder.getFileName()); return; }
+    std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b) { return a.getFileName().compareNatural (b.getFileName()) < 0; });
+    int idx = files.indexOf (current);
+    idx = idx < 0 ? 0 : (idx + delta + files.size()) % files.size();
+    loadFileInto (&n, nullptr, -1, files[idx]);
 }
 
 void RigsmithEditor::showAddMenu (Chain& chain, int index, juce::Component* anchor)
 {
     juce::PopupMenu m;
-    populateAddMenu (m, 0);
+    populateAddMenu (m, 0, true);
     const auto chainId = chain.id;
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor),
                      [this, chainId, index] (int r) { handleAdd (r, chainId, index); });
@@ -467,6 +593,7 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
     if (node.getType() == NodeType::Ir)     m.addItem (1, "Load IR...");
     if (node.getType() == NodeType::Plugin) m.addItem (1, "Open plug-in window");
     m.addItem (2, "Bypass", true, node.bypassed.load());
+    m.addItem (30, "Auto gain (match output loudness to input)", true, node.autoGain.load());
     m.addItem (8, "MIDI learn: bypass footswitch");
     m.addSeparator();
     if (split != nullptr)
@@ -489,8 +616,14 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
     m.addItem (7, "Move right", loc.chain != nullptr && loc.index < (int) loc.chain->nodes.size() - 1);
 
     juce::PopupMenu insertBefore;
-    populateAddMenu (insertBefore, insertOffset);
+    populateAddMenu (insertBefore, insertOffset, true);
     m.addSubMenu ("Insert before", insertBefore);
+    if (split == nullptr)
+    {
+        juce::PopupMenu replaceWith;
+        populateAddMenu (replaceWith, replaceOffset, false);
+        m.addSubMenu ("Replace with", replaceWith);
+    }
     m.addSeparator();
     m.addItem (9, "Remove");
 
@@ -501,11 +634,8 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
     {
         auto* n = engine.findNode (id);
         if (n == nullptr || r == 0) return;
-        if (r >= insertOffset)
-        {
-            handleAdd (r - insertOffset, chainId, index);
-            return;
-        }
+        if (r >= replaceOffset) { handleReplace (r - replaceOffset, id); return; }
+        if (r >= insertOffset)  { handleAdd (r - insertOffset, chainId, index); return; }
         auto* s = dynamic_cast<Split*> (n);
         auto* chain = chainById (chainId);
         switch (r)
@@ -519,6 +649,7 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
             case 7: if (chain != nullptr) engine.move (id, *chain, index + 2); break;
             case 8: { MidiMapping mm; mm.target = MidiMapping::Target::Bypass; mm.nodeId = id; engine.startLearn (mm); break; }
             case 9: engine.remove (id); break;
+            case 30: n->autoGain = ! n->autoGain.load(); engine.markDirty(); inspector.setNode (n); break;
             case 20: if (s) engine.addBranch (*s); break;
             case 21: case 22: case 23: case 24:
                 if (s) { s->setMode ((SplitMode) (r - 21)); engine.storeScene(); engine.markDirty(); inspector.setNode (s); }
@@ -692,7 +823,8 @@ void RigsmithEditor::showMainMenu()
     juce::PopupMenu m;
     if (processor.isStandalone())
         m.addItem (1, "Audio / MIDI settings...");
-    m.addItem (2, "Scan VST3 plug-ins...");
+    m.addItem (17, "Settings & folders...");
+    m.addItem (2, "Scan plug-ins...");
     m.addSeparator();
 
     juce::PopupMenu input;
@@ -736,6 +868,7 @@ void RigsmithEditor::showMainMenu()
                #endif
                 break;
             case 2: showPluginScanner(); break;
+            case 17: showSettings(); break;
             case 3: engine.limiterOn = ! engine.limiterOn.load(); break;
             case 4: engine.tunerActive = ! engine.tunerActive.load(); updateTuner(); break;
             case 5: learn (MidiMapping::Target::PresetNext); break;
@@ -768,19 +901,68 @@ void RigsmithEditor::showMainMenu()
     });
 }
 
-void RigsmithEditor::showPluginScanner()
+juce::PluginListComponent* RigsmithEditor::showPluginScanner()
 {
     juce::DialogWindow::LaunchOptions o;
     auto* list = new juce::PluginListComponent (engine.formatManager, engine.knownPlugins, engine.getDeadMansPedalFile(),
                                                 engine.props.getUserSettings(), true);
     list->setSize (760, 540);
     o.content.setOwned (list);
-    o.dialogTitle = "VST3 plug-ins - use Options to scan";
+    o.dialogTitle = "Plug-ins - use Options to scan";
     o.dialogBackgroundColour = panel;
     o.useNativeTitleBar = true;
     o.resizable = true;
     o.componentToCentreAround = this;
     o.launchAsync();
+    return list;
+}
+
+void RigsmithEditor::showSettings()
+{
+    juce::DialogWindow::LaunchOptions o;
+    auto* s = new SettingsPanel (engine);
+    s->onChanged = [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
+    {
+        if (sp == nullptr) return;
+        sp->library.refresh();
+        sp->graph.repaint();
+        sp->inspector.setNode (sp->inspector.getNode());
+    };
+    s->onScanNow = [this] { scanForNewPlugins (true); };
+    auto* view = new juce::Viewport();
+    view->setViewedComponent (s, true);
+    view->setScrollBarsShown (true, false);
+    view->setSize (s->getWidth() + 10, juce::jmin (s->getHeight(), 760));
+    o.content.setOwned (view);
+    o.dialogTitle = "Rigsmith settings";
+    o.dialogBackgroundColour = panel;
+    o.useNativeTitleBar = true;
+    o.resizable = true;
+    o.componentToCentreAround = this;
+    o.launchAsync();
+}
+
+void RigsmithEditor::scanForNewPlugins (bool always)
+{
+    auto* settings = engine.props.getUserSettings();
+    if (settings == nullptr) return;
+    const auto& blacklist = engine.knownPlugins.getBlacklistedFiles();
+    for (auto* f : engine.formatManager.getFormats())
+    {
+        if (! f->canScanForPlugins()) continue;
+        auto path = juce::PluginListComponent::getLastSearchPath (*settings, *f);
+        if (path.getNumPaths() == 0) path = f->getDefaultLocationsToSearch();
+        juce::StringArray fresh;
+        for (auto& file : f->searchPathsForPlugins (path, true, false))
+            if (! blacklist.contains (file) && ! engine.knownPlugins.isListingUpToDate (file, *f))
+                fresh.add (file);
+        if (fresh.isEmpty()) continue;
+        showMessage ("Found " + juce::String (fresh.size()) + " new " + f->getName() + " plug-in" + (fresh.size() == 1 ? "" : "s") + " - scanning");
+        if (auto* list = showPluginScanner())
+            list->scanFor (*f, fresh);
+        return;   // one format at a time; the rest are found next launch or with Scan
+    }
+    if (always) showMessage ("No new plug-ins found");
 }
 
 //==============================================================================

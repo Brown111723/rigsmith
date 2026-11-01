@@ -4,6 +4,8 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 ![Signal flow: gate → 3-way split (two NAM amps + a compressed path with a nested split) → mixer](docs/screenshot.png)
 
+![Effect chain with the reverb's decay display](docs/screenshot-fx.png)
+
 ## Features
 
 **Amp & cab**
@@ -23,8 +25,26 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **Automatic latency alignment**: paths with different plug-in latency stay in time, so blends don't comb-filter.
 - Wire thickness shows how much signal each path carries.
 
+**Built-in effects** (22), each with a live FabFilter-style display of what its knobs are doing
+- Dynamics: noise gate, compressor (soft knee, auto makeup, blend), limiter, expander, transient shaper, auto swell
+- Drive (2x oversampled): overdrive, fuzz (with octave), clean boost, bit crusher
+- EQ & filter: studio EQ with **draggable bands**, wah (pedal / envelope / LFO)
+- Modulation: chorus, flanger, phaser, tremolo (incl. harmonic), Uni-Vibe, rotary speaker
+- Time: delay (digital / tape / ping-pong / dual, with ducking), reverb (room / hall / plate / spring / shimmer)
+- Pitch: octave down / up, pitch shift, doubler
+- Displays: filter curves over a live pre/post spectrum, compressor transfer curves with the signal riding on them, waveshaper curves, LFO shapes, echo taps, reverb decay
+
+**Workflow**
+- **Auto gain** on any block: matches its output loudness to its input, so switching it on doesn't jump in volume.
+- **Replace** any block in place (right-click, or the inspector), keeping its scenes and footswitch mappings.
+- Step through models and IRs in a folder with the `<` `>` buttons.
+- **Plug-in parameters in the panel**: every automatable parameter appears as a knob; right-click to pin your favourites.
+- **Auto-categorised, colour-coded plug-ins** (Dynamics, Drive, Amp, Cab, EQ, Filter, Modulation, Delay, Reverb, Pitch).
+- **Remembered folders**: several NAM, IR and plug-in folders, set once in **Menu → Settings & folders**. New plug-ins are picked up automatically at launch.
+- Every dB readout is shown to one decimal place.
+
 **Hosting & live use**
-- Hosts any **VST3** effect. Plug-in state is saved in your presets, and a missing plug-in keeps its settings until you reinstall it.
+- Hosts any **VST3** effect (and VST2 in builds made with the VST2 SDK; see below). Plug-in state is saved in your presets, and a missing plug-in keeps its settings until you reinstall it.
 - **Scenes A–D**: per-scene bypass, path levels and mutes, with click-free crossfades.
 - **MIDI learn** for footswitches and expression pedals: scenes, bypass, path levels, an A/B amp blend, any knob, next/previous preset, tuner and master volume. Program Change selects presets.
 - **Tuner** with a mute option; built-in noise gate, compressor, studio EQ and volume/pan blocks.
@@ -48,7 +68,7 @@ git tag v0.1.0 && git push origin v0.1.0
 
 1. Run Rigsmith. Open **Menu → Audio / MIDI settings**, choose your interface's **ASIO** driver (or WASAPI) and set a small buffer (64–128 samples).
 2. Choose your guitar input under **Menu → Guitar input** (input 1 by default).
-3. In the **Library**, click **Folder…** and point it at your `.nam` models, then do the same for IRs. Free models are on [TONE3000](https://www.tone3000.com).
+3. Open **Menu → Settings & folders** and add the folders holding your `.nam` models, IRs and plug-ins. They're remembered from then on. Free models are on [TONE3000](https://www.tone3000.com).
 4. Drag a model onto the **NAM Amp** block and an IR onto **Cab IR**.
 5. Click **+** anywhere in the chain to add blocks, splits or VST3s. Scan for VST3s first with **Library → VST3 → Scan…**.
 
@@ -66,6 +86,15 @@ git tag v0.1.0 && git push origin v0.1.0
 | Change presets | `Page Up` / `Page Down` |
 | Save | `Ctrl+S` |
 | Tuner | `T` |
+
+### VST2
+
+Steinberg no longer licenses the VST2 SDK, so public builds host VST3 only (most current plug-ins ship a VST3). If you have the SDK (it's inside VST3 SDK zips up to 3.6.x), either:
+
+- build locally with `-DRIGSMITH_VST2_SDK=<folder containing pluginterfaces/vst2.x>`, or
+- add a repository secret named `VST2_SDK_URL` pointing at a zip of it, and CI will build with VST2 hosting.
+
+VST2 folders then show up in Settings alongside VST3.
 
 ## Building from source
 
@@ -90,9 +119,9 @@ build/RigsmithTests_artefacts/Release/RigsmithTests build/_deps/namcore-src/exam
 
 ```
 Source/
-  Engine/   audio graph: Node, Chain, Split, NAM/IR/Gate/Comp/EQ/Gain blocks,
+  Engine/   audio graph: Node, Chain, Split, NAM/IR blocks, 22 built-in effects (Fx.cpp, Dsp.h),
             VST3 hosting, scenes, MIDI, presets, tuner (no UI code)
-  UI/       look & feel, graph view, inspector, library, header
+  UI/       look & feel, graph view, inspector + effect displays, library, settings, header
   PluginProcessor.*  /  PluginEditor.*   JUCE glue shared by the exe and the VST3
 Tests/      headless engine tests
 installer/  Inno Setup script used by CI

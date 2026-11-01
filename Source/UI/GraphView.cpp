@@ -600,7 +600,7 @@ void GraphView::paint (juce::Graphics& g)
         g.fillRoundedRectangle (fill, 5.0f);
         g.setColour (muted);
         g.setFont (mono (10.0f));
-        g.drawText (db <= -99.0f ? juce::String ("-inf") : juce::String (db, 0), r.removeFromBottom (14).translated (0, 4),
+        g.drawText (db <= -99.0f ? juce::String ("-inf") : juce::String (db, 1), r.removeFromBottom (14).translated (0, 4),
                     juce::Justification::centred);
     };
     drawTerminal (inBox, "IN", inLevel, teal);

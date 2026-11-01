@@ -11,6 +11,7 @@
 #include <functional>
 #include <array>
 #include <map>
+#include <complex>
 
 namespace rig
 {
@@ -37,6 +38,22 @@ struct Biquad
     }
 
     void setIdentity() noexcept { b0 = 1; b1 = b2 = a1 = a2 = 0; }
+
+    /** Magnitude response in dB at a frequency (for drawing curves). */
+    double magnitudeDb (double f, double sr) const noexcept
+    {
+        const double w = juce::MathConstants<double>::twoPi * f / sr;
+        const std::complex<double> e1 = std::polar (1.0, -w), e2 = e1 * e1;
+        const auto num = (double) b0 + (double) b1 * e1 + (double) b2 * e2;
+        const auto den = 1.0 + (double) a1 * e1 + (double) a2 * e2;
+        return 20.0 * std::log10 (juce::jmax (1.0e-9, std::abs (num / den)));
+    }
+
+    void setBandPass (double sr, double f, double q) noexcept
+    {
+        const double w = omega (sr, f), al = std::sin (w) / (2 * q), c = std::cos (w);
+        set (al, 0, -al, 1 + al, -2 * c, 1 - al);
+    }
 
     void setPeak (double sr, double f, double q, double db) noexcept
     {

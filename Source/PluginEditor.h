@@ -35,6 +35,8 @@ public:
     void showAddMenu (rig::Chain&, int index, juce::Component* anchor) override;
     void showNodeMenu (rig::Node&, juce::Component* anchor) override;
     void showBranchMenu (rig::Split&, int branch, juce::Component* anchor) override;
+    void showReplaceMenu (rig::Node&, juce::Component* anchor) override;
+    void browseFile (rig::Node&, int delta) override;
     bool loadFileInto (rig::Node* target, rig::Chain* chain, int index, const juce::File&) override;
     bool insertPlugin (const juce::String& identifier, rig::Chain& chain, int index) override;
 
@@ -56,13 +58,17 @@ private:
     void handleAsyncUpdate() override;
     void timerCallback() override;
 
-    void populateAddMenu (juce::PopupMenu&, int idOffset);
+    void populateAddMenu (juce::PopupMenu&, int idOffset, bool includeRouting);
+    std::unique_ptr<rig::Node> createFromMenu (int result, bool& openAfter);
     void handleAdd (int result, const juce::String& chainId, int index);
+    void handleReplace (int result, const juce::String& nodeId);
+    void showSettings();
+    void scanForNewPlugins (bool reportNone);
     void showPresetMenu();
     void showMainMenu();
     void showSceneMenu (int scene);
     void savePreset (bool askForName);
-    void showPluginScanner();
+    juce::PluginListComponent* showPluginScanner();
     void openPluginWindow (rig::PluginBlock&);
     void chooseFileFor (rig::Node&);
     void updateTuner();

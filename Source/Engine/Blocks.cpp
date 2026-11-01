@@ -5,11 +5,16 @@ namespace rig
 //==============================================================================
 GateBlock::GateBlock()
     : Block (NodeType::Gate, {
-        { "threshold", "Threshold", -90.0f, 0.0f, -58.0f, "dB" },
-        { "release",   "Release",   5.0f, 500.0f, 90.0f, "ms", false, 80.0f, 0 },
-        { "hold",      "Hold",      0.0f, 250.0f, 20.0f, "ms", false, 40.0f, 0 },
-        { "range",     "Range",     -90.0f, 0.0f, -80.0f, "dB", false, -1.0f, 0 } })
+        P ("threshold", "Threshold", -90.0f, 0.0f, -58.0f, "dB"),
+        P ("release", "Release", 5.0f, 500.0f, 90.0f, "ms").mid (80.0f),
+        P ("hold", "Hold", 0.0f, 250.0f, 20.0f, "ms").mid (40.0f),
+        P ("range", "Range", -90.0f, 0.0f, -80.0f, "dB") })
 {
+}
+
+float GateBlock::transferDb (float in) const
+{
+    return in >= get (0) ? in : in + get (3);
 }
 
 juce::String GateBlock::getDetail() const { return formatValue (0); }
@@ -30,6 +35,8 @@ void GateBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     auto* l = b.getWritePointer (0);
     auto* r = b.getWritePointer (1);
     float minGain = 1.0f;
+    float inPk = 0;
+    for (int i = 0; i < n; ++i) inPk = juce::jmax (inPk, std::abs (l[i]), std::abs (r[i]));
 
     for (int i = 0; i < n; ++i)
     {
@@ -48,44 +55,61 @@ void GateBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
         minGain = juce::jmin (minGain, gain);
     }
     reductionDb.store (gainToDb (minGain));
+    updateMeters (inPk, inPk * minGain, gainToDb (minGain));
 }
 
 //==============================================================================
 EqBlock::EqBlock()
     : Block (NodeType::Eq, {
-        { "hpf",     "Low Cut",   20.0f, 400.0f, 20.0f, "Hz", false, 90.0f, 0 },
-        { "low",     "Bass",      -12.0f, 12.0f, 0.0f, "dB" },
-        { "midfreq", "Mid Freq",  200.0f, 5000.0f, 800.0f, "Hz", false, 1000.0f, 0 },
-        { "mid",     "Mid",       -12.0f, 12.0f, 0.0f, "dB" },
-        { "midq",    "Mid Q",     0.3f, 4.0f, 0.9f, "", false, 1.0f, 2 },
-        { "high",    "Treble",    -12.0f, 12.0f, 0.0f, "dB" },
-        { "lpf",     "High Cut",  2000.0f, 20000.0f, 20000.0f, "Hz", false, 7000.0f, 0 } })
+        P ("hpf", "Low Cut", 20.0f, 400.0f, 20.0f, "Hz").mid (80.0f),
+        P ("lowfreq", "Bass Freq", 40.0f, 500.0f, 110.0f, "Hz").mid (120.0f),
+        P ("low", "Bass", -15.0f, 15.0f, 0.0f, "dB"),
+        P ("midfreq", "Mid Freq", 150.0f, 6000.0f, 800.0f, "Hz").mid (900.0f),
+        P ("mid", "Mid", -15.0f, 15.0f, 0.0f, "dB"),
+        P ("midq", "Mid Q", 0.3f, 6.0f, 0.9f).mid (1.0f).dec (2),
+        P ("highfreq", "Treble Freq", 1000.0f, 12000.0f, 3500.0f, "Hz").mid (3500.0f),
+        P ("high", "Treble", -15.0f, 15.0f, 0.0f, "dB"),
+        P ("lpf", "High Cut", 2000.0f, 20000.0f, 20000.0f, "Hz").mid (7000.0f) })
 {
 }
 
 juce::String EqBlock::getDetail() const
 {
-    return "B " + juce::String (get (1), 1) + "  M " + juce::String (get (3), 1) + "  T " + juce::String (get (5), 1);
+    return "B " + juce::String (get (pLow), 1) + "  M " + juce::String (get (pMid), 1) + "  T " + juce::String (get (pHigh), 1);
+}
+
+void EqBlock::design (Biquad& h, Biquad& lo, Biquad& m, Biquad& hi, Biquad& l, double sr) const
+{
+    h.setHighPass (sr, get (pHpf));
+    lo.setLowShelf (sr, get (pLowFreq), get (pLow));
+    m.setPeak (sr, get (pMidFreq), get (pMidQ), get (pMid));
+    hi.setHighShelf (sr, get (pHighFreq), get (pHigh));
+    l.setLowPass (sr, get (pLpf));
+}
+
+float EqBlock::responseDb (double hz) const
+{
+    const double sr = sampleRate > 0 ? sampleRate : 48000.0;
+    Biquad h, lo, m, hi, l;
+    design (h, lo, m, hi, l, sr);
+    double db = lo.magnitudeDb (hz, sr) + m.magnitudeDb (hz, sr) + hi.magnitudeDb (hz, sr);
+    if (get (pHpf) > 21.0f) db += h.magnitudeDb (hz, sr);
+    if (get (pLpf) < 19900.0f) db += l.magnitudeDb (hz, sr);
+    return (float) db;
 }
 
 void EqBlock::prepareImpl (double, int)
 {
     for (auto* f : { &hp, &low, &mid, &high, &lp }) f->reset();
     watch.invalidate();
+    watch2.invalidate();
 }
 
 void EqBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 {
-    const double sr = sampleRate;
-    if (watch.changed ({ get (0), get (1), get (2), get (3), get (4), get (5), get (6) }))
-    {
-        hp.setHighPass (sr, get (0));
-        low.setLowShelf (sr, 110.0, get (1));
-        mid.setPeak (sr, get (2), get (4), get (3));
-        high.setHighShelf (sr, 3500.0, get (5));
-        lp.setLowPass (sr, get (6));
-    }
-    const bool useHp = get (0) > 21.0f, useLp = get (6) < 19900.0f;
+    if (watch.changed ({ get (0), get (1), get (2), get (3), get (4), get (5), get (6), get (7) }) | watch2.changed ({ get (8) }))
+        design (hp, low, mid, high, lp, sampleRate);
+    const bool useHp = get (pHpf) > 21.0f, useLp = get (pLpf) < 19900.0f;
 
     for (int ch = 0; ch < 2; ++ch)
     {
@@ -106,8 +130,8 @@ void EqBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 GainBlock::GainBlock()
     : Block (NodeType::Gain, {
-        { "gain", "Gain", -40.0f, 24.0f, 0.0f, "dB" },
-        { "pan",  "Pan",  -1.0f, 1.0f, 0.0f, "", false, -1.0f, 2 } })
+        P ("gain", "Gain", -40.0f, 24.0f, 0.0f, "dB"),
+        P ("pan", "Pan", -1.0f, 1.0f, 0.0f).dec (2) })
 {
 }
 
@@ -134,59 +158,12 @@ void GainBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 }
 
 //==============================================================================
-CompBlock::CompBlock()
-    : Block (NodeType::Comp, {
-        { "threshold", "Threshold", -60.0f, 0.0f, -24.0f, "dB" },
-        { "ratio",     "Ratio",     1.0f, 20.0f, 4.0f, ":1", false, 4.0f, 1 },
-        { "attack",    "Attack",    0.1f, 100.0f, 8.0f, "ms", false, 10.0f, 1 },
-        { "release",   "Release",   10.0f, 1000.0f, 150.0f, "ms", false, 150.0f, 0 },
-        { "makeup",    "Makeup",    0.0f, 24.0f, 6.0f, "dB" },
-        { "mix",       "Blend",     0.0f, 100.0f, 100.0f, "%", false, -1.0f, 0 } })
-{
-}
-
-juce::String CompBlock::getDetail() const { return formatValue (1) + " @ " + formatValue (0); }
-
-void CompBlock::prepareImpl (double, int block)
-{
-    env = 0;
-    dryBuf.setSize (2, block, false, true, true);
-}
-
-void CompBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
-{
-    const float sr = (float) sampleRate;
-    const float thr = get (0), ratio = get (1);
-    const float att = std::exp (-1.0f / (get (2) * 0.001f * sr));
-    const float rel = std::exp (-1.0f / (get (3) * 0.001f * sr));
-    const float makeup = dbToGain (get (4));
-    const float wet = get (5) * 0.01f;
-
-    for (int ch = 0; ch < 2; ++ch)
-        dryBuf.copyFrom (ch, 0, b, ch, 0, n);
-
-    auto* l = b.getWritePointer (0);
-    auto* r = b.getWritePointer (1);
-    auto* dl = dryBuf.getReadPointer (0);
-    auto* dr = dryBuf.getReadPointer (1);
-    for (int i = 0; i < n; ++i)
-    {
-        const float x = juce::jmax (std::abs (l[i]), std::abs (r[i]));
-        env = x > env ? att * env + (1 - att) * x : rel * env + (1 - rel) * x;
-        const float over = gainToDb (env) - thr;
-        const float g = over > 0 ? dbToGain (-over * (1.0f - 1.0f / ratio)) * makeup : makeup;
-        l[i] = dl[i] + (l[i] * g - dl[i]) * wet;
-        r[i] = dr[i] + (r[i] * g - dr[i]) * wet;
-    }
-}
-
-//==============================================================================
 IrBlock::IrBlock()
     : Block (NodeType::Ir, {
-        { "lowcut",  "Low Cut",  20.0f, 400.0f, 75.0f, "Hz", false, 90.0f, 0 },
-        { "highcut", "High Cut", 2000.0f, 20000.0f, 8000.0f, "Hz", false, 7000.0f, 0 },
-        { "mix",     "Mix",      0.0f, 100.0f, 100.0f, "%", false, -1.0f, 0 },
-        { "level",   "Level",    -24.0f, 12.0f, 0.0f, "dB" } }),
+        P ("lowcut", "Low Cut", 20.0f, 400.0f, 75.0f, "Hz").mid (90.0f),
+        P ("highcut", "High Cut", 2000.0f, 20000.0f, 8000.0f, "Hz").mid (7000.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%"),
+        P ("level", "Level", -24.0f, 12.0f, 0.0f, "dB") }),
       conv (juce::dsp::Convolution::NonUniform { 0 })
 {
 }
@@ -199,6 +176,15 @@ juce::String IrBlock::getName() const
 juce::String IrBlock::getDetail() const
 {
     return file.existsAsFile() ? "Lo " + formatValue (0) + " - Hi " + formatValue (1) : juce::String ("Double-click to load .wav");
+}
+
+float IrBlock::responseDb (double hz) const
+{
+    const double sr = sampleRate > 0 ? sampleRate : 48000.0;
+    Biquad h, l;
+    h.setHighPass (sr, get (0));
+    l.setLowPass (sr, get (1));
+    return (float) (h.magnitudeDb (hz, sr) + l.magnitudeDb (hz, sr) + get (3));
 }
 
 int IrBlock::getIrLength() const { return conv.getCurrentIRSize(); }

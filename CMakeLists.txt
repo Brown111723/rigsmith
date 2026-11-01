@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.1.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -103,11 +103,14 @@ target_sources(Rigsmith PRIVATE
     Source/Engine/PluginBlock.cpp
     Source/Engine/Engine.cpp
     Source/Engine/Tuner.cpp
+    Source/Engine/Fx.cpp
     Source/UI/Theme.cpp
     Source/UI/GraphView.cpp
     Source/UI/Inspector.cpp
     Source/UI/Library.cpp
-    Source/UI/Header.cpp)
+    Source/UI/Header.cpp
+    Source/UI/FxDisplay.cpp
+    Source/UI/Settings.cpp)
 
 target_include_directories(Rigsmith PRIVATE Source)
 
@@ -130,6 +133,18 @@ target_compile_definitions(Rigsmith PUBLIC
 
 if(MSVC)
     target_compile_options(Rigsmith PRIVATE /bigobj /MP)
+endif()
+
+# Optional VST2 hosting. Steinberg no longer licenses the VST2 SDK, so it can't be
+# downloaded here; point this at a folder that contains pluginterfaces/vst2.x/aeffect.h
+# (found in VST3 SDK zips up to 3.6.x) and VST2 plug-ins become scannable.
+set(RIGSMITH_VST2_SDK "" CACHE PATH "Folder containing pluginterfaces/vst2.x (enables VST2 hosting)")
+if(RIGSMITH_VST2_SDK AND EXISTS "${RIGSMITH_VST2_SDK}/pluginterfaces/vst2.x/aeffect.h")
+    target_compile_definitions(Rigsmith PUBLIC JUCE_PLUGINHOST_VST=1)
+    target_include_directories(Rigsmith PRIVATE "${RIGSMITH_VST2_SDK}")
+    message(STATUS "Rigsmith: VST2 hosting enabled (${RIGSMITH_VST2_SDK})")
+else()
+    message(STATUS "Rigsmith: VST2 hosting off (set RIGSMITH_VST2_SDK to enable)")
 endif()
 
 target_link_libraries(Rigsmith
@@ -159,7 +174,8 @@ if(RIGSMITH_TESTS)
         Source/Engine/NamBlock.cpp
         Source/Engine/PluginBlock.cpp
         Source/Engine/Engine.cpp
-        Source/Engine/Tuner.cpp)
+        Source/Engine/Tuner.cpp
+        Source/Engine/Fx.cpp)
     target_include_directories(RigsmithTests PRIVATE Source)
     target_compile_definitions(RigsmithTests PRIVATE
         JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_XINPUT=0

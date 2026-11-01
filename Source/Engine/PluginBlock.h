@@ -25,6 +25,14 @@ public:
 
     static juce::PluginDescription descriptionFromState (const juce::ValueTree&);
 
+    Category getCategory() const override;
+    static inline bool autoCategorise = true;   // global option, set from the user's settings
+
+    /** Plug-in parameters shown in Rigsmith's own panel. */
+    std::vector<int> pinned;
+    bool isPinned (int index) const;
+    void setPinned (int index, bool pin);
+
 protected:
     void prepareImpl (double sr, int block) override;
     void processImpl (juce::AudioBuffer<float>&, int) noexcept override;

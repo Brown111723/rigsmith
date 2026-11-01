@@ -4,10 +4,45 @@
 
 namespace rig
 {
-enum class NodeType { Chain, Split, Nam, Ir, Gate, Eq, Gain, Comp, Plugin };
+enum class NodeType
+{
+    Chain, Split, Nam, Ir, Gate, Eq, Gain, Comp, Plugin,
+    // built-in effects (v0.2)
+    Limiter, Expander, Transient, Swell,
+    Overdrive, Fuzz, Boost, Crusher,
+    Wah, Chorus, Flanger, Phaser, Tremolo, Vibe, Rotary,
+    Delay, Reverb, Pitch
+};
 
 juce::String nodeTypeToString (NodeType);
 NodeType nodeTypeFromString (const juce::String&);
+
+/** Families used for colour coding, library grouping and the add menu. */
+enum class Category { Dynamics = 0, Drive, Amp, Cab, Eq, Filter, Modulation, Delay, Reverb, Pitch, Utility, Routing, Other };
+juce::String categoryName (Category);
+juce::Colour categoryColour (Category);
+Category categoryForBuiltIn (NodeType);
+/** Best guess from a plug-in's declared category and its name. */
+Category categoriseDescription (const juce::PluginDescription&);
+
+//==============================================================================
+/** Pre/post taps of the selected block, read by the UI's spectrum display. */
+class AnalyzerTap
+{
+public:
+    static constexpr int size = 16384;
+    void push (bool post, const juce::AudioBuffer<float>& b, int n) noexcept;
+    int read (bool post, float* dest, int max);    // newest samples, message thread
+    void reset() { pre.fifo.reset(); post.fifo.reset(); }
+
+private:
+    struct Stream
+    {
+        juce::AbstractFifo fifo { size };
+        std::vector<float> data = std::vector<float> ((size_t) size, 0.0f);
+    };
+    Stream pre, post;
+};
 
 //==============================================================================
 /** Anything that processes a stereo buffer in place. Owned by a Chain or Split.
@@ -20,6 +55,7 @@ public:
     virtual ~Node() = default;
 
     NodeType getType() const noexcept { return type; }
+    virtual Category getCategory() const { return categoryForBuiltIn (type); }
 
     virtual juce::String getName() const = 0;
     virtual juce::String getDetail() const { return {}; }
@@ -28,13 +64,18 @@ public:
     void process (juce::AudioBuffer<float>& buffer, int numSamples) noexcept;
 
     virtual int getLatency() const noexcept { return 0; }
-    virtual void collectLatency() noexcept {}
 
     virtual juce::ValueTree toState() const;
     virtual void fromState (const juce::ValueTree&);
 
     juce::String id = juce::Uuid().toString();
     std::atomic<bool> bypassed { false };
+
+    /** Matches output loudness to input loudness (slow RMS follower). */
+    std::atomic<bool> autoGain { false };
+    std::atomic<float> autoGainDb { 0.0f };
+
+    std::atomic<AnalyzerTap*> tap { nullptr };
 
     double getSampleRate() const noexcept { return sampleRate; }
 
@@ -48,7 +89,8 @@ protected:
 private:
     const NodeType type;
     juce::AudioBuffer<float> dry;
-    juce::SmoothedValue<float> wetGain;
+    juce::SmoothedValue<float> wetGain, compGain;
+    float envIn = 0, envOut = 0;
 };
 
 //==============================================================================
@@ -71,16 +113,53 @@ protected:
 };
 
 //==============================================================================
-/** Parameter description for built-in blocks; the inspector builds its knobs from these. */
+/** Parameter description for built-in blocks; the inspector builds its controls from these. */
 struct ParamSpec
 {
     juce::String id, name;
     float min = 0, max = 1, def = 0;
     juce::String unit;
     bool toggle = false;
-    float centre = -1.0f;   // skew so this value sits mid-knob (frequencies)
+    bool hasCentre = false;
+    float centre = 0;          // value shown at mid-knob (log-ish feel for Hz / ms)
     int decimals = 1;
+    juce::StringArray choices; // non-empty: a selector (value = index)
+
+    ParamSpec& mid (float c)   { hasCentre = true; centre = c; return *this; }
+    ParamSpec& dec (int d)     { decimals = d; return *this; }
+
+    bool isChoice() const noexcept { return ! choices.isEmpty(); }
+    bool isDb() const noexcept { return unit == "dB"; }
 };
+
+inline ParamSpec P (const juce::String& id, const juce::String& name, float mn, float mx, float def, const juce::String& unit = {})
+{
+    ParamSpec s;
+    s.id = id; s.name = name; s.min = mn; s.max = mx; s.def = def; s.unit = unit;
+    s.decimals = unit == "Hz" || unit == "ms" || unit == "%" ? 0 : 1;
+    return s;
+}
+
+inline ParamSpec Toggle (const juce::String& id, const juce::String& name, bool def)
+{
+    auto s = P (id, name, 0.0f, 1.0f, def ? 1.0f : 0.0f);
+    s.toggle = true;
+    return s;
+}
+
+inline ParamSpec Choice (const juce::String& id, const juce::String& name, const juce::StringArray& options, int def = 0)
+{
+    auto s = P (id, name, 0.0f, (float) juce::jmax (0, options.size() - 1), (float) def);
+    s.choices = options;
+    s.decimals = 0;
+    return s;
+}
+
+//==============================================================================
+/** How a block's display draws what its knobs are doing. */
+enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope };
+
+struct DelayTap { float timeSec, gain; int side; };   // side: -1 left, 0 centre, 1 right
 
 class Block : public Node
 {
@@ -90,14 +169,40 @@ public:
     const std::vector<ParamSpec>& getSpecs() const noexcept { return specs; }
     int numParams() const noexcept { return (int) specs.size(); }
     float get (int i) const noexcept { return values[(size_t) i].load (std::memory_order_relaxed); }
+    float get (const char* pid) const noexcept { return get (indexOf (pid)); }
+    int getChoice (int i) const noexcept { return juce::roundToInt (get (i)); }
     void set (int i, float v) noexcept { values[(size_t) i].store (juce::jlimit (specs[(size_t) i].min, specs[(size_t) i].max, v)); }
     int indexOf (const juce::String& pid) const;
     juce::String formatValue (int i) const;
+    juce::String formatValue (int i, float v) const;
 
     juce::ValueTree toState() const override;
     void fromState (const juce::ValueTree&) override;
 
+    //--- Visuals (message thread; computed from current parameter values) -----
+    virtual Visual getVisual() const { return Visual::Spectrum; }
+    virtual float responseDb (double /*hz*/) const { return 0.0f; }
+    virtual float transferDb (float inDb) const { return inDb; }
+    virtual float shape (float x) const { return x; }
+    virtual float lfoShape (double /*phase01*/) const { return 0.0f; }
+    virtual double lfoPhase() const { return livePhase.load(); }
+    virtual float lfoRate() const { return 1.0f; }
+    virtual float lfoDepth() const { return 1.0f; }
+    virtual void getTaps (std::vector<DelayTap>&) const {}
+    virtual void getDecay (float& predelayMs, float& rt60, float& damping, float& size) const
+    {
+        predelayMs = 0; rt60 = 1; damping = 0.5f; size = 0.5f;
+    }
+    /** Optional moving marker for Response visuals (e.g. a wah's current frequency). */
+    virtual float liveFrequency() const { return 0.0f; }
+
+    // live meters written by the audio thread
+    std::atomic<float> meterIn { -100.0f }, meterOut { -100.0f }, meterGr { 0.0f };
+    std::atomic<double> livePhase { 0.0 };
+
 protected:
+    void updateMeters (float inPeak, float outPeak, float grDb) noexcept;
+
     std::vector<ParamSpec> specs;
     std::unique_ptr<std::atomic<float>[]> values;
 };
@@ -138,7 +243,6 @@ public:
     juce::ValueTree toState() const override;
     void fromState (const juce::ValueTree&) override;
 
-    /** Creates a prepared branch ready to be inserted under the engine lock. */
     std::unique_ptr<Branch> makeBranch() const;
 
     /** In Split mode the levels always sum to 100%: moving one rebalances the rest. */
@@ -149,7 +253,7 @@ public:
     std::vector<std::unique_ptr<Branch>> branches;
     std::atomic<int> mode { (int) SplitMode::Split };
     std::atomic<float> xoverLow { 250.0f }, xoverHigh { 2500.0f };
-    std::atomic<bool> autoGain { true };
+    std::atomic<bool> autoGainSum { true };
 
 protected:
     void prepareImpl (double sr, int block) override;
@@ -160,7 +264,6 @@ private:
 };
 
 //==============================================================================
-/** Visits every node in a tree (depth first). */
 void visitNodes (Node& root, const std::function<void (Node&)>& fn);
 
 } // namespace rig

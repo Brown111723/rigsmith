@@ -4,8 +4,8 @@ namespace rig
 {
 PluginBlock::PluginBlock (std::unique_ptr<juce::AudioPluginInstance> inst, const juce::PluginDescription& desc)
     : Block (NodeType::Plugin, {
-        { "mix",   "Mix",    0.0f, 100.0f, 100.0f, "%", false, -1.0f, 0 },
-        { "level", "Level",  -24.0f, 12.0f, 0.0f, "dB" } }),
+        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%"),
+        P ("level", "Level", -24.0f, 12.0f, 0.0f, "dB") }),
       instance (std::move (inst)),
       description (desc)
 {
@@ -22,6 +22,22 @@ PluginBlock::~PluginBlock()
 }
 
 juce::String PluginBlock::getName() const { return description.name; }
+
+Category PluginBlock::getCategory() const
+{
+    return autoCategorise ? categoriseDescription (description) : Category::Other;
+}
+
+bool PluginBlock::isPinned (int index) const
+{
+    return std::find (pinned.begin(), pinned.end(), index) != pinned.end();
+}
+
+void PluginBlock::setPinned (int index, bool shouldPin)
+{
+    pinned.erase (std::remove (pinned.begin(), pinned.end(), index), pinned.end());
+    if (shouldPin) pinned.push_back (index);
+}
 
 juce::String PluginBlock::getDetail() const
 {
@@ -40,6 +56,9 @@ juce::ValueTree PluginBlock::toState() const
     if (instance != nullptr) instance->getStateInformation (mb);
     else mb = missingState;
     v.setProperty ("state", mb.toBase64Encoding(), nullptr);
+    juce::StringArray pins;
+    for (int i : pinned) pins.add (juce::String (i));
+    v.setProperty ("pinned", pins.joinIntoString (","), nullptr);
     return v;
 }
 
@@ -54,6 +73,9 @@ juce::PluginDescription PluginBlock::descriptionFromState (const juce::ValueTree
 void PluginBlock::fromState (const juce::ValueTree& v)
 {
     Block::fromState (v);
+    pinned.clear();
+    for (auto& s : juce::StringArray::fromTokens (v.getProperty ("pinned").toString(), ",", {}))
+        if (s.isNotEmpty()) pinned.push_back (s.getIntValue());
     juce::MemoryBlock mb;
     mb.fromBase64Encoding (v.getProperty ("state").toString());
     if (instance != nullptr)

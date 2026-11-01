@@ -56,14 +56,30 @@ static juce::String jsonString (const nlohmann::json& j, const char* key)
 //==============================================================================
 NamBlock::NamBlock()
     : Block (NodeType::Nam, {
-        { "input",     "Input",    -24.0f, 24.0f, 0.0f, "dB" },
-        { "output",    "Output",   -40.0f, 24.0f, 0.0f, "dB" },
-        { "bass",      "Bass",     0.0f, 10.0f, 5.0f, "" },
-        { "mid",       "Middle",   0.0f, 10.0f, 5.0f, "" },
-        { "treble",    "Treble",   0.0f, 10.0f, 5.0f, "" },
-        { "presence",  "Presence", 0.0f, 10.0f, 5.0f, "" },
-        { "normalize", "Normalize", 0.0f, 1.0f, 1.0f, "", true } })
+        P ("input", "Input", -24.0f, 24.0f, 0.0f, "dB"),
+        P ("output", "Output", -40.0f, 24.0f, 0.0f, "dB"),
+        P ("bass", "Bass", 0.0f, 10.0f, 5.0f),
+        P ("mid", "Middle", 0.0f, 10.0f, 5.0f),
+        P ("treble", "Treble", 0.0f, 10.0f, 5.0f),
+        P ("presence", "Presence", 0.0f, 10.0f, 5.0f),
+        Toggle ("normalize", "Normalize", true) })
 {
+}
+
+void NamBlock::designToneStack (Biquad& b, Biquad& m, Biquad& t, Biquad& p, double sr) const
+{
+    b.setLowShelf (sr, 150.0, (get (pBass) - 5.0f) * 2.0f);
+    m.setPeak (sr, 425.0, 0.7, (get (pMid) - 5.0f) * 2.0f);
+    t.setHighShelf (sr, 1800.0, (get (pTreble) - 5.0f) * 2.0f);
+    p.setHighShelf (sr, 4500.0, (get (pPresence) - 5.0f) * 1.6f);
+}
+
+float NamBlock::responseDb (double hz) const
+{
+    const double sr = sampleRate > 0 ? sampleRate : 48000.0;
+    Biquad b, m, t, p;
+    designToneStack (b, m, t, p, sr);
+    return (float) (b.magnitudeDb (hz, sr) + m.magnitudeDb (hz, sr) + t.magnitudeDb (hz, sr) + p.magnitudeDb (hz, sr));
 }
 
 NamBlock::~NamBlock() = default;
@@ -267,10 +283,7 @@ void NamBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     // Tone stack (post amp, like the NAM plug-in)
     if (watch.changed ({ get (pBass), get (pMid), get (pTreble), get (pPresence) }))
     {
-        bass.setLowShelf (sampleRate, 150.0, (get (pBass) - 5.0f) * 2.0f);
-        mid.setPeak (sampleRate, 425.0, 0.7, (get (pMid) - 5.0f) * 2.0f);
-        treble.setHighShelf (sampleRate, 1800.0, (get (pTreble) - 5.0f) * 2.0f);
-        presence.setHighShelf (sampleRate, 4500.0, (get (pPresence) - 5.0f) * 1.6f);
+        designToneStack (bass, mid, treble, presence, sampleRate);
     }
 
     outGain.setTargetValue (dbToGain (get (pOutput)) * norm);

@@ -16,7 +16,7 @@ Library::Library (GraphHost& h) : host (h)
     folderButton.onClick = [this]
     {
         if (tab == Plugins) { if (onScanPlugins) onScanPlugins(); }
-        else chooseFolder();
+        else if (onManageFolders) onManageFolders();
     };
     addAndMakeVisible (folderButton);
 
@@ -44,7 +44,8 @@ void Library::setTab (Tab t)
     tab = t;
     for (int i = 0; i < 3; ++i)
         tabs[i].setToggleState (i == (int) t, juce::dontSendNotification);
-    folderButton.setButtonText (tab == Plugins ? "Scan..." : "Folder...");
+    folderButton.setButtonText (tab == Plugins ? "Scan..." : "Folders...");
+    folderButton.setTooltip (tab == Plugins ? "Scan for VST plug-ins" : "Choose which folders are searched - remembered between sessions");
     refresh();
 }
 
@@ -58,20 +59,28 @@ void Library::refresh()
         for (auto& d : host.getEngine().knownPlugins.getTypes())
             if (! d.isInstrument)
                 plugins.add (d);
-        std::sort (plugins.begin(), plugins.end(), [] (const auto& a, const auto& b)
+        const bool byCat = PluginBlock::autoCategorise;
+        std::sort (plugins.begin(), plugins.end(), [byCat] (const auto& a, const auto& b)
         {
+            if (byCat)
+            {
+                const auto ca = (int) categoriseDescription (a), cb = (int) categoriseDescription (b);
+                if (ca != cb) return ca < cb;
+                return a.name.compareIgnoreCase (b.name) < 0;
+            }
             return (a.manufacturerName + a.name).compareIgnoreCase (b.manufacturerName + b.name) < 0;
         });
     }
     else
     {
-        const auto folder = host.getEngine().getFolder (folderKey());
+        const auto paths = host.getEngine().getPaths (pathsKey());
         const auto pattern = tab == Models ? juce::String ("*.nam") : juce::String ("*.wav;*.aif;*.aiff;*.flac");
-        for (const auto& entry : juce::RangedDirectoryIterator (folder, true, pattern, juce::File::findFiles))
-        {
-            files.add (entry.getFile());
-            if (files.size() >= 5000) break;
-        }
+        for (int p = 0; p < paths.getNumPaths() && files.size() < 8000; ++p)
+            for (const auto& entry : juce::RangedDirectoryIterator (paths.getRawString (p), true, pattern, juce::File::findFiles))
+            {
+                files.addIfNotAlreadyThere (entry.getFile());
+                if (files.size() >= 8000) break;
+            }
         std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
         {
             return a.getFileName().compareNatural (b.getFileName()) < 0;
@@ -100,7 +109,7 @@ void Library::applyFilter()
     else
     {
         for (int i = 0; i < files.size(); ++i)
-            if (matches (files[i].getRelativePathFrom (host.getEngine().getFolder (folderKey()))))
+            if (matches (files[i].getFileName() + " " + files[i].getParentDirectory().getFileName()))
                 rows.add (i);
     }
 
@@ -111,24 +120,11 @@ void Library::applyFilter()
     if (tab == Plugins)
         f = plugins.isEmpty() ? "No VST3s yet - click Scan" : juce::String (rows.size()) + " effects - drag onto the rig";
     else
-        f = juce::String (rows.size()) + " files in " + host.getEngine().getFolder (folderKey()).getFileName();
-    footer.setText (f, juce::dontSendNotification);
-}
-
-void Library::chooseFolder()
-{
-    chooser = std::make_unique<juce::FileChooser> (tab == Models ? "Choose your NAM model folder" : "Choose your IR folder",
-                                                   host.getEngine().getFolder (folderKey()));
-    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-                          [this] (const juce::FileChooser& fc)
     {
-        const auto r = fc.getResult();
-        if (r.isDirectory())
-        {
-            host.getEngine().setFolder (folderKey(), r);
-            refresh();
-        }
-    });
+        const auto paths = host.getEngine().getPaths (pathsKey());
+        f = juce::String (rows.size()) + " files in " + juce::String (paths.getNumPaths()) + (paths.getNumPaths() == 1 ? " folder" : " folders");
+    }
+    footer.setText (f, juce::dontSendNotification);
 }
 
 int Library::getNumRows() { return rows.size(); }
@@ -148,15 +144,18 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
     {
         const auto& d = plugins[rows[row]];
         name = d.name;
-        sub = d.manufacturerName + (d.category.isNotEmpty() ? " - " + d.category : juce::String());
-        c = juce::Colour::fromHSV ((float) ((juce::uint32) d.name.hashCode() % 360) / 360.0f, 0.45f, 0.95f, 1.0f);
+        const auto cat = categoriseDescription (d);
+        sub = (PluginBlock::autoCategorise ? categoryName (cat) + " - " : juce::String()) + d.manufacturerName
+            + (d.pluginFormatName != "VST3" ? "  (" + d.pluginFormatName + ")" : juce::String());
+        c = PluginBlock::autoCategorise ? categoryColour (cat)
+                                        : juce::Colour::fromHSV ((float) ((juce::uint32) d.name.hashCode() % 360) / 360.0f, 0.45f, 0.95f, 1.0f);
     }
     else
     {
         const auto& f = files[rows[row]];
         name = f.getFileNameWithoutExtension();
         sub = f.getParentDirectory().getFileName();
-        c = tab == Models ? accent : teal;
+        c = tab == Models ? categoryColour (Category::Amp) : categoryColour (Category::Cab);
     }
 
     g.setColour (c);

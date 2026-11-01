@@ -12,6 +12,8 @@ public:
     juce::String getName() const override { return "Noise Gate"; }
     juce::String getDetail() const override;
     float getReduction() const noexcept { return reductionDb.load(); }
+    Visual getVisual() const override { return Visual::Dynamics; }
+    float transferDb (float inDb) const override;
 
 protected:
     void prepareImpl (double sr, int block) override;
@@ -31,6 +33,9 @@ public:
     EqBlock();
     juce::String getName() const override { return "Studio EQ"; }
     juce::String getDetail() const override;
+    Visual getVisual() const override { return Visual::Response; }
+    float responseDb (double hz) const override;
+    enum { pHpf, pLowFreq, pLow, pMidFreq, pMid, pMidQ, pHighFreq, pHigh, pLpf };
 
 protected:
     void prepareImpl (double sr, int block) override;
@@ -38,7 +43,8 @@ protected:
 
 private:
     Biquad hp, low, mid, high, lp;
-    ChangeWatch watch;
+    ChangeWatch watch, watch2;
+    void design (Biquad& h, Biquad& lo, Biquad& m, Biquad& hi, Biquad& l, double sr) const;
 };
 
 //==============================================================================
@@ -58,22 +64,6 @@ private:
 };
 
 //==============================================================================
-class CompBlock : public Block
-{
-public:
-    CompBlock();
-    juce::String getName() const override { return "Compressor"; }
-    juce::String getDetail() const override;
-
-protected:
-    void prepareImpl (double sr, int block) override;
-    void processImpl (juce::AudioBuffer<float>&, int) noexcept override;
-
-private:
-    float env = 0;
-    juce::AudioBuffer<float> dryBuf;
-};
-
 //==============================================================================
 /** Cabinet impulse response loader with lo/hi cut and mix. */
 class IrBlock : public Block
@@ -82,6 +72,8 @@ public:
     IrBlock();
     juce::String getName() const override;
     juce::String getDetail() const override;
+    Visual getVisual() const override { return Visual::Response; }
+    float responseDb (double hz) const override;
 
     bool loadIr (const juce::File& f, juce::String& error);
     juce::File getFile() const { return file; }

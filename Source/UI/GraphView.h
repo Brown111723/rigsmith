@@ -14,6 +14,9 @@ struct GraphHost
     virtual void openNode (Node&) = 0;
     virtual void showAddMenu (Chain&, int index, juce::Component* anchor) = 0;
     virtual void showNodeMenu (Node&, juce::Component* anchor) = 0;
+    virtual void showReplaceMenu (Node&, juce::Component* anchor) = 0;
+    /** Step to the previous/next .nam or IR file in the same folder. */
+    virtual void browseFile (Node&, int delta) = 0;
     virtual void showBranchMenu (Split&, int branch, juce::Component* anchor) = 0;
     virtual bool loadFileInto (Node* target, Chain* chain, int index, const juce::File&) = 0;
     virtual bool insertPlugin (const juce::String& identifier, Chain& chain, int index) = 0;
@@ -151,6 +154,25 @@ public:
 
     /** Drop a file from the OS: loads into the card under the point or inserts a new block. */
     bool dropFile (const juce::File&, juce::Point<int> localPoint);
+
+    std::function<void()> onBackgroundClick;
+    void mouseDown (const juce::MouseEvent& e) override { if (e.eventComponent == this && onBackgroundClick) onBackgroundClick(); }
+
+    /** A normal scroll wheel pans sideways along a long rig. */
+    void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override
+    {
+        if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+        {
+            const bool canScrollV = getHeight() > vp->getViewHeight();
+            if (! canScrollV || e.mods.isShiftDown())
+            {
+                const float d = std::abs (w.deltaX) > std::abs (w.deltaY) ? w.deltaX : w.deltaY;
+                vp->setViewPosition (vp->getViewPositionX() - juce::roundToInt (d * 500.0f), vp->getViewPositionY());
+                return;
+            }
+        }
+        Component::mouseWheelMove (e, w);
+    }
 
 private:
     GraphHost& host;

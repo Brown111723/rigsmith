@@ -18,6 +18,7 @@ public:
     std::function<void (const juce::File&)> onActivateFile;
     std::function<void (const juce::String& pluginIdentifier)> onActivatePlugin;
     std::function<void()> onScanPlugins;
+    std::function<void()> onManageFolders;
 
 private:
     enum Tab { Models = 0, Irs, Plugins };
@@ -32,8 +33,7 @@ private:
 
     void setTab (Tab);
     void applyFilter();
-    void chooseFolder();
-    juce::String folderKey() const { return tab == Models ? "modelFolder" : "irFolder"; }
+    juce::String pathsKey() const { return tab == Models ? "modelPaths" : "irPaths"; }
 
     GraphHost& host;
     Tab tab = Models;
@@ -42,7 +42,6 @@ private:
     juce::TextEditor search;
     juce::ListBox list;
     juce::Label footer;
-    std::unique_ptr<juce::FileChooser> chooser;
 
     juce::Array<juce::File> files;
     juce::Array<juce::PluginDescription> plugins;

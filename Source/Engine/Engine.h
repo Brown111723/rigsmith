@@ -2,6 +2,7 @@
 
 #include "Nodes.h"
 #include "Blocks.h"
+#include "Fx.h"
 #include "NamBlock.h"
 #include "PluginBlock.h"
 #include "Tuner.h"
@@ -62,6 +63,8 @@ public:
     std::unique_ptr<Node> createPlugin (const juce::PluginDescription& desc, juce::String& error);
 
     Node* insert (std::unique_ptr<Node> node, Chain& target, int index);
+    /** Swaps a block for another in the same place, keeping its id (so scenes and MIDI still apply). */
+    Node* replace (const juce::String& id, std::unique_ptr<Node> replacement);
     void remove (const juce::String& id);
     bool move (const juce::String& id, Chain& target, int index);
     Node* duplicate (const juce::String& id);
@@ -108,6 +111,15 @@ public:
     juce::ApplicationProperties props;
     juce::File getFolder (const juce::String& key) const;
     void setFolder (const juce::String& key, const juce::File&);
+    /** Library folders ("modelPaths", "irPaths"): several folders each, remembered between runs. */
+    juce::FileSearchPath getPaths (const juce::String& key) const;
+    void setPaths (const juce::String& key, const juce::FileSearchPath&);
+    bool getSetting (const juce::String& key, bool def) const;
+    void setSetting (const juce::String& key, bool value);
+
+    //--- Analyzer ---------------------------------------------------------------
+    AnalyzerTap analyzer;
+    void setAnalyzedNode (Node*);
     juce::File getDeadMansPedalFile() const;
 
     //--- Host glue --------------------------------------------------------------

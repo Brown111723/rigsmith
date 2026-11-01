@@ -2,30 +2,155 @@
 
 namespace rig
 {
+static const std::pair<NodeType, const char*> typeNames[] = {
+    { NodeType::Chain, "chain" }, { NodeType::Split, "split" }, { NodeType::Nam, "nam" }, { NodeType::Ir, "ir" },
+    { NodeType::Gate, "gate" }, { NodeType::Eq, "eq" }, { NodeType::Gain, "gain" }, { NodeType::Comp, "comp" },
+    { NodeType::Plugin, "plugin" }, { NodeType::Limiter, "limiter" }, { NodeType::Expander, "expander" },
+    { NodeType::Transient, "transient" }, { NodeType::Swell, "swell" }, { NodeType::Overdrive, "overdrive" },
+    { NodeType::Fuzz, "fuzz" }, { NodeType::Boost, "boost" }, { NodeType::Crusher, "crusher" }, { NodeType::Wah, "wah" },
+    { NodeType::Chorus, "chorus" }, { NodeType::Flanger, "flanger" }, { NodeType::Phaser, "phaser" },
+    { NodeType::Tremolo, "tremolo" }, { NodeType::Vibe, "vibe" }, { NodeType::Rotary, "rotary" },
+    { NodeType::Delay, "delay" }, { NodeType::Reverb, "reverb" }, { NodeType::Pitch, "pitch" }
+};
+
 juce::String nodeTypeToString (NodeType t)
 {
-    switch (t)
-    {
-        case NodeType::Chain:  return "chain";
-        case NodeType::Split:  return "split";
-        case NodeType::Nam:    return "nam";
-        case NodeType::Ir:     return "ir";
-        case NodeType::Gate:   return "gate";
-        case NodeType::Eq:     return "eq";
-        case NodeType::Gain:   return "gain";
-        case NodeType::Comp:   return "comp";
-        case NodeType::Plugin: return "plugin";
-    }
+    for (auto& [type, name] : typeNames)
+        if (type == t) return name;
     return "gain";
 }
 
 NodeType nodeTypeFromString (const juce::String& s)
 {
-    for (auto t : { NodeType::Chain, NodeType::Split, NodeType::Nam, NodeType::Ir, NodeType::Gate,
-                    NodeType::Eq, NodeType::Gain, NodeType::Comp, NodeType::Plugin })
-        if (nodeTypeToString (t) == s)
-            return t;
+    for (auto& [type, name] : typeNames)
+        if (s == name) return type;
     return NodeType::Gain;
+}
+
+juce::String categoryName (Category c)
+{
+    switch (c)
+    {
+        case Category::Dynamics:   return "Dynamics";
+        case Category::Drive:      return "Drive";
+        case Category::Amp:        return "Amp";
+        case Category::Cab:        return "Cab / IR";
+        case Category::Eq:         return "EQ";
+        case Category::Filter:     return "Filter / Wah";
+        case Category::Modulation: return "Modulation";
+        case Category::Delay:      return "Delay";
+        case Category::Reverb:     return "Reverb";
+        case Category::Pitch:      return "Pitch";
+        case Category::Utility:    return "Utility";
+        case Category::Routing:    return "Routing";
+        case Category::Other:      return "Other";
+    }
+    return "Other";
+}
+
+juce::Colour categoryColour (Category c)
+{
+    switch (c)
+    {
+        case Category::Dynamics:   return juce::Colour (0xfff0d264);  // yellow
+        case Category::Drive:      return juce::Colour (0xffe86a5c);  // red
+        case Category::Amp:        return juce::Colour (0xfff2a33a);  // amber
+        case Category::Cab:        return juce::Colour (0xff6fd6c6);  // teal
+        case Category::Eq:         return juce::Colour (0xff3dbe7a);  // green
+        case Category::Filter:     return juce::Colour (0xff9fd85a);  // lime
+        case Category::Modulation: return juce::Colour (0xff8ea7ff);  // blue
+        case Category::Delay:      return juce::Colour (0xff5ac8fa);  // sky
+        case Category::Reverb:     return juce::Colour (0xffc9a6ff);  // purple
+        case Category::Pitch:      return juce::Colour (0xffff8fc7);  // pink
+        case Category::Utility:    return juce::Colour (0xffb8bcc6);  // grey
+        case Category::Routing:    return juce::Colour (0xfff2a33a);
+        case Category::Other:      return juce::Colour (0xff8a8f99);
+    }
+    return juce::Colour (0xff8a8f99);
+}
+
+Category categoryForBuiltIn (NodeType t)
+{
+    switch (t)
+    {
+        case NodeType::Gate: case NodeType::Comp: case NodeType::Limiter: case NodeType::Expander:
+        case NodeType::Transient: case NodeType::Swell:                         return Category::Dynamics;
+        case NodeType::Overdrive: case NodeType::Fuzz: case NodeType::Boost:
+        case NodeType::Crusher:                                                  return Category::Drive;
+        case NodeType::Nam:                                                      return Category::Amp;
+        case NodeType::Ir:                                                       return Category::Cab;
+        case NodeType::Eq:                                                       return Category::Eq;
+        case NodeType::Wah:                                                      return Category::Filter;
+        case NodeType::Chorus: case NodeType::Flanger: case NodeType::Phaser: case NodeType::Tremolo:
+        case NodeType::Vibe: case NodeType::Rotary:                              return Category::Modulation;
+        case NodeType::Delay:                                                    return Category::Delay;
+        case NodeType::Reverb:                                                   return Category::Reverb;
+        case NodeType::Pitch:                                                    return Category::Pitch;
+        case NodeType::Gain:                                                     return Category::Utility;
+        case NodeType::Split: case NodeType::Chain:                              return Category::Routing;
+        case NodeType::Plugin:                                                   return Category::Other;
+    }
+    return Category::Other;
+}
+
+Category categoriseDescription (const juce::PluginDescription& d)
+{
+    const auto cat = d.category.toLowerCase();
+    const auto name = (d.name + " " + d.descriptiveName).toLowerCase();
+
+    auto has = [] (const juce::String& s, std::initializer_list<const char*> words)
+    {
+        for (auto* w : words) if (s.contains (w)) return true;
+        return false;
+    };
+
+    // the plug-in's name is usually more specific than its declared category
+    if (has (name, { "cab", "impulse", " ir", "ir ", "speaker", "cabinet" }))            return Category::Cab;
+    if (has (name, { "amp", "head", "nam", "neural", "marshall", "mesa", "5150", "plexi", "fender", "vox" })) return Category::Amp;
+    if (has (name, { "reverb", "verb", "hall", "plate", "room", "spring", "shimmer", "space" })) return Category::Reverb;
+    if (has (name, { "delay", "echo", "tape", "ping" }))                                  return Category::Delay;
+    if (has (name, { "chorus", "flang", "phase", "phasr", "trem", "vibe", "rotary", "leslie", "ensemble", "mod" })) return Category::Modulation;
+    if (has (name, { "wah", "filter", "envelope", "formant", "talk" }))                   return Category::Filter;
+    if (has (name, { "pitch", "octa", "harmon", "whammy", "shift", "tune" }))             return Category::Pitch;
+    if (has (name, { "drive", "dist", "fuzz", "boost", "screamer", " ts", "klon", "crush", "satur", "tube", "muff", "rat" })) return Category::Drive;
+    if (has (name, { "comp", "limit", "gate", "expand", "transient", "dyna", "squeez", "swell" })) return Category::Dynamics;
+    if (has (name, { "eq", "equal", "tone", "graphic", "parametric" }))                   return Category::Eq;
+
+    if (has (cat, { "reverb" }))                         return Category::Reverb;
+    if (has (cat, { "delay" }))                          return Category::Delay;
+    if (has (cat, { "modulation" }))                     return Category::Modulation;
+    if (has (cat, { "distortion" }))                     return Category::Drive;
+    if (has (cat, { "dynamics" }))                       return Category::Dynamics;
+    if (has (cat, { "eq" }))                             return Category::Eq;
+    if (has (cat, { "filter" }))                         return Category::Filter;
+    if (has (cat, { "pitch" }))                          return Category::Pitch;
+    if (has (cat, { "tools", "analyzer", "spatial", "surround", "mastering", "restoration" })) return Category::Utility;
+    return Category::Other;
+}
+
+//==============================================================================
+void AnalyzerTap::push (bool isPost, const juce::AudioBuffer<float>& b, int n) noexcept
+{
+    auto& s = isPost ? post : pre;
+    const int count = juce::jmin (n, s.fifo.getFreeSpace());
+    if (count <= 0) return;
+    auto* l = b.getReadPointer (0);
+    auto* r = b.getReadPointer (1);
+    int k = 0;
+    s.fifo.write (count).forEach ([&] (int idx) { s.data[(size_t) idx] = 0.5f * (l[k] + r[k]); ++k; });
+}
+
+int AnalyzerTap::read (bool isPost, float* dest, int max)
+{
+    auto& s = isPost ? post : pre;
+    const int ready = s.fifo.getNumReady();
+    if (ready == 0) return 0;
+    // keep only the newest `max` samples
+    if (ready > max) s.fifo.read (ready - max).forEach ([] (int) {});
+    const int count = juce::jmin (ready, max);
+    int k = 0;
+    s.fifo.read (count).forEach ([&] (int idx) { dest[k++] = s.data[(size_t) idx]; });
+    return count;
 }
 
 juce::String splitModeName (SplitMode m)
@@ -59,37 +184,71 @@ void Node::prepare (double sr, int block)
     dry.setSize (2, maxBlock, false, true, true);
     wetGain.reset (sr, 0.015);
     wetGain.setCurrentAndTargetValue (bypassed.load() ? 0.0f : 1.0f);
+    compGain.reset (sr, 0.08);
+    compGain.setCurrentAndTargetValue (1.0f);
+    envIn = envOut = 0;
     prepareImpl (sr, maxBlock);
 }
 
 void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
 {
     wetGain.setTargetValue (bypassed.load (std::memory_order_relaxed) ? 0.0f : 1.0f);
+    auto* t = tap.load (std::memory_order_relaxed);
+    if (t != nullptr) t->push (false, buffer, n);
 
-    if (! wetGain.isSmoothing())
+    if (! wetGain.isSmoothing() && wetGain.getCurrentValue() < 0.5f)
     {
-        if (wetGain.getCurrentValue() < 0.5f)
-            return;  // fully bypassed: untouched
-        processImpl (buffer, n);
-        return;
+        if (t != nullptr) t->push (true, buffer, n);
+        return;  // fully bypassed: untouched
     }
 
-    // click-free bypass crossfade
-    for (int ch = 0; ch < 2; ++ch)
-        dry.copyFrom (ch, 0, buffer, ch, 0, n);
+    const bool ag = autoGain.load (std::memory_order_relaxed);
+    const bool needDry = ag || wetGain.isSmoothing();
+    if (needDry)
+        for (int ch = 0; ch < 2; ++ch)
+            dry.copyFrom (ch, 0, buffer, ch, 0, n);
 
     processImpl (buffer, n);
 
     auto* l = buffer.getWritePointer (0);
     auto* r = buffer.getWritePointer (1);
-    auto* dl = dry.getReadPointer (0);
-    auto* dr = dry.getReadPointer (1);
-    for (int i = 0; i < n; ++i)
+
+    if (ag)
     {
-        const float g = wetGain.getNextValue();
-        l[i] = dl[i] + (l[i] - dl[i]) * g;
-        r[i] = dr[i] + (r[i] - dr[i]) * g;
+        // Slow RMS followers on input and output; match output loudness to input.
+        const float ein = (dry.getRMSLevel (0, 0, n) + dry.getRMSLevel (1, 0, n)) * 0.5f;
+        const float eout = (buffer.getRMSLevel (0, 0, n) + buffer.getRMSLevel (1, 0, n)) * 0.5f;
+        const float a = std::exp (-(float) n / (0.4f * (float) sampleRate));
+        envIn = envIn * a + ein * ein * (1.0f - a);
+        envOut = envOut * a + eout * eout * (1.0f - a);
+        if (envIn > 1.0e-7f && envOut > 1.0e-9f)   // only adapt while playing (above about -70 dB)
+            compGain.setTargetValue (juce::jlimit (0.0631f, 4.0f, std::sqrt (envIn / envOut)));
+        for (int i = 0; i < n; ++i)
+        {
+            const float g = compGain.getNextValue();
+            l[i] *= g; r[i] *= g;
+        }
+        autoGainDb.store (gainToDb (compGain.getCurrentValue()));
     }
+    else if (compGain.getCurrentValue() != 1.0f)
+    {
+        compGain.setCurrentAndTargetValue (1.0f);
+        autoGainDb.store (0.0f);
+    }
+
+    if (wetGain.isSmoothing())
+    {
+        auto* dl = dry.getReadPointer (0);
+        auto* dr = dry.getReadPointer (1);
+        for (int i = 0; i < n; ++i)
+        {
+            const float g = wetGain.getNextValue();
+            l[i] = dl[i] + (l[i] - dl[i]) * g;
+            r[i] = dr[i] + (r[i] - dr[i]) * g;
+        }
+    }
+
+    if (t != nullptr) t->push (true, buffer, n);
 }
 
 juce::ValueTree Node::toState() const
@@ -98,6 +257,7 @@ juce::ValueTree Node::toState() const
     v.setProperty ("type", nodeTypeToString (type), nullptr);
     v.setProperty ("id", id, nullptr);
     v.setProperty ("bypass", bypassed.load(), nullptr);
+    if (autoGain.load()) v.setProperty ("autoGain", true, nullptr);
     return v;
 }
 
@@ -106,6 +266,7 @@ void Node::fromState (const juce::ValueTree& v)
     if (v.hasProperty ("id"))
         id = v["id"].toString();
     bypassed = (bool) v.getProperty ("bypass", false);
+    autoGain = (bool) v.getProperty ("autoGain", false);
 }
 
 //==============================================================================
@@ -153,18 +314,33 @@ int Block::indexOf (const juce::String& pid) const
     return -1;
 }
 
-juce::String Block::formatValue (int i) const
+juce::String Block::formatValue (int i) const { return formatValue (i, get (i)); }
+
+juce::String Block::formatValue (int i, float v) const
 {
     const auto& s = specs[(size_t) i];
-    const float v = get (i);
     if (s.toggle)
         return v > 0.5f ? "On" : "Off";
+    if (s.isChoice())
+        return s.choices[juce::jlimit (0, s.choices.size() - 1, juce::roundToInt (v))];
     if (s.unit == "Hz" && v >= 1000.0f)
         return juce::String (v / 1000.0f, 2) + " kHz";
-    juce::String txt = juce::String (v, s.decimals);
-    if (s.unit == "dB" && v > 0.0f)
+    if (s.unit == "ms" && v >= 1000.0f)
+        return juce::String (v / 1000.0f, 2) + " s";
+    // every dB readout is shown to one decimal place
+    juce::String txt = juce::String (v, s.isDb() ? 1 : s.decimals);
+    if (s.isDb() && v > 0.05f)
         txt = "+" + txt;
-    return s.unit.isEmpty() ? txt : txt + " " + s.unit;
+    if (s.isDb() && v <= s.min && s.min <= -60.0f)
+        return "-inf dB";
+    return s.unit.isEmpty() ? txt : (s.unit == "%" || s.unit == ":1" ? txt + s.unit : txt + " " + s.unit);
+}
+
+void Block::updateMeters (float inPeak, float outPeak, float grDb) noexcept
+{
+    meterIn.store (gainToDb (inPeak));
+    meterOut.store (gainToDb (outPeak));
+    meterGr.store (grDb);
 }
 
 juce::ValueTree Block::toState() const
@@ -283,7 +459,7 @@ juce::ValueTree Split::toState() const
     v.setProperty ("mode", mode.load(), nullptr);
     v.setProperty ("xoverLow", xoverLow.load(), nullptr);
     v.setProperty ("xoverHigh", xoverHigh.load(), nullptr);
-    v.setProperty ("autoGain", autoGain.load(), nullptr);
+    v.setProperty ("autoGainSum", autoGainSum.load(), nullptr);
     for (auto& b : branches)
     {
         juce::ValueTree bt ("Branch");
@@ -300,10 +476,11 @@ juce::ValueTree Split::toState() const
 void Split::fromState (const juce::ValueTree& v)
 {
     Node::fromState (v);
+    if (! v.hasProperty ("autoGainSum")) autoGain = false;   // v0.1 stored the sum compensation as "autoGain"
     mode = (int) v.getProperty ("mode", 0);
     xoverLow = (float) v.getProperty ("xoverLow", 250.0f);
     xoverHigh = (float) v.getProperty ("xoverHigh", 2500.0f);
-    autoGain = (bool) v.getProperty ("autoGain", true);
+    autoGainSum = (bool) v.getProperty ("autoGainSum", v.getProperty ("autoGain", true));
 }
 
 void Split::prepareImpl (double sr, int block)
@@ -330,7 +507,7 @@ void Split::processImpl (juce::AudioBuffer<float>& buffer, int n) noexcept
     const float fHigh = juce::jmax (fLow * 1.5f, xoverHigh.load());
 
     float comp = 1.0f;
-    if (m == SplitMode::Parallel && autoGain.load())
+    if (m == SplitMode::Parallel && autoGainSum.load())
     {
         float total = 0;
         for (auto& b : branches)

@@ -37,6 +37,12 @@ public:
 
     enum Params { pInput = 0, pOutput, pBass, pMid, pTreble, pPresence, pNormalize };
 
+    Visual getVisual() const override { return Visual::Response; }
+    float responseDb (double hz) const override;
+
+    /** Other .nam files next to the loaded one (for quick browsing). */
+    juce::File getFile() const { return modelFile; }
+
 protected:
     void prepareImpl (double sr, int block) override;
     void processImpl (juce::AudioBuffer<float>&, int) noexcept override;
@@ -44,6 +50,7 @@ protected:
 private:
     struct Model;
     void prepareModel (Model&, double sr, int block);
+    void designToneStack (Biquad&, Biquad&, Biquad&, Biquad&, double sr) const;
 
     std::unique_ptr<Model> model;
     juce::SpinLock modelLock;
