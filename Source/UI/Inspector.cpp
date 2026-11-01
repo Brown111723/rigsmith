@@ -205,50 +205,56 @@ struct Inspector::Strip : public juce::Component
 //==============================================================================
 Inspector::Inspector (GraphHost& h) : host (h)
 {
-    title.setFont (font (19.0f, true));
+    title.setFont (font (18.0f, true));
     title.setMinimumHorizontalScale (0.7f);
-    subtitle.setFont (font (12.0f, true));
+    subtitle.setFont (font (11.0f, true));
     subtitle.setColour (juce::Label::textColourId, muted);
+    subtitle.setJustificationType (juce::Justification::centredRight);
+    subtitle.setMinimumHorizontalScale (0.7f);
     info.setFont (font (12.0f));
     info.setColour (juce::Label::textColourId, muted);
     info.setJustificationType (juce::Justification::topLeft);
     for (auto* l : { &title, &subtitle, &info }) addAndMakeVisible (l);
 
     openButton.onClick = [this] { if (node != nullptr && onOpen) onOpen (*node); };
-    addChildComponent (openButton);
-    replaceButton.setTooltip ("Swap this block for another in the same place (keeps scenes and footswitches)");
-    replaceButton.onClick = [this] { if (node != nullptr) host.showReplaceMenu (*node, &replaceButton); };
-    addChildComponent (replaceButton);
-
-    prevFile.setTooltip ("Previous file in this folder");
-    nextFile.setTooltip ("Next file in this folder");
     prevFile.onClick = [this] { if (node != nullptr) host.browseFile (*node, -1); };
     nextFile.onClick = [this] { if (node != nullptr) host.browseFile (*node, 1); };
-    addChildComponent (prevFile);
-    addChildComponent (nextFile);
 
-    bypassButton.setClickingTogglesState (true);
-    bypassButton.setButtonText ("Bypass");
-    bypassButton.setColour (juce::TextButton::buttonOnColourId, red);
     bypassButton.onClick = [this]
     {
         if (node == nullptr) return;
-        node->bypassed = bypassButton.getToggleState();
+        node->bypassed = ! node->bypassed.load();
         host.getEngine().storeScene();
         host.getEngine().markDirty();
     };
-    addChildComponent (bypassButton);
 
-    autoGainButton.setClickingTogglesState (true);
-    autoGainButton.setColour (juce::TextButton::buttonOnColourId, teal);
-    autoGainButton.setTooltip ("Match this block's output loudness to its input, so switching it on doesn't jump in volume");
+    autoGainButton.setTooltip ("Gain compensation: like normalising this block. While you play it measures loudness in vs out, "
+                               "then holds one fixed level match (no pumping). It re-measures when you change settings. "
+                               "Right-click to measure again now.");
     autoGainButton.onClick = [this]
     {
         if (node == nullptr) return;
-        node->autoGain = autoGainButton.getToggleState();
+        node->autoGain = ! node->autoGain.load();
+        if (node->autoGain.load()) node->requestRelearn();
         host.getEngine().markDirty();
     };
-    addChildComponent (autoGainButton);
+    autoGainButton.onRightClick = [this]
+    {
+        if (node == nullptr) return;
+        node->autoGain = true;
+        node->requestRelearn();
+        host.getEngine().markDirty();
+    };
+
+    diceButton.onClick = [this] { if (node != nullptr) host.randomise (*node, GraphHost::RandomSettings); };
+    diceButton.onRightClick = [this] { if (node != nullptr) host.showRandomMenu (*node, &diceButton); };
+    shuffleButton.onClick = [this] { if (node != nullptr) host.randomise (*node, GraphHost::RandomType); };
+    presetButton.onClick = [this] { if (node != nullptr) host.showBlockPresetMenu (*node, &presetButton); };
+    lockButton.onClick = [this] { if (node != nullptr) host.toggleLock (*node); };
+
+    for (auto* b : std::initializer_list<juce::Component*> { &openButton, &prevFile, &nextFile, &bypassButton, &autoGainButton,
+                                                             &diceButton, &shuffleButton, &presetButton, &lockButton })
+        addChildComponent (b);
 
     autoGainSum.setTooltip ("In Parallel mode, turn the sum down when the paths add up to more than 100%");
     autoGainSum.onClick = [this]
@@ -263,6 +269,7 @@ Inspector::Inspector (GraphHost& h) : host (h)
     pluginHeader.setFont (font (11.0f, true));
     pluginHeader.setColour (juce::Label::textColourId, muted);
     pluginHeader.setText ("PLUG-IN PARAMETERS", juce::dontSendNotification);
+    pluginHeader.setTooltip ("Right-click a knob to pin it, so 'Pinned only' shows just your favourites");
     controls.addChildComponent (pluginHeader);
     pluginScope.setTooltip ("Show all of the plug-in's parameters, or only the ones you've pinned (right-click a knob to pin)");
     pluginScope.onClick = [this] { showAllPluginParams = ! showAllPluginParams; needsRebuild = true; };
@@ -296,7 +303,8 @@ void Inspector::clearControls()
     pluginParamIndex.clear();
     modeButtons.clear();
     strips.clear();
-    for (auto* c : std::initializer_list<juce::Component*> { &openButton, &replaceButton, &bypassButton, &autoGainButton, &prevFile, &nextFile,
+    for (auto* c : std::initializer_list<juce::Component*> { &openButton, &bypassButton, &autoGainButton, &prevFile, &nextFile,
+                                                              &diceButton, &shuffleButton, &presetButton, &lockButton,
                                                               &autoGainSum, &addPathButton, &pluginHeader, &pluginScope })
         c->setVisible (false);
 }
@@ -323,8 +331,9 @@ void Inspector::setNode (Node* n)
     {
         title.setText ("Rigsmith", juce::dontSendNotification);
         subtitle.setText ("NOTHING SELECTED", juce::dontSendNotification);
-        info.setText ("Click a block to edit it. Drag blocks to reorder or into another path. Right-click for options "
-                      "(replace, auto gain, MIDI learn), double-click to load a model or IR, and drop .nam / .wav files anywhere.",
+        info.setText ("Click a block to edit it. Drag blocks to reorder, or drop a block, model, IR or plug-in onto the middle "
+                      "of another block to replace it. Right-click for options (lock, presets, MIDI learn). "
+                      "Roll the dice at the top for a whole new rig - Ctrl+Z takes it back.",
                       juce::dontSendNotification);
         resized();
         repaint();
@@ -332,7 +341,10 @@ void Inspector::setNode (Node* n)
     }
 
     bypassButton.setVisible (true);
-    bypassButton.setToggleState (node->bypassed.load(), juce::dontSendNotification);
+    bypassButton.setToggleState (! node->bypassed.load(), juce::dontSendNotification);
+    autoGainButton.setVisible (true);
+    diceButton.setVisible (true);
+    lockButton.setVisible (true);
 
     if (auto* s = dynamic_cast<Split*> (node)) buildSplit (*s);
     else if (auto* b = dynamic_cast<Block*> (node)) buildBlock (*b);
@@ -345,16 +357,12 @@ void Inspector::setNode (Node* n)
 void Inspector::buildBlock (Block& b)
 {
     const auto c = colourFor (b);
-    replaceButton.setVisible (true);
-    autoGainButton.setVisible (true);
-    autoGainButton.setToggleState (b.autoGain.load(), juce::dontSendNotification);
+    shuffleButton.setVisible (true);
+    presetButton.setVisible (true);
 
-    if (b.getVisual() != Visual::None)
-    {
-        display = std::make_unique<FxDisplay> (host.getEngine(), b);
-        display->onEdited = [this] { host.getEngine().markDirty(); };
-        addAndMakeVisible (*display);
-    }
+    display = std::make_unique<FxDisplay> (host.getEngine(), b);
+    display->onEdited = [this] { host.getEngine().markDirty(); };
+    addAndMakeVisible (*display);
 
     for (int i = 0; i < b.numParams(); ++i)
     {
@@ -402,9 +410,18 @@ void Inspector::buildBlock (Block& b)
 
     switch (b.getType())
     {
-        case NodeType::Nam:    openButton.setButtonText ("Load model..."); openButton.setVisible (true); prevFile.setVisible (true); nextFile.setVisible (true); break;
-        case NodeType::Ir:     openButton.setButtonText ("Load IR...");    openButton.setVisible (true); prevFile.setVisible (true); nextFile.setVisible (true); break;
-        case NodeType::Plugin: openButton.setButtonText ("Open plug-in");  openButton.setVisible (true); break;
+        case NodeType::Nam:
+            openButton.setIcon (Icon::Folder); openButton.setTooltip ("Load a NAM model (or drop a .nam file on the block)");
+            openButton.setVisible (true); prevFile.setVisible (true); nextFile.setVisible (true);
+            break;
+        case NodeType::Ir:
+            openButton.setIcon (Icon::Folder); openButton.setTooltip ("Load a cab IR (or drop a .wav file on the block)");
+            openButton.setVisible (true); prevFile.setVisible (true); nextFile.setVisible (true);
+            break;
+        case NodeType::Plugin:
+            openButton.setIcon (Icon::Open); openButton.setTooltip ("Open the plug-in's window");
+            openButton.setVisible (true);
+            break;
         default: break;
     }
 
@@ -479,8 +496,6 @@ void Inspector::buildSplit (Split& s)
 
     autoGainSum.setVisible (s.getMode() == SplitMode::Parallel);
     autoGainSum.setToggleState (s.autoGainSum.load(), juce::dontSendNotification);
-    autoGainButton.setVisible (true);
-    autoGainButton.setToggleState (s.autoGain.load(), juce::dontSendNotification);
 
     if (s.getMode() == SplitMode::Crossover)
     {
@@ -518,9 +533,19 @@ void Inspector::timerCallback()
     }
 
     title.setText (node->getName(), juce::dontSendNotification);
-    bypassButton.setToggleState (node->bypassed.load(), juce::dontSendNotification);
-    autoGainButton.setToggleState (node->autoGain.load(), juce::dontSendNotification);
-    autoGainButton.setButtonText (node->autoGain.load() ? "Auto " + juce::String (node->autoGainDb.load(), 1) + " dB" : "Auto gain");
+    bypassButton.setToggleState (! node->bypassed.load(), juce::dontSendNotification);
+    lockButton.setToggleState (node->locked.load(), juce::dontSendNotification);
+    lockButton.setIcon (node->locked.load() ? Icon::Lock : Icon::Unlock);
+    {
+        const bool ag = node->autoGain.load();
+        autoGainButton.setToggleState (ag, juce::dontSendNotification);
+        const float prog = node->autoGainProgress.load();
+        const float db = node->autoGainDb.load();
+        const auto label = ! ag ? juce::String ("Auto")
+                         : (prog < 1.0f ? juce::String ("Play...") : (db > 0.05f ? "+" : "") + juce::String (db, 1) + " dB");
+        if (label != autoGainButton.getLabel()) { autoGainButton.setLabel (label); resized(); }
+        autoGainButton.setProgress (ag && prog < 1.0f ? prog : -1.0f);
+    }
 
     juce::String sub = kindLabel (*node), inf;
     if (auto* s = dynamic_cast<Split*> (node))
@@ -569,7 +594,6 @@ void Inspector::timerCallback()
         {
             inf << categoryName (pb->getCategory()) << "  " << pb->getDescription().version;
             if (pb->getLatency() > 0) inf << "\nLatency " << pb->getLatency() << " samples";
-            inf << "\nRight-click a parameter knob to pin it here.";
         }
 
         auto* inst = pb->getInstance();
@@ -589,8 +613,13 @@ void Inspector::timerCallback()
         inf << "Reduction " << juce::String (gb->getReduction(), 1) << " dB";
     }
 
+    if (dynamic_cast<Split*> (node) == nullptr)
+        inf = inf.replace ("\n", "   -   ");
     subtitle.setText (sub, juce::dontSendNotification);
+    const bool hadInfo = info.getText().isNotEmpty();
     info.setText (inf, juce::dontSendNotification);
+    title.setTooltip (inf.replace ("   -   ", "\n"));
+    if (hadInfo != inf.isNotEmpty()) resized();
 
     if (auto* b = dynamic_cast<Block*> (node))
     {
@@ -610,19 +639,33 @@ void Inspector::timerCallback()
 void Inspector::paint (juce::Graphics& g)
 {
     g.fillAll (panel);
-    g.setColour (border);
-    g.drawHorizontalLine (0, 0.0f, (float) getWidth());
     if (node != nullptr)
     {
         g.setColour (colourFor (*node));
-        g.fillRoundedRectangle (16.0f, 18.0f, 6.0f, 26.0f, 3.0f);
+        g.fillRoundedRectangle ((float) title.getX() - 12.0f, (float) title.getY() + 5.0f, 5.0f, (float) title.getHeight() - 10.0f, 2.5f);
     }
 }
 
 void Inspector::layoutControls()
 {
-    const int h = juce::jmax (120, controlsView.getHeight() - 10);
+    const int h = juce::jmax (110, controlsView.getHeight() - 10);
     int x = 0;
+
+    // knobs fill columns top to bottom when the panel is tall enough for more than one row
+    const int rows = juce::jmax (1, (h + 6) / 118);
+    const int kh = juce::jlimit (100, 128, (h - (rows - 1) * 6) / rows);
+    const int kw = 80;
+    auto placeGrid = [&] (juce::OwnedArray<Knob>& ks, int startX, int startY, int availH)
+    {
+        const int r = juce::jmax (1, (availH + 6) / (kh + 6));
+        int col = 0, row = 0;
+        for (auto* k : ks)
+        {
+            k->setBounds (startX + col * (kw + 4), startY + row * (kh + 6), kw, kh);
+            if (++row >= r) { row = 0; ++col; }
+        }
+        return startX + (col + (row > 0 ? 1 : 0)) * (kw + 4);
+    };
 
     if (! modeButtons.isEmpty())
     {
@@ -630,7 +673,7 @@ void Inspector::layoutControls()
         for (auto* b : modeButtons) { b->setBounds (bx, 0, 104, 30); bx += 110; }
         autoGainSum.setBounds (bx + 6, 0, 160, 30);
         int y = 40;
-        for (auto* k : knobs) { k->setBounds (x, y, 80, juce::jmin (h - y, 118)); x += 84; }
+        for (auto* k : knobs) { k->setBounds (x, y, kw, juce::jmin (h - y, 118)); x += kw + 4; }
         for (auto* s : strips) { s->setBounds (x, y, 112, h - y); x += 120; }
         if (addPathButton.isVisible()) { addPathButton.setBounds (x, y + (h - y) / 2 - 16, 100, 32); x += 108; }
         controls.setSize (juce::jmax (x, bx + 170), h);
@@ -642,66 +685,85 @@ void Inspector::layoutControls()
         int cw = 0;
         for (auto* c : choices) cw = juce::jmax (cw, c->preferredWidth());
         int y = 0;
-        for (auto* c : choices) { c->setBounds (x, y, cw, 52); y += 58; }
-        x += cw + 14;
+        for (auto* c : choices)
+        {
+            if (y > 0 && y + 52 > h) { y = 0; x += cw + 14; }
+            c->setBounds (x, y, cw, 52);
+            y += 58;
+        }
+        x += cw + 16;
     }
 
-    for (auto* k : knobs) { k->setBounds (x, 0, 78, juce::jmin (h, 118)); x += 80; }
+    x = placeGrid (knobs, x, 0, h);
 
     if (! toggles.isEmpty())
     {
         int y = 22;
-        for (auto* t : toggles) { t->setBounds (x + 4, y, 150, 28); y += 34; }
-        x += 160;
+        for (auto* t : toggles) { t->setBounds (x + 8, y, 150, 28); y += 34; }
+        x += 166;
     }
 
     if (pluginHeader.isVisible())
     {
-        x += 10;
-        const int startX = x;
-        pluginHeader.setBounds (x, 0, 180, 18);
-        pluginScope.setBounds (x + 180, 0, 100, 22);
-        int px = x, py = 26;
-        const int rows = juce::jmax (1, (h - 26) / 104);
-        int row = 0;
-        for (auto* k : pluginKnobs)
-        {
-            k->setBounds (px, py, 76, 100);
-            if (++row >= rows) { row = 0; px += 80; py = 26; }
-            else py += 104;
-        }
-        x = juce::jmax (startX + 290, px + (row > 0 ? 80 : 0));
+        x += 12;
+        pluginHeader.setBounds (x, 0, 180, 20);
+        pluginScope.setBounds (x + 184, 0, 104, 22);
+        const int end = placeGrid (pluginKnobs, x, 28, h - 28);
+        x = juce::jmax (x + 292, end);
     }
 
     controls.setSize (juce::jmax (x, 10), h);
 }
 
+void Inspector::layoutIcons (juce::Rectangle<int> row)
+{
+    const int h = row.getHeight();
+    auto place = [&] (IconButton& b, int gapAfter = 4)
+    {
+        if (! b.isVisible()) return;
+        const int w = juce::jmin (b.preferredWidth (h), row.getWidth());
+        b.setBounds (row.removeFromLeft (w));
+        row.removeFromLeft (gapAfter);
+    };
+    place (openButton);
+    place (prevFile, 2);
+    place (nextFile, 10);
+    place (bypassButton);
+    place (autoGainButton, 10);
+    place (diceButton);
+    place (shuffleButton, 10);
+    place (presetButton);
+    place (lockButton);
+}
+
 void Inspector::resized()
 {
-    auto r = getLocalBounds().reduced (16, 12);
-    auto left = r.removeFromLeft (262);
+    auto r = getLocalBounds().reduced (14, 10);
+    const bool isSplit = dynamic_cast<Split*> (node) != nullptr;
+    auto left = r.removeFromLeft (node == nullptr || isSplit ? 300 : juce::jlimit (330, 600, (int) ((float) getWidth() * 0.38f)));
     r.removeFromLeft (16);
 
-    title.setBounds (left.removeFromTop (34).withTrimmedLeft (14));
-    subtitle.setBounds (left.removeFromTop (18));
-    auto row2 = left.removeFromBottom (30);
-    left.removeFromBottom (6);
-    auto row1 = left.removeFromBottom (30);
-    left.removeFromBottom (6);
-    info.setBounds (left.reduced (0, 4));
-
-    if (openButton.isVisible()) { openButton.setBounds (row1.removeFromLeft (118)); row1.removeFromLeft (6); }
-    if (prevFile.isVisible())   { prevFile.setBounds (row1.removeFromLeft (32)); row1.removeFromLeft (4); nextFile.setBounds (row1.removeFromLeft (32)); row1.removeFromLeft (6); }
-    if (replaceButton.isVisible()) replaceButton.setBounds (row1.removeFromLeft (juce::jmin (90, row1.getWidth())));
-    bypassButton.setBounds (row2.removeFromLeft (84));
-    row2.removeFromLeft (6);
-    autoGainButton.setBounds (row2.removeFromLeft (130));
+    auto top = left.removeFromTop (28);
+    subtitle.setBounds (top.removeFromRight (juce::jmin (top.getWidth() / 2, 220)));
+    title.setBounds (top.withTrimmedLeft (12));
+    left.removeFromTop (6);
+    if (node != nullptr)
+    {
+        layoutIcons (left.removeFromTop (30));
+        left.removeFromTop (6);
+    }
 
     if (display != nullptr)
     {
-        display->setBounds (r.removeFromLeft (juce::jmin (420, r.getWidth() / 2)));
-        r.removeFromLeft (16);
+        if (info.getText().isNotEmpty()) { info.setBounds (left.removeFromTop (16)); left.removeFromTop (4); }
+        else info.setBounds ({});
+        display->setBounds (left);
     }
+    else
+    {
+        info.setBounds (left.reduced (0, 2));
+    }
+
     controlsView.setBounds (r);
     layoutControls();
 }

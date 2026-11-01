@@ -61,10 +61,18 @@ public:
 
     std::unique_ptr<Node> createNode (NodeType type) const;
     std::unique_ptr<Node> createPlugin (const juce::PluginDescription& desc, juce::String& error);
+    /** Rebuilds a node (and anything inside it) from saved state. */
+    std::unique_ptr<Node> createFromState (const juce::ValueTree&);
 
     Node* insert (std::unique_ptr<Node> node, Chain& target, int index);
-    /** Swaps a block for another in the same place, keeping its id (so scenes and MIDI still apply). */
-    Node* replace (const juce::String& id, std::unique_ptr<Node> replacement);
+    /** Swaps a block for another in the same place, keeping its id (so scenes and MIDI still apply).
+        keepMappings: the replacement has the same parameters (e.g. a block preset of the same type). */
+    Node* replace (const juce::String& id, std::unique_ptr<Node> replacement, bool keepMappings = false);
+    /** Exchanges the positions of two blocks (anywhere in the rig). */
+    bool swap (const juce::String& idA, const juce::String& idB);
+    /** Installs a whole new main chain. splice runs under the audio lock and may move
+        nodes (e.g. locked blocks) from the old chain into the new one. */
+    void installRoot (std::unique_ptr<Chain> newRoot, const std::function<void (Chain& oldRoot, Chain& newRoot)>& splice = {});
     void remove (const juce::String& id);
     bool move (const juce::String& id, Chain& target, int index);
     Node* duplicate (const juce::String& id);
@@ -91,11 +99,37 @@ public:
     juce::Array<juce::File> getPresetFiles() const;
     bool loadPreset (const juce::File&);
     bool savePreset (const juce::File&);
+    /** Steps through Init followed by every saved preset. */
     void stepPreset (int delta);
-    juce::String presetName { "Init Rig" };
+    static constexpr const char* initName = "Init";
+    bool isInit() const { return presetFile == juce::File() && presetName == initName; }
+    juce::String presetName { initName };
     juce::File presetFile;
     bool dirty = false;
     void markDirty();
+
+    //--- Undo --------------------------------------------------------------------
+    /** Snapshot the rig before a big change (randomise, replace, remove...). */
+    void checkpoint();
+    bool undo();
+    bool redo();
+    bool canUndo() const noexcept { return ! undoStack.empty(); }
+    bool canRedo() const noexcept { return ! redoStack.empty(); }
+    /** Groups several edits under one checkpoint. */
+    struct UndoGroup
+    {
+        explicit UndoGroup (Engine& e) : engine (e) { engine.checkpoint(); ++engine.undoSuppress; }
+        ~UndoGroup() { --engine.undoSuppress; }
+        Engine& engine;
+    };
+
+    //--- Block presets ---------------------------------------------------------
+    juce::File getBlockPresetFolder (const Node&) const;
+    juce::Array<juce::File> getBlockPresets (const Node&) const;
+    bool saveBlockPreset (const Node&, const juce::String& name);
+    Node* loadBlockPreset (const juce::String& nodeId, const juce::File&);
+    /** Back to the block's default settings (keeps the loaded model / IR). */
+    Node* initBlock (const juce::String& nodeId);
 
     //--- MIDI -------------------------------------------------------------------
     std::vector<MidiMapping> mappings;
@@ -153,6 +187,10 @@ private:
     void applyMapping (const MidiMapping&, int value);
 
     std::unique_ptr<Node> buildNode (const juce::ValueTree&);
+    juce::ValueTree snapshot() const;
+    void restore (const juce::ValueTree&);
+    std::vector<juce::ValueTree> undoStack, redoStack;
+    int undoSuppress = 0;
     void prepareNode (Node&);
     void announceDeletion (Node&);
     std::unique_ptr<Node> extract (const juce::String& id, Location* where = nullptr);

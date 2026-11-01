@@ -549,14 +549,21 @@ Node* Engine::insert (std::unique_ptr<Node> node, Chain& target, int index)
     return raw;
 }
 
-Node* Engine::replace (const juce::String& id, std::unique_ptr<Node> n)
+Node* Engine::replace (const juce::String& id, std::unique_ptr<Node> n, bool keepMappings)
 {
     auto loc = locate (id);
     if (loc.chain == nullptr || n == nullptr) return nullptr;
+    checkpoint();
     auto& slot = loc.chain->nodes[(size_t) loc.index];
     n->id = id;
     n->bypassed = slot->bypassed.load();
+    n->locked = slot->locked.load();
     n->autoGain = slot->autoGain.load();
+    if (n->autoGain.load())
+    {
+        n->autoGainDb = slot->autoGainDb.load();   // start from the old match, then measure the new block
+        n->requestRelearn();
+    }
     prepareNode (*n);
     auto* raw = n.get();
     std::unique_ptr<Node> old;
@@ -568,10 +575,11 @@ Node* Engine::replace (const juce::String& id, std::unique_ptr<Node> n)
     announceDeletion (*old);
     old.reset();
     // mappings that pointed at parameters of the old block no longer make sense
-    mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [&] (const MidiMapping& m)
-    {
-        return m.nodeId == id && m.target == MidiMapping::Target::Param;
-    }), mappings.end());
+    if (! keepMappings)
+        mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [&] (const MidiMapping& m)
+        {
+            return m.nodeId == id && m.target == MidiMapping::Target::Param;
+        }), mappings.end());
     markDirty();
     notifyGraphChanged();
     return raw;
@@ -588,8 +596,47 @@ std::unique_ptr<Node> Engine::extract (const juce::String& id, Location* where)
     return n;
 }
 
+bool Engine::swap (const juce::String& a, const juce::String& b)
+{
+    if (a == b) return false;
+    auto la = locate (a), lb = locate (b);
+    if (la.chain == nullptr || lb.chain == nullptr) return false;
+    if (! canDropInto (a, *lb.chain) || ! canDropInto (b, *la.chain)) return false;
+    checkpoint();
+    {
+        const juce::ScopedLock sl (lock);
+        std::swap (la.chain->nodes[(size_t) la.index], lb.chain->nodes[(size_t) lb.index]);
+    }
+    markDirty();
+    notifyGraphChanged();
+    return true;
+}
+
+void Engine::installRoot (std::unique_ptr<Chain> r, const std::function<void (Chain&, Chain&)>& splice)
+{
+    if (r == nullptr) return;
+    r->prepare (sampleRate, blockSize);
+    {
+        const juce::ScopedLock sl (lock);
+        if (splice) splice (*root, *r);
+        std::swap (root, r);
+    }
+    announceDeletion (*r);
+    r.reset();
+    mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [this] (const MidiMapping& m)
+    {
+        return ! m.isGlobal() && findNode (m.nodeId) == nullptr;
+    }), mappings.end());
+    for (auto& s : scenes) s = captureScene();
+    markDirty();
+    notifyGraphChanged();
+    listeners.call ([] (Listener& l) { l.presetChanged(); l.sceneChanged(); });
+}
+
 void Engine::remove (const juce::String& id)
 {
+    if (locate (id).chain == nullptr) return;
+    checkpoint();
     auto n = extract (id);
     if (n == nullptr) return;
     announceDeletion (*n);
@@ -691,6 +738,7 @@ void Engine::removeBranch (Split& split, int index)
 {
     if (! juce::isPositiveAndBelow (index, (int) split.branches.size()) || split.branches.size() <= 1)
         return;
+    checkpoint();
     std::unique_ptr<Split::Branch> b;
     {
         const juce::ScopedLock sl (lock);
@@ -710,6 +758,7 @@ void Engine::unwrapSplit (Split& split)
 {
     auto loc = locate (split.id);
     if (loc.chain == nullptr) return;
+    checkpoint();
     std::unique_ptr<Node> old;
     {
         const juce::ScopedLock sl (lock);
@@ -823,6 +872,10 @@ void Engine::setScene (int index)
 }
 
 //==============================================================================
+std::unique_ptr<Node> Engine::createFromState (const juce::ValueTree& v) { return buildNode (v); }
+
+static void syncAll (Node& n) { visitNodes (n, [] (Node& x) { x.syncEdits(); }); }
+
 std::unique_ptr<Node> Engine::buildNode (const juce::ValueTree& v)
 {
     const auto type = nodeTypeFromString (v["type"].toString());
@@ -835,6 +888,7 @@ std::unique_ptr<Node> Engine::buildNode (const juce::ValueTree& v)
             if (child.hasType ("Node"))
                 if (auto n = buildNode (child))
                     c->nodes.push_back (std::move (n));
+        syncAll (*c);
         return c;
     }
 
@@ -862,6 +916,7 @@ std::unique_ptr<Node> Engine::buildNode (const juce::ValueTree& v)
             }
             s->branches.push_back (std::move (b));
         }
+        syncAll (*s);
         return s;
     }
 
@@ -889,12 +944,16 @@ std::unique_ptr<Node> Engine::buildNode (const juce::ValueTree& v)
 
         auto pb = std::make_unique<PluginBlock> (std::move (inst), match != nullptr ? *match : desc);
         pb->fromState (v);
+        pb->syncEdits();
         return pb;
     }
 
     auto n = createNode (type);
     if (n != nullptr)
+    {
         n->fromState (v);
+        n->syncEdits();
+    }
     return n;
 }
 
@@ -1014,6 +1073,7 @@ void Engine::setState (const juce::ValueTree& v, bool includeSession)
 
 void Engine::loadDefaultRig()
 {
+    if (dirty) checkpoint();
     auto r = std::make_unique<Chain>();
     r->nodes.push_back (std::make_unique<GateBlock>());
     r->nodes.push_back (std::make_unique<NamBlock>());
@@ -1025,7 +1085,7 @@ void Engine::loadDefaultRig()
     }
     if (r != nullptr) announceDeletion (*r);
     r.reset();
-    presetName = "Init Rig";
+    presetName = initName;
     presetFile = juce::File();
     activeScene = 0;
     for (auto& s : scenes) s = captureScene();
@@ -1053,6 +1113,7 @@ juce::Array<juce::File> Engine::getPresetFiles() const
 
 bool Engine::loadPreset (const juce::File& f)
 {
+    if (dirty) checkpoint();   // unsaved changes can be got back with undo
     auto xml = juce::parseXML (f);
     if (xml == nullptr)
     {
@@ -1090,11 +1151,127 @@ bool Engine::savePreset (const juce::File& f)
 
 void Engine::stepPreset (int delta)
 {
+    // position 0 is Init, then the saved presets
     auto files = getPresetFiles();
-    if (files.isEmpty()) return;
-    int idx = files.indexOf (presetFile);
-    idx = idx < 0 ? (delta > 0 ? 0 : files.size() - 1) : (idx + delta + files.size()) % files.size();
-    loadPreset (files[idx]);
+    const int count = files.size() + 1;
+    const int cur = files.indexOf (presetFile) + 1;   // 0 when on Init or an unsaved rig
+    const int next = ((cur + delta) % count + count) % count;
+    if (next == 0) loadDefaultRig();
+    else loadPreset (files[next - 1]);
+}
+
+//==============================================================================
+juce::ValueTree Engine::snapshot() const
+{
+    auto v = getState (false);
+    v.setProperty ("undoFile", presetFile.getFullPathName(), nullptr);
+    v.setProperty ("undoDirty", dirty, nullptr);
+    return v;
+}
+
+void Engine::restore (const juce::ValueTree& v)
+{
+    setState (v, false);
+    presetFile = juce::File (v.getProperty ("undoFile").toString());
+    dirty = (bool) v.getProperty ("undoDirty", true);
+    listeners.call ([] (Listener& l) { l.presetChanged(); });
+}
+
+void Engine::checkpoint()
+{
+    if (undoSuppress > 0) return;
+    undoStack.push_back (snapshot());
+    if (undoStack.size() > 40) undoStack.erase (undoStack.begin());
+    redoStack.clear();
+}
+
+bool Engine::undo()
+{
+    if (undoStack.empty()) return false;
+    redoStack.push_back (snapshot());
+    auto v = undoStack.back();
+    undoStack.pop_back();
+    restore (v);
+    return true;
+}
+
+bool Engine::redo()
+{
+    if (redoStack.empty()) return false;
+    undoStack.push_back (snapshot());
+    auto v = redoStack.back();
+    redoStack.pop_back();
+    restore (v);
+    return true;
+}
+
+//==============================================================================
+juce::File Engine::getBlockPresetFolder (const Node& n) const
+{
+    juce::String key;
+    if (auto* pb = dynamic_cast<const PluginBlock*> (&n)) key = "VST - " + pb->getDescription().name;
+    else if (n.getType() == NodeType::Nam) key = "NAM Amp";
+    else if (n.getType() == NodeType::Ir) key = "Cab IR";
+    else key = n.getName();
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rigsmith")
+        .getChildFile ("Block Presets").getChildFile (juce::File::createLegalFileName (key));
+}
+
+juce::Array<juce::File> Engine::getBlockPresets (const Node& n) const
+{
+    auto files = getBlockPresetFolder (n).findChildFiles (juce::File::findFiles, false, "*.rbp");
+    std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b) { return a.getFileName().compareNatural (b.getFileName()) < 0; });
+    return files;
+}
+
+bool Engine::saveBlockPreset (const Node& n, const juce::String& name)
+{
+    auto v = n.toState().createCopy();
+    for (auto* prop : { "id", "bypass", "autoGain", "autoGainDb", "locked" }) v.removeProperty (prop, nullptr);
+    v.setProperty ("presetName", name, nullptr);
+    const auto f = getBlockPresetFolder (n).getChildFile (juce::File::createLegalFileName (name) + ".rbp");
+    f.getParentDirectory().createDirectory();
+    if (auto xml = v.createXml(); xml != nullptr && xml->writeTo (f))
+    {
+        message ("Saved block preset " + name);
+        return true;
+    }
+    message ("Couldn't save " + f.getFullPathName());
+    return false;
+}
+
+Node* Engine::loadBlockPreset (const juce::String& id, const juce::File& f)
+{
+    auto* current = findNode (id);
+    auto xml = juce::parseXML (f);
+    if (current == nullptr || xml == nullptr) return nullptr;
+    auto v = juce::ValueTree::fromXml (*xml);
+    if (nodeTypeFromString (v["type"].toString()) != current->getType()) { message ("That preset is for a different block"); return nullptr; }
+    auto n = buildNode (v);
+    if (n == nullptr) return nullptr;
+    auto* r = replace (id, std::move (n), true);
+    if (r != nullptr) message ("Loaded " + f.getFileNameWithoutExtension());
+    return r;
+}
+
+Node* Engine::initBlock (const juce::String& id)
+{
+    auto* current = findNode (id);
+    if (current == nullptr) return nullptr;
+    if (auto* pb = dynamic_cast<PluginBlock*> (current))
+    {
+        checkpoint();
+        pb->resetToDefaults();
+        for (int i = 0; i < pb->numParams(); ++i) pb->set (i, pb->getSpecs()[(size_t) i].def);
+        markDirty();
+        return pb;
+    }
+    auto v = current->toState().createCopy();
+    if (auto* b = dynamic_cast<Block*> (current))
+        for (auto& sp : b->getSpecs())
+            v.setProperty ("p_" + sp.id, sp.def, nullptr);
+    auto n = buildNode (v);
+    return n != nullptr ? replace (id, std::move (n), true) : nullptr;
 }
 
 } // namespace rig

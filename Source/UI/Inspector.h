@@ -2,6 +2,7 @@
 
 #include "GraphView.h"
 #include "FxDisplay.h"
+#include "Icons.h"
 
 namespace rig
 {
@@ -37,8 +38,8 @@ private:
     juce::OwnedArray<juce::TextButton> buttons;
 };
 
-/** Bottom panel: every control for the selected block, split or plug-in,
-    plus a live visual of what the controls are doing. */
+/** Bottom panel. Left: the block's name, a row of icon buttons (open, bypass, gain
+    compensation, randomise, presets, lock) and the live display. Right: every control. */
 class Inspector : public juce::Component,
                   private juce::Timer
 {
@@ -70,9 +71,16 @@ private:
     bool showAllPluginParams = true;
 
     juce::Label title, subtitle, info;
-    juce::TextButton openButton, replaceButton { "Replace" }, bypassButton, autoGainButton { "Auto gain" };
-    juce::TextButton prevFile { "<" }, nextFile { ">" };
+    IconButton openButton { Icon::Open, "Open" },
+               prevFile { Icon::Prev, "Previous file in this folder" }, nextFile { Icon::Next, "Next file in this folder" },
+               bypassButton { Icon::Power, "On / bypass (Space)", theme::teal },
+               autoGainButton { Icon::AutoGain, "", theme::teal },
+               diceButton { Icon::Dice, "Randomise this block's settings (R). Right-click for more" },
+               shuffleButton { Icon::Shuffle, "Swap for a random block of the same kind (Shift+R)" },
+               presetButton { Icon::Preset, "Block presets: save, load, init" },
+               lockButton { Icon::Unlock, "Lock: keep this block when randomising the rig", theme::accent };
     std::unique_ptr<FxDisplay> display;
+    void layoutIcons (juce::Rectangle<int> row);
 
     juce::Viewport controlsView;
     juce::Component controls;

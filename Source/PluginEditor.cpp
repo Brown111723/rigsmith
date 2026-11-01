@@ -61,7 +61,41 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     addAndMakeVisible (viewport);
     addAndMakeVisible (inspector);
     addAndMakeVisible (library);
+    addAndMakeVisible (divider);
+    statusLabel.setFont (mono (11.0f));
+    statusLabel.setColour (juce::Label::textColourId, dim);
+    statusLabel.setInterceptsMouseClicks (false, false);
+    statusLabel.setJustificationType (juce::Justification::bottomLeft);
+    addAndMakeVisible (statusLabel);
     addChildComponent (tunerOverlay);
+
+    divider.onStart = [this] { dragStartHeight = inspectorHeight; };
+    divider.onDrag = [this] (int dy)
+    {
+        inspectorHeight = juce::jlimit (220, juce::jmax (220, getHeight() - 64 - 160), dragStartHeight - dy);
+        resized();
+    };
+    divider.onDoubleClick = [this]
+    {
+        inspectorHeight = inspectorHeight < 420 ? juce::jmax (330, (getHeight() - 64) * 6 / 10) : 330;
+        resized();
+        setIntSetting ("inspectorHeight", inspectorHeight);
+    };
+    divider.setTooltip ("Drag to resize the panel. Double-click to make it tall / normal");
+
+    libraryVisible = engine.getSetting ("libraryVisible", true);
+    inspectorHeight = getIntSetting ("inspectorHeight", 330);
+    randomiser.options.usePlugins = engine.getSetting ("randomUsePlugins", true);
+    randomiser.options.allowSplits = engine.getSetting ("randomSplits", true);
+
+    header.onUndo = [this] { doUndo (false); };
+    header.onRedo = [this] { doUndo (true); };
+    header.onRandom = [this] { randomiseRig(); };
+    header.onRandomMenu = [this] { showRigRandomMenu(); };
+    header.onLibrary = [this] { setLibraryVisible (! libraryVisible); };
+    header.onFullScreen = [this] { setFullScreen (! isFullScreen()); };
+    header.showFullScreenButton = processor.isStandalone();
+    header.library.setToggleState (libraryVisible, juce::dontSendNotification);
 
     header.onPresetMenu = [this] { showPresetMenu(); };
     header.onSave = [this] { savePreset (false); };
@@ -101,6 +135,12 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
             holder->getMuteInputValue().setValue (false);
    #endif
 
+    if (processor.isStandalone() && engine.getSetting ("fullScreen", false))
+        juce::Timer::callAfterDelay (400, [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
+        {
+            if (sp != nullptr) sp->setFullScreen (true);
+        });
+
     setWantsKeyboardFocus (true);
     setResizable (true, true);
     setResizeLimits (1180, 740, 4000, 2600);
@@ -123,6 +163,9 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
 RigsmithEditor::~RigsmithEditor()
 {
     stopTimer();
+    setIntSetting ("inspectorHeight", inspectorHeight);
+    if (juce::Desktop::getInstance().getKioskModeComponent() == getTopLevelComponent())
+        juce::Desktop::getInstance().setKioskModeComponent (nullptr, false);
     engine.cancelLearn();
     engine.knownPlugins.removeChangeListener (this);
     engine.removeListener (this);
@@ -157,9 +200,13 @@ void RigsmithEditor::resized()
 {
     auto r = getLocalBounds();
     header.setBounds (r.removeFromTop (64));
-    library.setBounds (r.removeFromRight (300));
-    inspector.setBounds (r.removeFromBottom (272));
+    library.setVisible (libraryVisible);
+    if (libraryVisible) library.setBounds (r.removeFromRight (300));
+    const int ih = juce::jlimit (220, juce::jmax (220, r.getHeight() - 160), inspectorHeight);
+    inspector.setBounds (r.removeFromBottom (ih));
+    divider.setBounds (r.removeFromBottom (8));
     viewport.setBounds (r);
+    statusLabel.setBounds (r.getX() + 12, r.getBottom() - 46, 260, 34);
     tunerOverlay.setBounds (r);
     graph.fitTo (viewport.getLocalBounds().withTrimmedBottom (viewport.getScrollBarThickness()));
 }
@@ -204,6 +251,7 @@ void RigsmithEditor::timerCallback()
            << "CPU " << juce::roundToInt (processor.getCpuLoad() * 100.0) << "%";
     if (lat > 0) status << "  PDC " << lat;
     header.refresh (reading, status);
+    if (tick % 10 == 0) statusLabel.setText (status, juce::dontSendNotification);
 
     if (tick % 2 == 0)
         graph.repaint();
@@ -593,8 +641,17 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
     if (node.getType() == NodeType::Ir)     m.addItem (1, "Load IR...");
     if (node.getType() == NodeType::Plugin) m.addItem (1, "Open plug-in window");
     m.addItem (2, "Bypass", true, node.bypassed.load());
-    m.addItem (30, "Auto gain (match output loudness to input)", true, node.autoGain.load());
+    m.addItem (30, "Gain compensation (auto level match)", true, node.autoGain.load());
+    m.addItem (43, "Lock (keep when randomising the rig)", true, node.locked.load());
     m.addItem (8, "MIDI learn: bypass footswitch");
+    m.addSeparator();
+    m.addItem (40, "Randomise settings  (R)");
+    m.addItem (41, "Mutate settings (subtle)");
+    if (split == nullptr)
+    {
+        m.addItem (42, "Random " + categoryName (Randomiser::categoryOf (node)) + " block  (Shift+R)");
+        m.addItem (44, "Block presets...");
+    }
     m.addSeparator();
     if (split != nullptr)
     {
@@ -649,7 +706,12 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
             case 7: if (chain != nullptr) engine.move (id, *chain, index + 2); break;
             case 8: { MidiMapping mm; mm.target = MidiMapping::Target::Bypass; mm.nodeId = id; engine.startLearn (mm); break; }
             case 9: engine.remove (id); break;
-            case 30: n->autoGain = ! n->autoGain.load(); engine.markDirty(); inspector.setNode (n); break;
+            case 30: n->autoGain = ! n->autoGain.load(); if (n->autoGain.load()) n->requestRelearn(); engine.markDirty(); break;
+            case 40: randomise (*n, RandomSettings); break;
+            case 41: randomise (*n, RandomMutate); break;
+            case 42: randomise (*n, RandomType); break;
+            case 43: toggleLock (*n); break;
+            case 44: showBlockPresetMenu (*n, &inspector); break;
             case 20: if (s) engine.addBranch (*s); break;
             case 21: case 22: case 23: case 24:
                 if (s) { s->setMode ((SplitMode) (r - 21)); engine.storeScene(); engine.markDirty(); inspector.setNode (s); }
@@ -710,11 +772,7 @@ void RigsmithEditor::showPresetMenu()
 {
     auto files = engine.getPresetFiles();
     juce::PopupMenu m;
-    m.addItem (1, "Save");
-    m.addItem (2, "Save as...");
-    m.addItem (3, "New rig");
-    m.addItem (4, "Open preset file...");
-    m.addItem (5, "Show presets folder");
+    m.addItem (3, juce::String (Engine::initName) + "  (gate, amp, cab)", true, engine.isInit());
     m.addSeparator();
     if (files.isEmpty())
         m.addItem (-1, "No presets yet - save one!", false);
@@ -731,6 +789,11 @@ void RigsmithEditor::showPresetMenu()
     }
     for (auto& [name, sub] : folders)
         m.addSubMenu (name, sub);
+    m.addSeparator();
+    m.addItem (1, "Save");
+    m.addItem (2, "Save as...");
+    m.addItem (4, "Open preset file...");
+    m.addItem (5, "Show presets folder");
 
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&header.presetButton), [this, files] (int r)
     {
@@ -757,7 +820,7 @@ void RigsmithEditor::savePreset (bool askForName)
     }
 
     auto* w = new juce::AlertWindow ("Save preset", "Give this rig a name", juce::MessageBoxIconType::NoIcon, this);
-    w->addTextEditor ("name", engine.presetName == "Init Rig" ? juce::String() : engine.presetName, "Name");
+    w->addTextEditor ("name", engine.isInit() || engine.presetName == "Random Rig" ? juce::String() : engine.presetName, "Name");
     w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int result)
@@ -832,6 +895,9 @@ void RigsmithEditor::showMainMenu()
     for (int i = 0; i < inputs.size(); ++i)
         input.addItem (10 + i, inputs[i], true, engine.inputMode.load() == i);
     m.addSubMenu ("Guitar input", input);
+    if (processor.isStandalone())
+        m.addItem (18, "Full screen  (F11)", true, isFullScreen());
+    m.addItem (19, "Show library  (L)", true, libraryVisible);
     m.addItem (3, "Output safety limiter", true, engine.limiterOn.load());
     m.addItem (4, "Tuner", true, engine.tunerActive.load());
 
@@ -869,6 +935,8 @@ void RigsmithEditor::showMainMenu()
                 break;
             case 2: showPluginScanner(); break;
             case 17: showSettings(); break;
+            case 18: setFullScreen (! isFullScreen()); break;
+            case 19: setLibraryVisible (! libraryVisible); break;
             case 3: engine.limiterOn = ! engine.limiterOn.load(); break;
             case 4: engine.tunerActive = ! engine.tunerActive.load(); updateTuner(); break;
             case 5: learn (MidiMapping::Target::PresetNext); break;
@@ -881,10 +949,16 @@ void RigsmithEditor::showMainMenu()
                     "Space   Bypass selected block\n"
                     "Delete   Remove selected block\n"
                     "Ctrl+D   Duplicate selected block\n"
+                    "R   Randomise selected block's settings\n"
+                    "Shift+R   Random block of the same kind\n"
+                    "Ctrl+Shift+R   Randomise the whole rig\n"
+                    "Ctrl+Z / Ctrl+Y   Undo / redo\n"
                     "Ctrl+S   Save preset\n"
-                    "Page Up / Down   Previous / next preset\n"
+                    "Page Up / Down   Previous / next preset (Init first)\n"
+                    "L   Show / hide library\n"
+                    "F11   Full screen\n"
                     "T   Tuner\n"
-                    "Esc   Close tuner / cancel MIDI learn", "OK", this);
+                    "Esc   Close tuner / leave full screen / cancel MIDI learn", "OK", this);
                 break;
             case 16:
                 juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Rigsmith " JucePlugin_VersionString,
@@ -988,10 +1062,26 @@ void RigsmithEditor::filesDropped (const juce::StringArray& files, int x, int y)
 
 bool RigsmithEditor::keyPressed (const juce::KeyPress& k)
 {
+    const auto cmd = juce::ModifierKeys::commandModifier, shift = juce::ModifierKeys::shiftModifier;
+    if (k == juce::KeyPress ('z', cmd, 0)) { doUndo (false); return true; }
+    if (k == juce::KeyPress ('y', cmd, 0) || k == juce::KeyPress ('z', cmd | shift, 0)) { doUndo (true); return true; }
+    if (k == juce::KeyPress ('r', cmd | shift, 0)) { randomiseRig(); return true; }
+    if (k == juce::KeyPress (juce::KeyPress::F11Key)) { setFullScreen (! isFullScreen()); return true; }
+
     const auto c = k.getTextCharacter();
+    if (! k.getModifiers().isCommandDown())
+    {
+        if (c == 'l' || c == 'L') { setLibraryVisible (! libraryVisible); return true; }
+        if (auto* n = engine.findNode (selectedId))
+        {
+            if (c == 'r') { randomise (*n, RandomSettings); return true; }
+            if (c == 'R') { randomise (*n, RandomType); return true; }
+        }
+    }
     if (c >= '1' && c <= '4') { engine.setScene (c - '1'); return true; }
     if (k == juce::KeyPress::escapeKey)
     {
+        if (isFullScreen()) setFullScreen (false);
         if (engine.isLearning()) engine.cancelLearn();
         engine.tunerActive = false;
         updateTuner();
@@ -1009,4 +1099,226 @@ bool RigsmithEditor::keyPressed (const juce::KeyPress& k)
         if (k == juce::KeyPress ('d', juce::ModifierKeys::commandModifier, 0)) { if (auto* d = engine.duplicate (selectedId)) selectedId = d->id; return true; }
     }
     return false;
+}
+
+//==============================================================================
+int RigsmithEditor::getIntSetting (const juce::String& key, int def) const
+{
+    if (auto* st = engine.props.getUserSettings()) return st->getIntValue (key, def);
+    return def;
+}
+
+void RigsmithEditor::setIntSetting (const juce::String& key, int value)
+{
+    if (auto* st = engine.props.getUserSettings()) { st->setValue (key, value); st->saveIfNeeded(); }
+}
+
+void RigsmithEditor::setLibraryVisible (bool v)
+{
+    libraryVisible = v;
+    header.library.setToggleState (v, juce::dontSendNotification);
+    engine.setSetting ("libraryVisible", v);
+    resized();
+}
+
+bool RigsmithEditor::isFullScreen() const
+{
+    auto* k = juce::Desktop::getInstance().getKioskModeComponent();
+    return k != nullptr && k == getTopLevelComponent();
+}
+
+void RigsmithEditor::setFullScreen (bool fs)
+{
+    if (! processor.isStandalone()) return;
+    auto* top = getTopLevelComponent();
+    if (top == nullptr || top == this) return;
+    juce::Desktop::getInstance().setKioskModeComponent (fs ? top : nullptr, false);
+    engine.setSetting ("fullScreen", fs);
+    header.fullScreen.setToggleState (fs, juce::dontSendNotification);
+    header.fullScreen.setIcon (fs ? Icon::ExitFullScreen : Icon::FullScreen);
+    if (fs) showMessage ("Full screen - press F11 or Esc to leave");
+    grabKeyboardFocus();
+}
+
+void RigsmithEditor::doUndo (bool redo)
+{
+    const bool ok = redo ? engine.redo() : engine.undo();
+    showMessage (ok ? juce::String (redo ? "Redo" : "Undo") : juce::String (redo ? "Nothing to redo" : "Nothing to undo"));
+}
+
+void RigsmithEditor::randomiseRig()
+{
+    randomiser.randomiseRig();
+    selectedId.clear();
+    inspector.setNode (nullptr);
+    int blocks = 0;
+    visitNodes (engine.getRoot(), [&blocks] (Node& n) { if (dynamic_cast<Block*> (&n) != nullptr) ++blocks; });
+    showMessage ("New random rig (" + juce::String (blocks) + " blocks) - Ctrl+Z to go back, right-click > Lock to keep a block");
+}
+
+void RigsmithEditor::showRigRandomMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Randomise");
+    m.addItem (1, "New random rig  (Ctrl+Shift+R)");
+    m.addItem (2, "New blocks, same layout");
+    m.addItem (3, "Randomise every block's settings");
+    m.addItem (4, "Mutate every block's settings (subtle)");
+    m.addSeparator();
+    m.addItem (10, "Use VST plug-ins too", true, randomiser.options.usePlugins);
+    m.addItem (11, "Allow dual-amp splits", true, randomiser.options.allowSplits);
+    m.addSeparator();
+    m.addItem (-1, "Locked blocks are kept. Ctrl+Z undoes any of these.", false);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&header.random), [this] (int r)
+    {
+        switch (r)
+        {
+            case 1: randomiseRig(); break;
+            case 2: randomiser.reshuffleBlocks(); showMessage ("New blocks in the same layout - Ctrl+Z to go back"); break;
+            case 3: randomiser.randomiseAllSettings (1.0f); showMessage ("Randomised every block's settings"); break;
+            case 4: randomiser.randomiseAllSettings (0.25f); showMessage ("Mutated every block's settings"); break;
+            case 10: randomiser.options.usePlugins = ! randomiser.options.usePlugins; engine.setSetting ("randomUsePlugins", randomiser.options.usePlugins); break;
+            case 11: randomiser.options.allowSplits = ! randomiser.options.allowSplits; engine.setSetting ("randomSplits", randomiser.options.allowSplits); break;
+            default: break;
+        }
+    });
+}
+
+void RigsmithEditor::randomise (Node& n, RandomWhat what)
+{
+    const auto id = n.id;
+    const auto oldName = n.getName();
+    switch (what)
+    {
+        case RandomSettings:
+            randomiser.randomiseSettings (n, 1.0f);
+            showMessage ("Randomised " + oldName + " - Ctrl+Z to go back");
+            break;
+        case RandomMutate:
+            randomiser.randomiseSettings (n, 0.25f);
+            showMessage ("Mutated " + oldName);
+            break;
+        case RandomType:
+        {
+            if (dynamic_cast<Block*> (&n) == nullptr) return;
+            const auto cat = Randomiser::categoryOf (n);
+            if (auto* r = randomiser.randomiseType (id))
+            {
+                selectedId = r->id;
+                showMessage (oldName + "  ->  " + r->getName());
+            }
+            else showMessage ("No other " + categoryName (cat) + " blocks to choose from");
+            break;
+        }
+    }
+    graph.repaint();
+}
+
+void RigsmithEditor::showRandomMenu (Node& n, juce::Component* anchor)
+{
+    const auto id = n.id;
+    juce::PopupMenu m;
+    m.addItem (1, "Randomise settings  (R)");
+    m.addItem (2, "Mutate settings (subtle)");
+    if (dynamic_cast<Block*> (&n) != nullptr)
+        m.addItem (3, "Random " + categoryName (Randomiser::categoryOf (n)) + " block  (Shift+R)");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor), [this, id] (int r)
+    {
+        if (auto* node = engine.findNode (id); node != nullptr && r > 0)
+            randomise (*node, r == 1 ? RandomSettings : (r == 2 ? RandomMutate : RandomType));
+    });
+}
+
+void RigsmithEditor::showBlockPresetMenu (Node& n, juce::Component* anchor)
+{
+    const auto id = n.id;
+    const auto files = engine.getBlockPresets (n);
+    juce::PopupMenu m;
+    m.addSectionHeader (n.getName() + " presets");
+    m.addItem (1, "Save preset...");
+    m.addItem (2, "Init (default settings)");
+    m.addSeparator();
+    if (files.isEmpty()) m.addItem (-1, "No saved presets for this block yet", false);
+    for (int i = 0; i < files.size(); ++i)
+        m.addItem (100 + i, files[i].getFileNameWithoutExtension());
+    m.addSeparator();
+    m.addItem (3, "Show folder");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor), [this, id, files] (int r)
+    {
+        auto* node = engine.findNode (id);
+        if (node == nullptr || r == 0) return;
+        if (r == 1)
+        {
+            auto* w = new juce::AlertWindow ("Save block preset", "Name this " + node->getName() + " setting", juce::MessageBoxIconType::NoIcon, this);
+            w->addTextEditor ("name", {}, "Name");
+            w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, id] (int res)
+            {
+                const auto name = w->getTextEditorContents ("name").trim();
+                if (res == 1 && name.isNotEmpty())
+                    if (auto* nn = engine.findNode (id)) engine.saveBlockPreset (*nn, name);
+            }), true);
+        }
+        else if (r == 2) { engine.initBlock (id); showMessage ("Reset " + node->getName() + " to its defaults"); }
+        else if (r == 3)
+        {
+            auto folder = engine.getBlockPresetFolder (*node);
+            folder.createDirectory();
+            folder.startAsProcess();
+        }
+        else if (r >= 100 && r - 100 < files.size()) engine.loadBlockPreset (id, files[r - 100]);
+    });
+}
+
+void RigsmithEditor::replaceWith (Node& target, const juce::String& d)
+{
+    const auto id = target.id;
+    const auto oldName = target.getName();
+    std::unique_ptr<Node> fresh;
+    juce::String err;
+
+    if (d.startsWith ("node:"))
+    {
+        const auto other = d.fromFirstOccurrenceOf ("node:", false, false);
+        if (! engine.swap (id, other)) showMessage ("Can't swap a split with a block inside it");
+        return;
+    }
+    if (d.startsWith ("plugin:"))
+    {
+        auto desc = engine.knownPlugins.getTypeForIdentifierString (d.fromFirstOccurrenceOf ("plugin:", false, false));
+        if (desc == nullptr) { showMessage ("Plug-in not found - try scanning again"); return; }
+        fresh = engine.createPlugin (*desc, err);
+        if (fresh == nullptr) { showMessage ("Couldn't load " + desc->name + ": " + err); return; }
+    }
+    else if (d.startsWith ("file:"))
+    {
+        const juce::File f (d.fromFirstOccurrenceOf ("file:", false, false));
+        if (f.hasFileExtension ("nam"))
+        {
+            auto nb = std::make_unique<NamBlock>();
+            if (! nb->loadModel (f, err)) { showMessage (err); return; }
+            fresh = std::move (nb);
+        }
+        else if (f.hasFileExtension ("wav;aif;aiff;flac"))
+        {
+            auto ir = std::make_unique<IrBlock>();
+            if (! ir->loadIr (f, err)) { showMessage (err); return; }
+            fresh = std::move (ir);
+        }
+    }
+    if (fresh == nullptr) return;
+    if (auto* r = engine.replace (id, std::move (fresh)))
+    {
+        selectedId = r->id;
+        showMessage ("Replaced " + oldName + " with " + r->getName() + " - Ctrl+Z to undo");
+    }
+}
+
+void RigsmithEditor::toggleLock (Node& n)
+{
+    n.locked = ! n.locked.load();
+    engine.markDirty();
+    graph.repaint();
+    showMessage (n.locked.load() ? n.getName() + " locked - randomising the rig keeps it" : n.getName() + " unlocked");
 }

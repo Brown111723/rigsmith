@@ -4,11 +4,12 @@ namespace rig
 {
 PluginBlock::PluginBlock (std::unique_ptr<juce::AudioPluginInstance> inst, const juce::PluginDescription& desc)
     : Block (NodeType::Plugin, {
-        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%"),
+        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%").fixed(),
         P ("level", "Level", -24.0f, 12.0f, 0.0f, "dB") }),
       instance (std::move (inst)),
       description (desc)
 {
+    if (instance != nullptr) instance->addListener (this);
 }
 
 PluginBlock::~PluginBlock()
@@ -17,6 +18,7 @@ PluginBlock::~PluginBlock()
     {
         // The UI closes plug-in windows before a block is deleted (Engine::Listener::nodeWillBeDeleted).
         jassert (instance->getActiveEditor() == nullptr);
+        instance->removeListener (this);
         instance->releaseResources();
     }
 }
@@ -37,6 +39,57 @@ void PluginBlock::setPinned (int index, bool shouldPin)
 {
     pinned.erase (std::remove (pinned.begin(), pinned.end(), index), pinned.end());
     if (shouldPin) pinned.push_back (index);
+}
+
+bool PluginBlock::isUnsafeToRandomise (const juce::String& paramName)
+{
+    const auto n = " " + paramName.toLowerCase() + " ";
+    for (auto* w : { "bypass", "mute", "solo", "midi", "output", "out ", "volume", "master", "power", " on ", "enable",
+                     "active", "oversampl", "quality", "zoom", " ui", "gui", "lock", "link", "preset", "program", "channel",
+                     "panic", "reset", "latency", "bank", "trim", "level", "dry", "learn", "sidechain", "side chain" })
+        if (n.contains (w)) return true;
+    return false;
+}
+
+void PluginBlock::randomise (juce::Random& rng, float amount)
+{
+    if (instance == nullptr) return;
+    amount = juce::jlimit (0.0f, 1.0f, amount);
+    const bool full = amount >= 0.999f;
+    for (auto* p : instance->getParameters())
+    {
+        if (! p->isAutomatable() || p->isMetaParameter() || isUnsafeToRandomise (p->getName (64)))
+            continue;
+        const int steps = p->getNumSteps();
+        const bool discrete = p->isDiscrete() || p->isBoolean() || (steps > 1 && steps <= 12);
+        float v;
+        if (discrete)
+        {
+            if (! full && rng.nextFloat() > amount * 0.5f) continue;
+            const int n = juce::jmax (2, steps > 1 && steps <= 64 ? steps : 2);
+            v = (float) rng.nextInt (n) / (float) (n - 1);
+        }
+        else
+        {
+            // stay in the neighbourhood of the designer's default: wide enough to surprise, not to explode
+            const float centre = full ? p->getDefaultValue() : p->getValue();
+            const float spread = full ? 0.4f : 0.15f * amount;
+            v = juce::jlimit (0.0f, 1.0f, centre + (rng.nextFloat() * 2.0f - 1.0f) * spread);
+        }
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (v);
+        p->endChangeGesture();
+    }
+    touched();
+}
+
+void PluginBlock::resetToDefaults()
+{
+    if (instance == nullptr) return;
+    for (auto* p : instance->getParameters())
+        if (p->isAutomatable())
+            p->setValueNotifyingHost (p->getDefaultValue());
+    touched();
 }
 
 juce::String PluginBlock::getDetail() const

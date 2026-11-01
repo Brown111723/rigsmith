@@ -56,13 +56,13 @@ static juce::String jsonString (const nlohmann::json& j, const char* key)
 //==============================================================================
 NamBlock::NamBlock()
     : Block (NodeType::Nam, {
-        P ("input", "Input", -24.0f, 24.0f, 0.0f, "dB"),
+        P ("input", "Input", -24.0f, 24.0f, 0.0f, "dB").rand (-3.0f, 6.0f),
         P ("output", "Output", -40.0f, 24.0f, 0.0f, "dB"),
-        P ("bass", "Bass", 0.0f, 10.0f, 5.0f),
-        P ("mid", "Middle", 0.0f, 10.0f, 5.0f),
-        P ("treble", "Treble", 0.0f, 10.0f, 5.0f),
-        P ("presence", "Presence", 0.0f, 10.0f, 5.0f),
-        Toggle ("normalize", "Normalize", true) })
+        P ("bass", "Bass", 0.0f, 10.0f, 5.0f).rand (3.0f, 7.5f),
+        P ("mid", "Middle", 0.0f, 10.0f, 5.0f).rand (3.0f, 7.5f),
+        P ("treble", "Treble", 0.0f, 10.0f, 5.0f).rand (3.0f, 7.5f),
+        P ("presence", "Presence", 0.0f, 10.0f, 5.0f).rand (3.0f, 7.5f),
+        Toggle ("normalize", "Normalize", true).fixed() })
 {
 }
 
@@ -177,6 +177,7 @@ bool NamBlock::loadModel (const juce::File& f, juce::String& error)
         latency = newLatency;
         info = ni;
         modelFile = f;
+        touched();
         return true;  // old model (now in m) is freed here, off the audio thread
     }
     catch (const std::exception& e)

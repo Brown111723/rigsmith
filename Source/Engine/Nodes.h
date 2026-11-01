@@ -71,9 +71,23 @@ public:
     juce::String id = juce::Uuid().toString();
     std::atomic<bool> bypassed { false };
 
-    /** Matches output loudness to input loudness (slow RMS follower). */
+    /** Gain compensation, like normalising each block: while you play it measures
+        loudness in vs out, then holds one fixed make-up gain. It re-learns only after
+        the block's settings change (or on request), so it never pumps with dynamics. */
     std::atomic<bool> autoGain { false };
-    std::atomic<float> autoGainDb { 0.0f };
+    std::atomic<float> autoGainDb { 0.0f };          // the held compensation
+    std::atomic<float> autoGainProgress { 1.0f };    // 0..1 while learning
+    std::atomic<bool> relearn { false };             // ask the audio thread to measure again
+    void requestRelearn() noexcept { autoGainProgress.store (0.0f); relearn.store (true); }
+
+    /** Bumped whenever the block's sound is edited; drives gain-compensation re-learning. */
+    std::atomic<juce::uint32> editCount { 0 };
+    void touched() noexcept { editCount.fetch_add (1, std::memory_order_relaxed); }
+    /** Call after restoring state: the stored compensation already matches these settings. */
+    void syncEdits() noexcept { learnedEdit.store (editCount.load()); }
+
+    /** Locked blocks are kept when the rig is randomised. */
+    std::atomic<bool> locked { false };
 
     std::atomic<AnalyzerTap*> tap { nullptr };
 
@@ -90,7 +104,10 @@ private:
     const NodeType type;
     juce::AudioBuffer<float> dry;
     juce::SmoothedValue<float> wetGain, compGain;
-    float envIn = 0, envOut = 0;
+    std::atomic<juce::uint32> learnedEdit { 0 };
+    double accIn = 0, accOut = 0;
+    int accSamples = 0;
+    bool learningNow = false;
 };
 
 //==============================================================================
@@ -125,11 +142,21 @@ struct ParamSpec
     int decimals = 1;
     juce::StringArray choices; // non-empty: a selector (value = index)
 
+    // randomiser hints: a musical range, or never randomised (levels, outputs)
+    bool hasRand = false, noRand = false;
+    float randMin = 0, randMax = 1;
+
     ParamSpec& mid (float c)   { hasCentre = true; centre = c; return *this; }
     ParamSpec& dec (int d)     { decimals = d; return *this; }
+    ParamSpec& rand (float lo, float hi) { hasRand = true; randMin = lo; randMax = hi; return *this; }
+    ParamSpec& fixed()         { noRand = true; return *this; }
 
     bool isChoice() const noexcept { return ! choices.isEmpty(); }
     bool isDb() const noexcept { return unit == "dB"; }
+
+    /** Knob position 0..1 <-> value, using the same skew as the inspector's knobs. */
+    float toProportion (float v) const noexcept;
+    float fromProportion (float p) const noexcept;
 };
 
 inline ParamSpec P (const juce::String& id, const juce::String& name, float mn, float mx, float def, const juce::String& unit = {})
@@ -171,13 +198,20 @@ public:
     float get (int i) const noexcept { return values[(size_t) i].load (std::memory_order_relaxed); }
     float get (const char* pid) const noexcept { return get (indexOf (pid)); }
     int getChoice (int i) const noexcept { return juce::roundToInt (get (i)); }
-    void set (int i, float v) noexcept { values[(size_t) i].store (juce::jlimit (specs[(size_t) i].min, specs[(size_t) i].max, v)); }
+    void set (int i, float v) noexcept
+    {
+        const float c = juce::jlimit (specs[(size_t) i].min, specs[(size_t) i].max, v);
+        if (values[(size_t) i].exchange (c) != c) touched();
+    }
     int indexOf (const juce::String& pid) const;
     juce::String formatValue (int i) const;
     juce::String formatValue (int i, float v) const;
 
     juce::ValueTree toState() const override;
     void fromState (const juce::ValueTree&) override;
+
+    /** amount 1 = a fresh musical setting, small amounts = a subtle mutation of the current one. */
+    virtual void randomise (juce::Random&, float amount);
 
     //--- Visuals (message thread; computed from current parameter values) -----
     virtual Visual getVisual() const { return Visual::Spectrum; }

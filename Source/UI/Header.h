@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Theme.h"
+#include "Icons.h"
 
 namespace rig
 {
@@ -16,7 +17,8 @@ public:
     }
 };
 
-/** Top bar: logo, presets, scenes A-D, tuner readout, in/out gain, status, menu. */
+/** Top bar: logo, presets, undo/redo, scenes A-D, tuner readout, status, randomise,
+    library and full-screen toggles, in/out gain, menu. */
 class Header : public juce::Component
 {
 public:
@@ -28,16 +30,26 @@ public:
 
     void refresh (const Tuner::Reading&, const juce::String& status);
 
-    std::function<void()> onPresetMenu, onSave, onMenu, onTuner;
+    std::function<void()> onPresetMenu, onSave, onMenu, onTuner, onUndo, onRedo, onRandom, onRandomMenu, onLibrary, onFullScreen;
     std::function<void (int)> onSceneRightClick;
 
-    juce::TextButton prev { "<" }, next { ">" }, presetButton, save { "Save" }, menu;
+    juce::TextButton presetButton;
+    IconButton prev { Icon::Prev, "Previous preset (Page Up)" }, next { Icon::Next, "Next preset (Page Down)" },
+               save { Icon::Save, "Save preset (Ctrl+S)" },
+               undo { Icon::Undo, "Undo (Ctrl+Z)" }, redo { Icon::Redo, "Redo (Ctrl+Y)" },
+               random { Icon::Dice, "Randomise the whole rig: amps, cabs and effects (locked blocks stay). Ctrl+Z undoes it. Right-click for options" },
+               randomMore { Icon::Caret, "More randomise options" },
+               library { Icon::Library, "Show / hide the library (L)", theme::teal },
+               fullScreen { Icon::FullScreen, "Full screen (F11)", theme::teal },
+               menu { Icon::Menu, "Menu" };
     SceneButton scenes[kNumScenes];
     juce::Slider inGain, outGain;
 
 private:
     Engine& engine;
     juce::Rectangle<int> logoArea, tunerArea, statusArea, inArea, outArea;
+public:
+    bool showFullScreenButton = true;
     Tuner::Reading reading;
     juce::String status;
 };

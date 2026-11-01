@@ -2,9 +2,9 @@
 
 A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flexible routing system and a VST3 host — shipped as both **`Rigsmith.exe`** and **`Rigsmith.vst3`** from one codebase.
 
-![Signal flow: gate → 3-way split (two NAM amps + a compressed path with a nested split) → mixer](docs/screenshot.png)
+![A delay selected: name, icon row and echo display on the left, every control on the right](docs/screenshot-v3.png)
 
-![Effect chain with the reverb's decay display](docs/screenshot-fx.png)
+![A randomised rig: three NAM amps with their cabs in parallel, then delay and shimmer reverb](docs/screenshot-random.png)
 
 ## Features
 
@@ -34,14 +34,25 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - Pitch: octave down / up, pitch shift, doubler
 - Displays: filter curves over a live pre/post spectrum, compressor transfer curves with the signal riding on them, waveshaper curves, LFO shapes, echo taps, reverb decay
 
+**Randomise** (dice icons)
+- **Whole rig** (Randomise, top bar): dynamics, drives, NAM amps picked from your model folders, cabs from your IR folders, modulation, delays and reverbs, sometimes as a 2- or 3-amp split. Musical ranges, levels never randomised.
+- **Lock** blocks you like (lock icon, or right-click) and they survive every roll.
+- **Per block**: the dice randomises its settings (right-click for a subtle *mutate*); the shuffle icon swaps it for a random block of the same kind (a delay becomes another delay or a delay plug-in, a NAM amp gets another model).
+- More in the dice's menu: new blocks in the same layout, randomise or mutate every block, include plug-ins, allow splits.
+- Everything is one **undo** step (Ctrl+Z / Ctrl+Y, also the arrows in the top bar).
+
 **Workflow**
-- **Auto gain** on any block: matches its output loudness to its input, so switching it on doesn't jump in volume.
-- **Replace** any block in place (right-click, or the inspector), keeping its scenes and footswitch mappings.
+- **Gain compensation** on any block: like normalising, it measures loudness in vs out while you play, then holds one fixed level match (no pumping). It measures again when you change the block's settings; right-click the button to measure now. The match is saved with the preset.
+- **Block presets**: save, load and init any block's settings (bookmark icon). Stored in `Documents\Rigsmith\Block Presets`.
+- **Drag to replace**: drop a block, model, IR or plug-in onto the middle of another block to replace it (two blocks swap places); drop near its edge to insert instead.
+- **Replace** from the right-click menu too, keeping scenes and footswitch mappings.
 - Step through models and IRs in a folder with the `<` `>` buttons.
 - **Plug-in parameters in the panel**: every automatable parameter appears as a knob; right-click to pin your favourites.
 - **Auto-categorised, colour-coded plug-ins** (Dynamics, Drive, Amp, Cab, EQ, Filter, Modulation, Delay, Reverb, Pitch).
 - **Remembered folders**: several NAM, IR and plug-in folders, set once in **Menu → Settings & folders**. New plug-ins are picked up automatically at launch.
 - Every dB readout is shown to one decimal place.
+- **More room**: drag the bar above the bottom panel to make it taller (double-click toggles), hide the library (`L`), and go **full screen** (`F11`, or open full screen every time in Settings).
+- **Init** is always the first preset; Page Up / Down steps from Init through your presets.
 
 **Hosting & live use**
 - Hosts any **VST3** effect (and VST2 in builds made with the VST2 SDK; see below). Plug-in state is saved in your presets, and a missing plug-in keeps its settings until you reinstall it.
@@ -61,7 +72,7 @@ Every push builds on GitHub Actions. Open the **Actions** tab, pick the latest r
 To publish a GitHub Release, push a tag:
 
 ```
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
 ## Quick start
@@ -86,6 +97,9 @@ git tag v0.1.0 && git push origin v0.1.0
 | Change presets | `Page Up` / `Page Down` |
 | Save | `Ctrl+S` |
 | Tuner | `T` |
+| Undo / redo | `Ctrl+Z` / `Ctrl+Y` |
+| Randomise selected block / its type / whole rig | `R` / `Shift+R` / `Ctrl+Shift+R` |
+| Library / full screen | `L` / `F11` |
 
 ### VST2
 
@@ -120,8 +134,8 @@ build/RigsmithTests_artefacts/Release/RigsmithTests build/_deps/namcore-src/exam
 ```
 Source/
   Engine/   audio graph: Node, Chain, Split, NAM/IR blocks, 22 built-in effects (Fx.cpp, Dsp.h),
-            VST3 hosting, scenes, MIDI, presets, tuner (no UI code)
-  UI/       look & feel, graph view, inspector + effect displays, library, settings, header
+            VST3 hosting, scenes, MIDI, presets, undo, randomiser, tuner (no UI code)
+  UI/       look & feel, icons, graph view, inspector + effect displays, library, settings, header
   PluginProcessor.*  /  PluginEditor.*   JUCE glue shared by the exe and the VST3
 Tests/      headless engine tests
 installer/  Inno Setup script used by CI

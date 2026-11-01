@@ -1,4 +1,5 @@
 #include "GraphView.h"
+#include "Icons.h"
 
 namespace rig
 {
@@ -72,7 +73,7 @@ void BlockCard::paint (juce::Graphics& g)
     g.setColour (selected ? cardHi : (isMouseOver() ? cardHi.darker (0.08f) : card));
     g.fillRoundedRectangle (r, 10.0f);
 
-    if (dropHover)          { g.setColour (teal); g.drawRoundedRectangle (r, 10.0f, 2.0f); }
+    if (dropLabel.isNotEmpty()) { g.setColour (teal); g.drawRoundedRectangle (r, 10.0f, 2.5f); }
     else if (selected)      { g.setColour (c); g.drawRoundedRectangle (r, 10.0f, 2.0f); }
     else                    { g.setColour (border); g.drawRoundedRectangle (r, 10.0f, 1.0f); }
 
@@ -116,6 +117,27 @@ void BlockCard::paint (juce::Graphics& g)
         g.setFont (mono (10.0f));
         g.drawText (juce::String (lat) + " smp", getWidth() - 62, (int) sw.getY(), 52, (int) sw.getHeight(), juce::Justification::centredRight);
     }
+    else if (node.autoGain.load())
+    {
+        g.setColour (teal.withMultipliedAlpha (alpha));
+        g.setFont (mono (10.0f));
+        const float db = node.autoGainDb.load();
+        g.drawText (node.autoGainProgress.load() < 1.0f ? juce::String ("AG ...") : "AG " + juce::String (db > 0.05f ? "+" : "") + juce::String (db, 1),
+                    getWidth() - 72, (int) sw.getY(), 62, (int) sw.getHeight(), juce::Justification::centredRight);
+    }
+
+    if (node.locked.load())
+        drawIcon (g, Icon::Lock, { (float) getWidth() - 28.0f, 20.0f, 16.0f, 16.0f }, accent.withMultipliedAlpha (alpha));
+
+    if (dropLabel.isNotEmpty())
+    {
+        auto lr = getLocalBounds().toFloat().reduced (10.0f).withSizeKeepingCentre ((float) getWidth() - 20.0f, 28.0f);
+        g.setColour (bg.withAlpha (0.9f));
+        g.fillRoundedRectangle (lr, 8.0f);
+        g.setColour (teal);
+        g.setFont (font (12.0f, true));
+        g.drawFittedText (dropLabel, lr.toNearestInt().reduced (6, 0), juce::Justification::centred, 1, 0.8f);
+    }
 }
 
 void BlockCard::mouseDown (const juce::MouseEvent& e)
@@ -158,17 +180,80 @@ void BlockCard::mouseDoubleClick (const juce::MouseEvent& e)
         host.openNode (node);
 }
 
+ChainView* BlockCard::parentChain() const { return dynamic_cast<ChainView*> (getParentComponent()); }
+
+int BlockCard::dropZone (juce::Point<int> p) const
+{
+    const int edge = getWidth() / 5;
+    return p.x < edge ? -1 : (p.x > getWidth() - edge ? 1 : 0);
+}
+
 bool BlockCard::isInterestedInDragSource (const SourceDetails& d)
 {
     const auto s = d.description.toString();
-    return s.startsWith ("file:") && acceptsFile (juce::File (s.fromFirstOccurrenceOf ("file:", false, false)));
+    if (s.startsWith ("file:"))
+        return juce::File (s.fromFirstOccurrenceOf ("file:", false, false)).hasFileExtension ("nam;wav;aif;aiff;flac");
+    return s.startsWith ("plugin:") || s.startsWith ("node:");
+}
+
+void BlockCard::itemDragMove (const SourceDetails& d)
+{
+    const auto s = d.description.toString();
+    const int zone = dropZone (d.localPosition);
+    auto* cv = parentChain();
+    juce::String label;
+
+    if (zone == 0)
+    {
+        if (s.startsWith ("node:"))
+        {
+            const auto otherId = s.fromFirstOccurrenceOf ("node:", false, false);
+            label = otherId == node.id ? juce::String() : "Swap places";
+        }
+        else if (s.startsWith ("file:"))
+            label = acceptsFile (juce::File (s.fromFirstOccurrenceOf ("file:", false, false))) ? "Load here" : "Replace";
+        else
+            label = "Replace";
+        if (cv != nullptr) cv->setDropIndex (-1);
+    }
+    else if (cv != nullptr)
+    {
+        const int idx = cv->indexOfItem (this);
+        cv->setDropIndex (zone < 0 ? idx : idx + 1);
+    }
+
+    if (label != dropLabel) { dropLabel = label; repaint(); }
+}
+
+void BlockCard::itemDragExit (const SourceDetails&)
+{
+    dropLabel.clear();
+    if (auto* cv = parentChain()) cv->setDropIndex (-1);
+    repaint();
 }
 
 void BlockCard::itemDropped (const SourceDetails& d)
 {
-    dropHover = false;
-    host.loadFileInto (&node, nullptr, -1, juce::File (d.description.toString().fromFirstOccurrenceOf ("file:", false, false)));
+    const auto s = d.description.toString();
+    const int zone = dropZone (d.localPosition);
+    dropLabel.clear();
     repaint();
+    auto* cv = parentChain();
+    if (cv != nullptr) cv->setDropIndex (-1);
+
+    if (zone != 0 && cv != nullptr)
+    {
+        const int idx = cv->indexOfItem (this);
+        cv->dropAt (s, zone < 0 ? idx : idx + 1);
+        return;
+    }
+    if (s.startsWith ("file:"))
+    {
+        const juce::File f (s.fromFirstOccurrenceOf ("file:", false, false));
+        if (acceptsFile (f)) { host.loadFileInto (&node, nullptr, -1, f); return; }
+    }
+    if (s == "node:" + node.id) return;
+    host.replaceWith (node, s);
 }
 
 //==============================================================================
@@ -301,7 +386,11 @@ void ChainView::itemDropped (const SourceDetails& d)
     const int idx = indexForX (d.localPosition.x);
     dropIndex = -1;
     repaint();
-    const auto s = d.description.toString();
+    dropAt (d.description.toString(), idx);
+}
+
+void ChainView::dropAt (const juce::String& s, int idx)
+{
     if (s.startsWith ("node:"))
         host.getEngine().move (s.fromFirstOccurrenceOf ("node:", false, false), chain, idx);
     else if (s.startsWith ("file:"))
@@ -613,8 +702,19 @@ bool GraphView::dropFile (const juce::File& f, juce::Point<int> pt)
     while (c != nullptr && c != this)
     {
         if (auto* card = dynamic_cast<BlockCard*> (c))
-            if (card->acceptsFile (f))
-                return host.loadFileInto (card->getNode(), nullptr, -1, f);
+        {
+            const int zone = card->dropZone (card->getLocalPoint (this, pt));
+            if (zone == 0)
+            {
+                if (card->acceptsFile (f)) return host.loadFileInto (card->getNode(), nullptr, -1, f);
+                if (! f.hasFileExtension ("rig")) { host.replaceWith (*card->getNode(), "file:" + f.getFullPathName()); return true; }
+            }
+            else if (auto* cv = dynamic_cast<ChainView*> (card->getParentComponent()))
+            {
+                const int idx = cv->indexOfItem (card);
+                return host.loadFileInto (nullptr, &cv->getChain(), zone < 0 ? idx : idx + 1, f);
+            }
+        }
         if (auto* cv = dynamic_cast<ChainView*> (c))
             return host.loadFileInto (nullptr, &cv->getChain(), cv->indexForX (cv->getLocalPoint (this, pt).x), f);
         c = c->getParentComponent();

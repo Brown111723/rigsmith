@@ -5,10 +5,10 @@ namespace rig
 //==============================================================================
 GateBlock::GateBlock()
     : Block (NodeType::Gate, {
-        P ("threshold", "Threshold", -90.0f, 0.0f, -58.0f, "dB"),
-        P ("release", "Release", 5.0f, 500.0f, 90.0f, "ms").mid (80.0f),
-        P ("hold", "Hold", 0.0f, 250.0f, 20.0f, "ms").mid (40.0f),
-        P ("range", "Range", -90.0f, 0.0f, -80.0f, "dB") })
+        P ("threshold", "Threshold", -90.0f, 0.0f, -58.0f, "dB").rand (-72.0f, -48.0f),
+        P ("release", "Release", 5.0f, 500.0f, 90.0f, "ms").mid (80.0f).rand (30.0f, 200.0f),
+        P ("hold", "Hold", 0.0f, 250.0f, 20.0f, "ms").mid (40.0f).rand (5.0f, 60.0f),
+        P ("range", "Range", -90.0f, 0.0f, -80.0f, "dB").rand (-90.0f, -55.0f) })
 {
 }
 
@@ -61,15 +61,15 @@ void GateBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 EqBlock::EqBlock()
     : Block (NodeType::Eq, {
-        P ("hpf", "Low Cut", 20.0f, 400.0f, 20.0f, "Hz").mid (80.0f),
-        P ("lowfreq", "Bass Freq", 40.0f, 500.0f, 110.0f, "Hz").mid (120.0f),
-        P ("low", "Bass", -15.0f, 15.0f, 0.0f, "dB"),
-        P ("midfreq", "Mid Freq", 150.0f, 6000.0f, 800.0f, "Hz").mid (900.0f),
-        P ("mid", "Mid", -15.0f, 15.0f, 0.0f, "dB"),
-        P ("midq", "Mid Q", 0.3f, 6.0f, 0.9f).mid (1.0f).dec (2),
-        P ("highfreq", "Treble Freq", 1000.0f, 12000.0f, 3500.0f, "Hz").mid (3500.0f),
-        P ("high", "Treble", -15.0f, 15.0f, 0.0f, "dB"),
-        P ("lpf", "High Cut", 2000.0f, 20000.0f, 20000.0f, "Hz").mid (7000.0f) })
+        P ("hpf", "Low Cut", 20.0f, 400.0f, 20.0f, "Hz").mid (80.0f).rand (20.0f, 140.0f),
+        P ("lowfreq", "Bass Freq", 40.0f, 500.0f, 110.0f, "Hz").mid (120.0f).rand (70.0f, 250.0f),
+        P ("low", "Bass", -15.0f, 15.0f, 0.0f, "dB").rand (-6.0f, 6.0f),
+        P ("midfreq", "Mid Freq", 150.0f, 6000.0f, 800.0f, "Hz").mid (900.0f).rand (300.0f, 3000.0f),
+        P ("mid", "Mid", -15.0f, 15.0f, 0.0f, "dB").rand (-6.0f, 6.0f),
+        P ("midq", "Mid Q", 0.3f, 6.0f, 0.9f).mid (1.0f).dec (2).rand (0.5f, 2.0f),
+        P ("highfreq", "Treble Freq", 1000.0f, 12000.0f, 3500.0f, "Hz").mid (3500.0f).rand (2000.0f, 8000.0f),
+        P ("high", "Treble", -15.0f, 15.0f, 0.0f, "dB").rand (-6.0f, 5.0f),
+        P ("lpf", "High Cut", 2000.0f, 20000.0f, 20000.0f, "Hz").mid (7000.0f).rand (5000.0f, 20000.0f) })
 {
 }
 
@@ -130,8 +130,8 @@ void EqBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 GainBlock::GainBlock()
     : Block (NodeType::Gain, {
-        P ("gain", "Gain", -40.0f, 24.0f, 0.0f, "dB"),
-        P ("pan", "Pan", -1.0f, 1.0f, 0.0f).dec (2) })
+        P ("gain", "Gain", -40.0f, 24.0f, 0.0f, "dB").fixed(),
+        P ("pan", "Pan", -1.0f, 1.0f, 0.0f).dec (2).fixed() })
 {
 }
 
@@ -160,9 +160,9 @@ void GainBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 IrBlock::IrBlock()
     : Block (NodeType::Ir, {
-        P ("lowcut", "Low Cut", 20.0f, 400.0f, 75.0f, "Hz").mid (90.0f),
-        P ("highcut", "High Cut", 2000.0f, 20000.0f, 8000.0f, "Hz").mid (7000.0f),
-        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%"),
+        P ("lowcut", "Low Cut", 20.0f, 400.0f, 75.0f, "Hz").mid (90.0f).rand (40.0f, 140.0f),
+        P ("highcut", "High Cut", 2000.0f, 20000.0f, 8000.0f, "Hz").mid (7000.0f).rand (5000.0f, 13000.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%").fixed(),
         P ("level", "Level", -24.0f, 12.0f, 0.0f, "dB") }),
       conv (juce::dsp::Convolution::NonUniform { 0 })
 {
@@ -201,6 +201,7 @@ bool IrBlock::loadIr (const juce::File& f, juce::String& error)
                               juce::dsp::Convolution::Normalise::yes);
     file = f;
     hasIr = true;
+    touched();
     return true;
 }
 

@@ -24,14 +24,14 @@ static inline float peak2 (const float* l, const float* r, int n) noexcept
 //==============================================================================
 CompBlock::CompBlock()
     : Block (NodeType::Comp, {
-        P ("threshold", "Threshold", -60.0f, 0.0f, -24.0f, "dB"),
-        P ("ratio", "Ratio", 1.0f, 20.0f, 4.0f, ":1").mid (4.0f),
-        P ("attack", "Attack", 0.1f, 100.0f, 8.0f, "ms").mid (10.0f).dec (1),
-        P ("release", "Release", 10.0f, 1000.0f, 150.0f, "ms").mid (150.0f),
-        P ("knee", "Knee", 0.0f, 24.0f, 6.0f, "dB"),
-        P ("makeup", "Makeup", -12.0f, 24.0f, 0.0f, "dB"),
-        Toggle ("auto", "Auto makeup", true),
-        P ("mix", "Blend", 0.0f, 100.0f, 100.0f, "%") })
+        P ("threshold", "Threshold", -60.0f, 0.0f, -24.0f, "dB").rand (-36.0f, -12.0f),
+        P ("ratio", "Ratio", 1.0f, 20.0f, 4.0f, ":1").mid (4.0f).rand (2.0f, 8.0f),
+        P ("attack", "Attack", 0.1f, 100.0f, 8.0f, "ms").mid (10.0f).dec (1).rand (1.0f, 30.0f),
+        P ("release", "Release", 10.0f, 1000.0f, 150.0f, "ms").mid (150.0f).rand (60.0f, 400.0f),
+        P ("knee", "Knee", 0.0f, 24.0f, 6.0f, "dB").rand (0.0f, 12.0f),
+        P ("makeup", "Makeup", -12.0f, 24.0f, 0.0f, "dB").fixed(),
+        Toggle ("auto", "Auto makeup", true).fixed(),
+        P ("mix", "Blend", 0.0f, 100.0f, 100.0f, "%").rand (50.0f, 100.0f) })
 {
 }
 
@@ -88,9 +88,9 @@ void CompBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 LimiterBlock::LimiterBlock()
     : Block (NodeType::Limiter, {
-        P ("drive", "Input", 0.0f, 18.0f, 0.0f, "dB"),
-        P ("ceiling", "Ceiling", -12.0f, 0.0f, -0.3f, "dB"),
-        P ("release", "Release", 5.0f, 500.0f, 60.0f, "ms").mid (60.0f) })
+        P ("drive", "Input", 0.0f, 18.0f, 0.0f, "dB").rand (0.0f, 6.0f),
+        P ("ceiling", "Ceiling", -12.0f, 0.0f, -0.3f, "dB").fixed(),
+        P ("release", "Release", 5.0f, 500.0f, 60.0f, "ms").mid (60.0f).rand (20.0f, 200.0f) })
 {
 }
 
@@ -124,11 +124,11 @@ void LimiterBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 ExpanderBlock::ExpanderBlock()
     : Block (NodeType::Expander, {
-        P ("threshold", "Threshold", -80.0f, 0.0f, -45.0f, "dB"),
-        P ("ratio", "Ratio", 1.0f, 10.0f, 2.0f, ":1").mid (3.0f),
-        P ("range", "Range", -80.0f, 0.0f, -40.0f, "dB"),
-        P ("attack", "Attack", 0.1f, 50.0f, 2.0f, "ms").mid (5.0f).dec (1),
-        P ("release", "Release", 10.0f, 1000.0f, 120.0f, "ms").mid (120.0f) })
+        P ("threshold", "Threshold", -80.0f, 0.0f, -45.0f, "dB").rand (-60.0f, -35.0f),
+        P ("ratio", "Ratio", 1.0f, 10.0f, 2.0f, ":1").mid (3.0f).rand (1.5f, 4.0f),
+        P ("range", "Range", -80.0f, 0.0f, -40.0f, "dB").rand (-40.0f, -10.0f),
+        P ("attack", "Attack", 0.1f, 50.0f, 2.0f, "ms").mid (5.0f).dec (1).rand (0.5f, 10.0f),
+        P ("release", "Release", 10.0f, 1000.0f, 120.0f, "ms").mid (120.0f).rand (50.0f, 300.0f) })
 {
 }
 
@@ -168,8 +168,8 @@ void ExpanderBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 TransientBlock::TransientBlock()
     : Block (NodeType::Transient, {
-        P ("attack", "Attack", -100.0f, 100.0f, 0.0f, "%"),
-        P ("sustain", "Sustain", -100.0f, 100.0f, 0.0f, "%"),
+        P ("attack", "Attack", -100.0f, 100.0f, 0.0f, "%").rand (-60.0f, 80.0f),
+        P ("sustain", "Sustain", -100.0f, 100.0f, 0.0f, "%").rand (-60.0f, 60.0f),
         P ("output", "Output", -24.0f, 12.0f, 0.0f, "dB") })
 {
 }
@@ -207,9 +207,9 @@ void TransientBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 SwellBlock::SwellBlock()
     : Block (NodeType::Swell, {
-        P ("threshold", "Threshold", -70.0f, -10.0f, -45.0f, "dB"),
-        P ("rise", "Rise", 20.0f, 3000.0f, 600.0f, "ms").mid (500.0f),
-        P ("rearm", "Re-arm", 20.0f, 1000.0f, 200.0f, "ms").mid (200.0f) })
+        P ("threshold", "Threshold", -70.0f, -10.0f, -45.0f, "dB").rand (-55.0f, -30.0f),
+        P ("rise", "Rise", 20.0f, 3000.0f, 600.0f, "ms").mid (500.0f).rand (150.0f, 1500.0f),
+        P ("rearm", "Re-arm", 20.0f, 1000.0f, 200.0f, "ms").mid (200.0f).rand (100.0f, 400.0f) })
 {
 }
 
@@ -267,10 +267,10 @@ static inline float odShape (float x) noexcept { return fastTanh (x + 0.18f) - f
 
 OverdriveBlock::OverdriveBlock()
     : DriveBase (NodeType::Overdrive, {
-        P ("drive", "Drive", 0.0f, 10.0f, 5.0f),
-        P ("tone", "Tone", 0.0f, 10.0f, 5.0f),
+        P ("drive", "Drive", 0.0f, 10.0f, 5.0f).rand (2.0f, 9.0f),
+        P ("tone", "Tone", 0.0f, 10.0f, 5.0f).rand (3.0f, 8.0f),
         P ("level", "Level", -24.0f, 12.0f, 0.0f, "dB"),
-        P ("blend", "Clean Blend", 0.0f, 100.0f, 0.0f, "%") })
+        P ("blend", "Clean Blend", 0.0f, 100.0f, 0.0f, "%").rand (0.0f, 40.0f) })
 {
 }
 
@@ -336,10 +336,10 @@ static inline float fuzzShape (float x) noexcept
 
 FuzzBlock::FuzzBlock()
     : DriveBase (NodeType::Fuzz, {
-        P ("fuzz", "Fuzz", 0.0f, 10.0f, 7.0f),
-        P ("tone", "Tone", 0.0f, 10.0f, 5.0f),
+        P ("fuzz", "Fuzz", 0.0f, 10.0f, 7.0f).rand (4.0f, 10.0f),
+        P ("tone", "Tone", 0.0f, 10.0f, 5.0f).rand (2.0f, 8.0f),
         P ("level", "Level", -24.0f, 12.0f, -6.0f, "dB"),
-        P ("gate", "Gate", -90.0f, -20.0f, -70.0f, "dB"),
+        P ("gate", "Gate", -90.0f, -20.0f, -70.0f, "dB").rand (-80.0f, -55.0f),
         Toggle ("octave", "Octave up", false) })
 {
 }
@@ -410,9 +410,9 @@ void FuzzBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 BoostBlock::BoostBlock()
     : Block (NodeType::Boost, {
-        P ("gain", "Boost", 0.0f, 24.0f, 6.0f, "dB"),
-        P ("tight", "Tight", 20.0f, 400.0f, 60.0f, "Hz").mid (90.0f),
-        P ("bright", "Bright", -6.0f, 6.0f, 0.0f, "dB") })
+        P ("gain", "Boost", 0.0f, 24.0f, 6.0f, "dB").rand (2.0f, 10.0f),
+        P ("tight", "Tight", 20.0f, 400.0f, 60.0f, "Hz").mid (90.0f).rand (40.0f, 200.0f),
+        P ("bright", "Bright", -6.0f, 6.0f, 0.0f, "dB").rand (-3.0f, 4.0f) })
 {
 }
 
@@ -450,10 +450,10 @@ void BoostBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 CrusherBlock::CrusherBlock()
     : Block (NodeType::Crusher, {
-        P ("bits", "Bits", 2.0f, 16.0f, 8.0f).dec (0),
-        P ("down", "Downsample", 1.0f, 32.0f, 4.0f, "x").dec (0),
-        P ("tone", "Tone", 1000.0f, 20000.0f, 12000.0f, "Hz").mid (5000.0f),
-        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%") })
+        P ("bits", "Bits", 2.0f, 16.0f, 8.0f).dec (0).rand (5.0f, 12.0f),
+        P ("down", "Downsample", 1.0f, 32.0f, 4.0f, "x").dec (0).rand (1.0f, 8.0f),
+        P ("tone", "Tone", 1000.0f, 20000.0f, 12000.0f, "Hz").mid (5000.0f).rand (3000.0f, 16000.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%").rand (30.0f, 100.0f) })
 {
 }
 
@@ -493,13 +493,13 @@ void CrusherBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 WahBlock::WahBlock()
     : Block (NodeType::Wah, {
         Choice ("mode", "Mode", { "Pedal", "Envelope", "LFO" }, 0),
-        P ("position", "Pedal", 0.0f, 100.0f, 50.0f, "%"),
-        P ("sens", "Sensitivity", 0.0f, 100.0f, 60.0f, "%"),
-        P ("rate", "LFO Rate", 0.1f, 10.0f, 1.5f, "Hz").mid (1.5f).dec (2),
-        P ("low", "Heel", 200.0f, 800.0f, 380.0f, "Hz").mid (400.0f),
-        P ("high", "Toe", 1000.0f, 4000.0f, 2200.0f, "Hz").mid (2000.0f),
-        P ("q", "Resonance", 1.0f, 15.0f, 6.0f).mid (5.0f),
-        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%") })
+        P ("position", "Pedal", 0.0f, 100.0f, 50.0f, "%").rand (20.0f, 80.0f),
+        P ("sens", "Sensitivity", 0.0f, 100.0f, 60.0f, "%").rand (30.0f, 90.0f),
+        P ("rate", "LFO Rate", 0.1f, 10.0f, 1.5f, "Hz").mid (1.5f).dec (2).rand (0.3f, 4.0f),
+        P ("low", "Heel", 200.0f, 800.0f, 380.0f, "Hz").mid (400.0f).rand (300.0f, 600.0f),
+        P ("high", "Toe", 1000.0f, 4000.0f, 2200.0f, "Hz").mid (2000.0f).rand (1500.0f, 3000.0f),
+        P ("q", "Resonance", 1.0f, 15.0f, 6.0f).mid (5.0f).rand (3.0f, 10.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%").rand (70.0f, 100.0f) })
 {
 }
 
@@ -557,11 +557,11 @@ void WahBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 ChorusBlock::ChorusBlock()
     : Block (NodeType::Chorus, {
-        P ("rate", "Rate", 0.05f, 5.0f, 0.8f, "Hz").mid (0.8f).dec (2),
-        P ("depth", "Depth", 0.0f, 100.0f, 50.0f, "%"),
-        P ("delay", "Delay", 5.0f, 30.0f, 12.0f, "ms").mid (12.0f).dec (1),
-        P ("width", "Width", 0.0f, 100.0f, 100.0f, "%"),
-        P ("mix", "Mix", 0.0f, 100.0f, 50.0f, "%") })
+        P ("rate", "Rate", 0.05f, 5.0f, 0.8f, "Hz").mid (0.8f).dec (2).rand (0.2f, 2.5f),
+        P ("depth", "Depth", 0.0f, 100.0f, 50.0f, "%").rand (20.0f, 80.0f),
+        P ("delay", "Delay", 5.0f, 30.0f, 12.0f, "ms").mid (12.0f).dec (1).rand (7.0f, 20.0f),
+        P ("width", "Width", 0.0f, 100.0f, 100.0f, "%").rand (50.0f, 100.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 50.0f, "%").rand (25.0f, 60.0f) })
 {
 }
 
@@ -599,11 +599,11 @@ void ChorusBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 FlangerBlock::FlangerBlock()
     : Block (NodeType::Flanger, {
-        P ("rate", "Rate", 0.02f, 5.0f, 0.25f, "Hz").mid (0.5f).dec (2),
-        P ("depth", "Depth", 0.0f, 100.0f, 70.0f, "%"),
-        P ("manual", "Manual", 0.3f, 8.0f, 1.5f, "ms").mid (2.0f).dec (2),
-        P ("feedback", "Feedback", -95.0f, 95.0f, 50.0f, "%"),
-        P ("mix", "Mix", 0.0f, 100.0f, 50.0f, "%") })
+        P ("rate", "Rate", 0.02f, 5.0f, 0.25f, "Hz").mid (0.5f).dec (2).rand (0.05f, 1.0f),
+        P ("depth", "Depth", 0.0f, 100.0f, 70.0f, "%").rand (30.0f, 90.0f),
+        P ("manual", "Manual", 0.3f, 8.0f, 1.5f, "ms").mid (2.0f).dec (2).rand (0.5f, 4.0f),
+        P ("feedback", "Feedback", -95.0f, 95.0f, 50.0f, "%").rand (-80.0f, 80.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 50.0f, "%").rand (30.0f, 60.0f) })
 {
 }
 
@@ -643,12 +643,12 @@ void FlangerBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 PhaserBlock::PhaserBlock()
     : Block (NodeType::Phaser, {
-        P ("rate", "Rate", 0.05f, 8.0f, 0.5f, "Hz").mid (0.6f).dec (2),
-        P ("depth", "Depth", 0.0f, 100.0f, 80.0f, "%"),
-        P ("centre", "Centre", 150.0f, 2500.0f, 700.0f, "Hz").mid (700.0f),
-        P ("feedback", "Feedback", 0.0f, 90.0f, 40.0f, "%"),
+        P ("rate", "Rate", 0.05f, 8.0f, 0.5f, "Hz").mid (0.6f).dec (2).rand (0.1f, 2.0f),
+        P ("depth", "Depth", 0.0f, 100.0f, 80.0f, "%").rand (40.0f, 100.0f),
+        P ("centre", "Centre", 150.0f, 2500.0f, 700.0f, "Hz").mid (700.0f).rand (300.0f, 1500.0f),
+        P ("feedback", "Feedback", 0.0f, 90.0f, 40.0f, "%").rand (10.0f, 70.0f),
         Choice ("stages", "Stages", { "4", "6", "8", "12" }, 1),
-        P ("mix", "Mix", 0.0f, 100.0f, 50.0f, "%") })
+        P ("mix", "Mix", 0.0f, 100.0f, 50.0f, "%").rand (40.0f, 70.0f) })
 {
 }
 
@@ -715,8 +715,8 @@ void PhaserBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 TremoloBlock::TremoloBlock()
     : Block (NodeType::Tremolo, {
-        P ("rate", "Rate", 0.5f, 15.0f, 5.0f, "Hz").mid (5.0f).dec (2),
-        P ("depth", "Depth", 0.0f, 100.0f, 60.0f, "%"),
+        P ("rate", "Rate", 0.5f, 15.0f, 5.0f, "Hz").mid (5.0f).dec (2).rand (2.0f, 9.0f),
+        P ("depth", "Depth", 0.0f, 100.0f, 60.0f, "%").rand (30.0f, 90.0f),
         Choice ("shape", "Shape", { "Sine", "Triangle", "Square", "Harmonic" }, 0),
         Toggle ("stereo", "Stereo pan", false) })
 {
@@ -777,10 +777,10 @@ static inline float lamp (double ph) noexcept
 
 VibeBlock::VibeBlock()
     : Block (NodeType::Vibe, {
-        P ("rate", "Speed", 0.2f, 10.0f, 2.0f, "Hz").mid (2.0f).dec (2),
-        P ("intensity", "Intensity", 0.0f, 100.0f, 70.0f, "%"),
+        P ("rate", "Speed", 0.2f, 10.0f, 2.0f, "Hz").mid (2.0f).dec (2).rand (0.5f, 6.0f),
+        P ("intensity", "Intensity", 0.0f, 100.0f, 70.0f, "%").rand (30.0f, 90.0f),
         Choice ("mode", "Mode", { "Chorus", "Vibrato" }, 0),
-        P ("level", "Level", -12.0f, 12.0f, 0.0f, "dB") })
+        P ("level", "Level", -12.0f, 12.0f, 0.0f, "dB").fixed() })
 {
 }
 
@@ -824,9 +824,9 @@ RotaryBlock::RotaryBlock()
     : Block (NodeType::Rotary, {
         Choice ("speed", "Speed", { "Slow", "Fast", "Brake" }, 0),
         P ("ramp", "Ramp", 0.2f, 5.0f, 1.2f, "s").mid (1.2f).dec (2),
-        P ("balance", "Horn / Drum", 0.0f, 100.0f, 60.0f, "%"),
-        P ("width", "Width", 0.0f, 100.0f, 80.0f, "%"),
-        P ("drive", "Drive", 0.0f, 100.0f, 20.0f, "%") })
+        P ("balance", "Horn / Drum", 0.0f, 100.0f, 60.0f, "%").rand (30.0f, 80.0f),
+        P ("width", "Width", 0.0f, 100.0f, 80.0f, "%").rand (40.0f, 100.0f),
+        P ("drive", "Drive", 0.0f, 100.0f, 20.0f, "%").rand (0.0f, 50.0f) })
 {
 }
 
@@ -879,14 +879,14 @@ void RotaryBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 DelayBlock::DelayBlock()
     : Block (NodeType::Delay, {
         Choice ("mode", "Mode", { "Digital", "Tape", "Ping-Pong", "Dual" }, 0),
-        P ("time", "Time", 20.0f, 2000.0f, 400.0f, "ms").mid (400.0f),
-        P ("feedback", "Feedback", 0.0f, 100.0f, 35.0f, "%"),
-        P ("mix", "Mix", 0.0f, 100.0f, 30.0f, "%"),
-        P ("lowcut", "Low Cut", 20.0f, 1000.0f, 120.0f, "Hz").mid (150.0f),
-        P ("highcut", "High Cut", 1000.0f, 20000.0f, 7000.0f, "Hz").mid (5000.0f),
-        P ("mod", "Modulation", 0.0f, 100.0f, 15.0f, "%"),
-        P ("duck", "Ducking", 0.0f, 100.0f, 0.0f, "%"),
-        P ("spread", "Spread", 0.0f, 100.0f, 50.0f, "%") })
+        P ("time", "Time", 20.0f, 2000.0f, 400.0f, "ms").mid (400.0f).rand (120.0f, 800.0f),
+        P ("feedback", "Feedback", 0.0f, 100.0f, 35.0f, "%").rand (10.0f, 55.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 30.0f, "%").rand (15.0f, 40.0f),
+        P ("lowcut", "Low Cut", 20.0f, 1000.0f, 120.0f, "Hz").mid (150.0f).rand (60.0f, 300.0f),
+        P ("highcut", "High Cut", 1000.0f, 20000.0f, 7000.0f, "Hz").mid (5000.0f).rand (2500.0f, 9000.0f),
+        P ("mod", "Modulation", 0.0f, 100.0f, 15.0f, "%").rand (0.0f, 40.0f),
+        P ("duck", "Ducking", 0.0f, 100.0f, 0.0f, "%").rand (0.0f, 50.0f),
+        P ("spread", "Spread", 0.0f, 100.0f, 50.0f, "%").rand (20.0f, 100.0f) })
 {
 }
 
@@ -975,14 +975,14 @@ void DelayBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 ReverbBlock::ReverbBlock()
     : Block (NodeType::Reverb, {
         Choice ("type", "Type", { "Room", "Hall", "Plate", "Spring", "Shimmer" }, 1),
-        P ("decay", "Decay", 0.2f, 20.0f, 2.5f, "s").mid (2.5f).dec (2),
-        P ("predelay", "Pre-delay", 0.0f, 250.0f, 20.0f, "ms").mid (40.0f),
-        P ("size", "Size", 0.0f, 100.0f, 60.0f, "%"),
-        P ("damping", "Damping", 0.0f, 100.0f, 45.0f, "%"),
-        P ("lowcut", "Low Cut", 20.0f, 1000.0f, 150.0f, "Hz").mid (150.0f),
-        P ("mod", "Modulation", 0.0f, 100.0f, 30.0f, "%"),
-        P ("shimmer", "Shimmer", 0.0f, 100.0f, 0.0f, "%"),
-        P ("mix", "Mix", 0.0f, 100.0f, 25.0f, "%") })
+        P ("decay", "Decay", 0.2f, 20.0f, 2.5f, "s").mid (2.5f).dec (2).rand (0.6f, 6.0f),
+        P ("predelay", "Pre-delay", 0.0f, 250.0f, 20.0f, "ms").mid (40.0f).rand (0.0f, 60.0f),
+        P ("size", "Size", 0.0f, 100.0f, 60.0f, "%").rand (30.0f, 90.0f),
+        P ("damping", "Damping", 0.0f, 100.0f, 45.0f, "%").rand (20.0f, 70.0f),
+        P ("lowcut", "Low Cut", 20.0f, 1000.0f, 150.0f, "Hz").mid (150.0f).rand (80.0f, 300.0f),
+        P ("mod", "Modulation", 0.0f, 100.0f, 30.0f, "%").rand (10.0f, 50.0f),
+        P ("shimmer", "Shimmer", 0.0f, 100.0f, 0.0f, "%").rand (0.0f, 40.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 25.0f, "%").rand (12.0f, 40.0f) })
 {
 }
 
@@ -1082,9 +1082,9 @@ PitchBlock::PitchBlock()
     : Block (NodeType::Pitch, {
         Choice ("mode", "Mode", { "Octave Down", "Octave Up", "Pitch Shift", "Doubler" }, 0),
         P ("semis", "Semitones", -12.0f, 12.0f, 7.0f, "st").dec (0),
-        P ("detune", "Detune", 0.0f, 50.0f, 12.0f, "ct").dec (0),
-        P ("mix", "Mix", 0.0f, 100.0f, 50.0f, "%"),
-        P ("tone", "Tone", 1000.0f, 20000.0f, 9000.0f, "Hz").mid (5000.0f) })
+        P ("detune", "Detune", 0.0f, 50.0f, 12.0f, "ct").dec (0).rand (5.0f, 25.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 50.0f, "%").rand (25.0f, 60.0f),
+        P ("tone", "Tone", 1000.0f, 20000.0f, 9000.0f, "Hz").mid (5000.0f).rand (4000.0f, 12000.0f) })
 {
 }
 

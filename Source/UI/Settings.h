@@ -30,7 +30,7 @@ private:
     juce::OwnedArray<Section> pluginSections;
     juce::Array<juce::AudioPluginFormat*> pluginFormats;
     juce::ToggleButton autoCategorise { "Auto-categorise and colour plug-ins (Drive, Delay, Reverb...)" };
-    juce::ToggleButton scanOnStartup { "Look for new plug-ins every time Rigsmith opens" };
+    juce::ToggleButton startFullScreen { "Open Rigsmith full screen (standalone; F11 toggles)" }, scanOnStartup { "Look for new plug-ins every time Rigsmith opens" };
     juce::TextButton scanNow { "Scan plug-ins now" };
     juce::Label vst2Note;
 

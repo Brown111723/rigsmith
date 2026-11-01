@@ -6,7 +6,8 @@ namespace rig
 {
 /** Hosts any VST3 effect. If the plug-in is missing on this machine its saved state
     is kept so the preset round-trips unchanged. */
-class PluginBlock : public Block
+class PluginBlock : public Block,
+                    private juce::AudioProcessorListener
 {
 public:
     PluginBlock (std::unique_ptr<juce::AudioPluginInstance> instance, const juce::PluginDescription& desc);
@@ -33,7 +34,18 @@ public:
     bool isPinned (int index) const;
     void setPinned (int index, bool pin);
 
+    /** Randomises the plug-in's own parameters around their defaults, skipping
+        anything that looks like bypass, output level, MIDI or UI settings. */
+    void randomise (juce::Random&, float amount) override;
+    /** Every parameter back to its default. */
+    void resetToDefaults();
+    static bool isUnsafeToRandomise (const juce::String& paramName);
+
 protected:
+    void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
+    void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& d) override { if (d.programChanged) touched(); }
+    void audioProcessorParameterChangeGestureEnd (juce::AudioProcessor*, int) override { touched(); }
+
     void prepareImpl (double sr, int block) override;
     void processImpl (juce::AudioBuffer<float>&, int) noexcept override;
 

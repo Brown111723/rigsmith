@@ -1,5 +1,6 @@
 // Headless smoke tests for the Rigsmith engine. Build with -DRIGSMITH_TESTS=ON.
 #include "Engine/Engine.h"
+#include "Engine/Randomiser.h"
 #include <cstdio>
 
 using namespace rig;
@@ -7,7 +8,7 @@ using namespace rig;
 static int failures = 0;
 #define CHECK(cond, msg) do { if (! (cond)) { std::printf ("FAIL: %s\n", msg); ++failures; } else std::printf ("ok:   %s\n", msg); } while (0)
 
-static float runNoise (Engine& e, int blocks, int blockSize, bool* finite)
+static float runNoise (Engine& e, int blocks, int blockSize, bool* finite, float amp = 0.2f)
 {
     juce::Random rnd (1);
     juce::AudioBuffer<float> buf (2, blockSize);
@@ -18,7 +19,7 @@ static float runNoise (Engine& e, int blocks, int blockSize, bool* finite)
     {
         for (int i = 0; i < blockSize; ++i)
         {
-            const float x = (rnd.nextFloat() * 2.0f - 1.0f) * 0.2f;
+            const float x = (rnd.nextFloat() * 2.0f - 1.0f) * amp;
             buf.setSample (0, i, x);
             buf.setSample (1, i, x);
         }
@@ -246,7 +247,7 @@ int main (int argc, char** argv)
         CHECK (nb.formatValue (0, 3.14159f) == "+3.1 dB", "dB values round to one decimal");
     }
 
-    // auto gain: a +12 dB volume block with auto gain on ends up near unity
+    // gain compensation: learns a fixed level match, holds it, re-learns after edits
     {
         Engine e;
         e.prepare (48000.0, 256);
@@ -256,16 +257,128 @@ int main (int argc, char** argv)
         auto* g = dynamic_cast<GainBlock*> (e.insert (e.createNode (NodeType::Gain), root, 0));
         g->set (0, 12.0f);
         g->autoGain = true;
+        g->relearn = true;
         bool finite;
         runNoise (e, 400, 256, &finite);
-        CHECK (std::abs (g->autoGainDb.load() + 12.0f) < 1.5f, "auto gain compensates a +12 dB boost");
+        CHECK (std::abs (g->autoGainDb.load() + 12.0f) < 0.5f, "gain compensation matches a +12 dB boost");
+        CHECK (g->autoGainProgress.load() >= 1.0f, "gain compensation finishes learning");
         std::printf ("      compensation %.1f dB\n", g->autoGainDb.load());
+        const float held = g->autoGainDb.load();
+        runNoise (e, 200, 256, &finite, 0.02f);   // playing softer must not move it (no pumping)
+        CHECK (std::abs (g->autoGainDb.load() - held) < 0.01f, "gain compensation holds while playing dynamics change");
+        g->set (0, 6.0f);                         // an edit re-learns
+        runNoise (e, 400, 256, &finite);
+        CHECK (std::abs (g->autoGainDb.load() + 6.0f) < 0.5f, "gain compensation re-learns after a settings change");
+
+        // saved with the preset, restored without re-learning
+        auto v = g->toState();
+        auto rebuilt = e.createFromState (v);
+        CHECK (rebuilt != nullptr && std::abs (rebuilt->autoGainDb.load() + 6.0f) < 0.5f && ! rebuilt->relearn.load(), "gain compensation is stored in presets");
 
         // replace keeps id, bypass and auto gain
         g->bypassed = true;
         const auto id = g->id;
         auto* r = e.replace (id, e.createNode (NodeType::Chorus));
         CHECK (r != nullptr && r->id == id && r->bypassed.load() && r->autoGain.load(), "replace keeps id, bypass and auto gain");
+
+        // undo / redo
+        CHECK (e.undo() && dynamic_cast<GainBlock*> (e.findNode (id)) != nullptr, "undo brings back the replaced block");
+        CHECK (e.redo() && dynamic_cast<ChorusBlock*> (e.findNode (id)) != nullptr, "redo replaces it again");
+        e.insert (e.createNode (NodeType::Delay), e.getRoot(), -1);
+        const auto delayId = e.getRoot().nodes.back()->id;
+        CHECK (e.swap (id, delayId) && e.getRoot().nodes[0]->id == delayId, "swap exchanges two blocks");
+        const int before = (int) e.getRoot().nodes.size();
+        e.remove (delayId);
+        CHECK (e.undo() && (int) e.getRoot().nodes.size() == before, "undo restores a removed block");
+    }
+
+    // block presets
+    {
+        Engine e;
+        e.prepare (48000.0, 256);
+        auto* d = dynamic_cast<DelayBlock*> (e.insert (e.createNode (NodeType::Delay), e.getRoot(), -1));
+        d->set (DelayBlock::pTime, 333.0f);
+        d->set (DelayBlock::pMode, 2.0f);
+        const auto id = d->id;
+        CHECK (e.saveBlockPreset (*d, "Test Slapback"), "saves a block preset");
+        d->set (DelayBlock::pTime, 900.0f);
+        auto presets = e.getBlockPresets (*d);
+        juce::File f;
+        for (auto& p : presets) if (p.getFileNameWithoutExtension() == "Test Slapback") f = p;
+        auto* loaded = dynamic_cast<DelayBlock*> (e.loadBlockPreset (id, f));
+        CHECK (loaded != nullptr && loaded->id == id && std::abs (loaded->get (DelayBlock::pTime) - 333.0f) < 0.01f
+               && loaded->getChoice (DelayBlock::pMode) == 2, "loads a block preset in place");
+        auto* init = dynamic_cast<DelayBlock*> (e.initBlock (id));
+        CHECK (init != nullptr && std::abs (init->get (DelayBlock::pTime) - 400.0f) < 0.01f, "init resets a block to defaults");
+        f.deleteFile();
+
+        // Init is the first entry when stepping presets
+        e.stepPreset (-1);
+        e.stepPreset (1);
+        CHECK (e.presetFile == juce::File() || e.getPresetFiles().size() > 0, "preset stepping includes Init");
+        e.loadDefaultRig();
+        CHECK (e.isInit(), "Init rig is recognised");
+    }
+
+    // randomiser
+    {
+        Engine e;
+        e.prepare (48000.0, 256);
+        e.setPaths ("modelPaths", juce::FileSearchPath (models.getFullPathName()));
+        Randomiser rz (e);
+        rz.random().setSeed (42);
+
+        // lock a reverb: it must survive every randomised rig
+        auto* rv = dynamic_cast<ReverbBlock*> (e.insert (e.createNode (NodeType::Reverb), e.getRoot(), -1));
+        rv->set (ReverbBlock::pDecay, 7.7f);
+        rv->locked = true;
+        const auto lockedId = rv->id;
+
+        bool allFinite = true, allOk = true, sawSplit = false, sawModel = false;
+        for (int i = 0; i < 12; ++i)
+        {
+            rz.randomiseRig();
+            auto* kept = dynamic_cast<ReverbBlock*> (e.findNode (lockedId));
+            if (kept == nullptr || std::abs (kept->get (ReverbBlock::pDecay) - 7.7f) > 0.01f) allOk = false;
+            visitNodes (e.getRoot(), [&] (Node& n)
+            {
+                if (n.getType() == NodeType::Split) sawSplit = true;
+                if (auto* nb = dynamic_cast<NamBlock*> (&n); nb != nullptr && nb->getInfo().loaded) sawModel = true;
+            });
+            bool finite = false;
+            runNoise (e, 40, 256, &finite);
+            allFinite &= finite;
+        }
+        CHECK (allOk, "locked block survives randomising the rig");
+        CHECK (allFinite, "random rigs produce finite audio");
+        CHECK (sawModel, "random rigs load NAM models from the model folders");
+        CHECK (sawSplit, "random rigs sometimes split into parallel amps");
+
+        // randomise one block's settings within its musical range, and mutate gently
+        auto* d = dynamic_cast<DelayBlock*> (e.insert (e.createNode (NodeType::Delay), e.getRoot(), -1));
+        rz.randomiseSettings (*d, 1.0f);
+        const float t = d->get (DelayBlock::pTime), mix = d->get (DelayBlock::pMix);
+        CHECK (t >= 120.0f && t <= 800.0f && mix >= 15.0f && mix <= 40.0f, "randomised settings stay in musical ranges");
+        rz.randomiseSettings (*d, 0.1f);
+        CHECK (std::abs (d->get (DelayBlock::pTime) - t) < 400.0f, "mutate makes a small change");
+        auto* nb = dynamic_cast<NamBlock*> (e.insert (e.createNode (NodeType::Nam), e.getRoot(), -1));
+        const float outBefore = nb->get (NamBlock::pOutput);
+        rz.randomiseSettings (*nb, 1.0f);
+        CHECK (nb->get (NamBlock::pOutput) == outBefore, "levels are never randomised");
+
+        // randomise type keeps the category
+        const auto did = d->id;
+        auto* swapped = rz.randomiseType (did);
+        CHECK (swapped != nullptr && Randomiser::categoryOf (*swapped) == Category::Delay && swapped->id == did, "random block of the same category");
+        auto* amp = rz.randomiseType (nb->id);
+        CHECK (amp != nullptr && dynamic_cast<NamBlock*> (amp) != nullptr && dynamic_cast<NamBlock*> (amp)->getInfo().loaded, "random amp loads a model");
+
+        rz.reshuffleBlocks();
+        rz.randomiseAllSettings (0.3f);
+        bool finite = false;
+        runNoise (e, 40, 256, &finite);
+        CHECK (finite && e.findNode (lockedId) != nullptr, "reshuffle and mutate all keep the rig working");
+        CHECK (e.undo(), "randomising can be undone");
     }
 
     // categories

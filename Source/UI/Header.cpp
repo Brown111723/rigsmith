@@ -6,17 +6,24 @@ using namespace theme;
 
 Header::Header (Engine& e) : engine (e)
 {
-    prev.setTooltip ("Previous preset");
-    next.setTooltip ("Next preset");
     prev.onClick = [this] { engine.stepPreset (-1); };
     next.onClick = [this] { engine.stepPreset (1); };
     presetButton.onClick = [this] { if (onPresetMenu) onPresetMenu(); };
-    presetButton.setTooltip ("Presets");
+    presetButton.setTooltip ("Presets - Init is always first");
     save.onClick = [this] { if (onSave) onSave(); };
-    save.setTooltip ("Save preset (Ctrl+S)");
-    menu.setButtonText ("Menu");
     menu.onClick = [this] { if (onMenu) onMenu(); };
-    for (auto* b : { &prev, &next, &presetButton, &save, &menu }) addAndMakeVisible (b);
+    undo.onClick = [this] { if (onUndo) onUndo(); };
+    redo.onClick = [this] { if (onRedo) onRedo(); };
+    random.setLabel ("Randomise");
+    random.setHighlighted (true);
+    random.onClick = [this] { if (onRandom) onRandom(); };
+    random.onRightClick = [this] { if (onRandomMenu) onRandomMenu(); };
+    randomMore.onClick = [this] { if (onRandomMenu) onRandomMenu(); };
+    library.onClick = [this] { if (onLibrary) onLibrary(); };
+    fullScreen.onClick = [this] { if (onFullScreen) onFullScreen(); };
+    for (auto* b : std::initializer_list<juce::Component*> { &prev, &next, &presetButton, &save, &menu, &undo, &redo,
+                                                             &random, &randomMore, &library, &fullScreen })
+        addAndMakeVisible (b);
 
     for (int i = 0; i < kNumScenes; ++i)
     {
@@ -56,6 +63,8 @@ void Header::refresh (const Tuner::Reading& r, const juce::String& s)
         scenes[i].setToggleState (engine.getScene() == i, juce::dontSendNotification);
         if (scenes[i].getButtonText() != engine.sceneNames[i]) scenes[i].setButtonText (engine.sceneNames[i]);
     }
+    undo.setEnabled (engine.canUndo());
+    redo.setEnabled (engine.canRedo());
     if (! inGain.isMouseButtonDown()) inGain.setValue (engine.inputGainDb.load(), juce::dontSendNotification);
     if (! outGain.isMouseButtonDown()) outGain.setValue (engine.outputGainDb.load(), juce::dontSendNotification);
 
@@ -82,9 +91,12 @@ void Header::paint (juce::Graphics& g)
     p.lineTo (mark.getX() + 14, mark.getBottom() - 11);
     p.lineTo (mark.getRight() - 6, mark.getY() + 7);
     g.strokePath (p, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour (text);
-    g.setFont (font (15.0f, true).withExtraKerningFactor (0.14f));
-    g.drawText ("RIGSMITH", l.withTrimmedLeft (8.0f), juce::Justification::centredLeft);
+    if (l.getWidth() > 60.0f)
+    {
+        g.setColour (text);
+        g.setFont (font (15.0f, true).withExtraKerningFactor (0.14f));
+        g.drawText ("RIGSMITH", l.withTrimmedLeft (8.0f), juce::Justification::centredLeft);
+    }
 
     // tuner box
     {
@@ -127,43 +139,62 @@ void Header::paint (juce::Graphics& g)
     knobLabel (inArea, "IN", engine.inputGainDb.load());
     knobLabel (outArea, "OUT", engine.outputGainDb.load());
 
-    g.setColour (muted);
-    g.setFont (mono (11.0f));
-    g.drawFittedText (status, statusArea, juce::Justification::centredRight, 2);
+    if (! statusArea.isEmpty())
+    {
+        g.setColour (muted);
+        g.setFont (mono (11.0f));
+        g.drawFittedText (status, statusArea, juce::Justification::centredRight, 2);
+    }
 }
 
 void Header::resized()
 {
-    auto r = getLocalBounds().reduced (14, 10);
-    logoArea = r.removeFromLeft (130);
-    r.removeFromLeft (8);
+    auto r = getLocalBounds().reduced (12, 12);
+    const int bh = r.getHeight();
+    const bool narrow = getWidth() < 1400;
+    random.setLabel (getWidth() < 1320 ? juce::String() : juce::String ("Randomise"));
 
-    prev.setBounds (r.removeFromLeft (40));
-    r.removeFromLeft (4);
-    presetButton.setBounds (r.removeFromLeft (230));
-    r.removeFromLeft (4);
-    next.setBounds (r.removeFromLeft (40));
+    logoArea = r.removeFromLeft (narrow ? 36 : 124);
     r.removeFromLeft (6);
-    save.setBounds (r.removeFromLeft (60));
-    r.removeFromLeft (16);
 
-    for (auto& s : scenes) { s.setBounds (r.removeFromLeft (44)); r.removeFromLeft (5); }
-    r.removeFromLeft (12);
+    // right side first, so the preset name gets whatever is left
+    menu.setBounds (r.removeFromRight (bh));
+    r.removeFromRight (10);
+    auto knobArea = r.removeFromRight (176);
+    auto ia = knobArea.removeFromLeft (88);
+    inGain.setBounds (ia.removeFromLeft (40));
+    inArea = ia.withTrimmedLeft (4);
+    outGain.setBounds (knobArea.removeFromLeft (40));
+    outArea = knobArea.withTrimmedLeft (4);
+    r.removeFromRight (10);
+    fullScreen.setVisible (showFullScreenButton);
+    if (showFullScreenButton) { fullScreen.setBounds (r.removeFromRight (bh)); r.removeFromRight (4); }
+    library.setBounds (r.removeFromRight (bh));
+    r.removeFromRight (10);
+    randomMore.setBounds (r.removeFromRight (22));
+    r.removeFromRight (2);
+    random.setBounds (r.removeFromRight (random.preferredWidth (bh) + 4));
+    r.removeFromRight (10);
 
-    tunerArea = r.removeFromLeft (150);
+    prev.setBounds (r.removeFromLeft (bh));
+    r.removeFromLeft (4);
+    const int fixedAfterPreset = 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + 4 * 49 + 8 + 128 + 10;
+    const int presetW = juce::jlimit (130, 300, r.getWidth() - fixedAfterPreset);
+    presetButton.setBounds (r.removeFromLeft (presetW));
+    r.removeFromLeft (4);
+    next.setBounds (r.removeFromLeft (bh));
+    r.removeFromLeft (4);
+    save.setBounds (r.removeFromLeft (bh));
+    r.removeFromLeft (10);
+    undo.setBounds (r.removeFromLeft (bh));
+    r.removeFromLeft (4);
+    redo.setBounds (r.removeFromLeft (bh));
     r.removeFromLeft (14);
 
-    menu.setBounds (r.removeFromRight (64));
-    r.removeFromRight (12);
-
-    auto knobArea = r.removeFromRight (190);
-    auto ia = knobArea.removeFromLeft (95);
-    inGain.setBounds (ia.removeFromLeft (44));
-    inArea = ia.withTrimmedLeft (4);
-    outGain.setBounds (knobArea.removeFromLeft (44));
-    outArea = knobArea.withTrimmedLeft (4);
-    r.removeFromRight (8);
-    statusArea = r;
+    for (auto& s : scenes) { s.setBounds (r.removeFromLeft (44)); r.removeFromLeft (5); }
+    r.removeFromLeft (8);
+    tunerArea = r.removeFromLeft (128);
+    statusArea = {};   // the audio status now lives in the corner of the rig view
 }
 
 void Header::mouseUp (const juce::MouseEvent& e)

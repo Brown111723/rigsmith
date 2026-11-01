@@ -37,10 +37,12 @@ SettingsPanel::SettingsPanel (Engine& e) : engine (e)
     scanOnStartup.setToggleState (engine.getSetting ("scanOnStartup", true), juce::dontSendNotification);
     addAndMakeVisible (autoCategorise);
     addAndMakeVisible (scanOnStartup);
+    startFullScreen.setToggleState (engine.getSetting ("fullScreen", false), juce::dontSendNotification);
+    addAndMakeVisible (startFullScreen);
     scanNow.onClick = [this] { if (onScanNow) onScanNow(); };
     addAndMakeVisible (scanNow);
 
-    setSize (720, 640 + pluginSections.size() * 150);
+    setSize (720, 670 + pluginSections.size() * 150);
 }
 
 SettingsPanel::~SettingsPanel()
@@ -52,6 +54,7 @@ SettingsPanel::~SettingsPanel()
             juce::PluginListComponent::setLastSearchPath (*settings, *pluginFormats[i], pluginSections[i]->list.getPath());
     engine.setSetting ("autoCategorise", autoCategorise.getToggleState());
     engine.setSetting ("scanOnStartup", scanOnStartup.getToggleState());
+    engine.setSetting ("fullScreen", startFullScreen.getToggleState());
     PluginBlock::autoCategorise = autoCategorise.getToggleState();
     if (onChanged) onChanged();
 }
@@ -87,6 +90,7 @@ void SettingsPanel::resized()
     r.removeFromTop (6);
     autoCategorise.setBounds (r.removeFromTop (28));
     scanOnStartup.setBounds (r.removeFromTop (28));
+    startFullScreen.setBounds (r.removeFromTop (28));
     r.removeFromTop (8);
     scanNow.setBounds (r.removeFromTop (32).removeFromLeft (180));
 }

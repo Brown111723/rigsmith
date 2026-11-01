@@ -6,6 +6,7 @@
 #include "UI/Inspector.h"
 #include "UI/Library.h"
 #include "UI/Header.h"
+#include "Engine/Randomiser.h"
 
 class PluginWindow;
 
@@ -39,6 +40,11 @@ public:
     void browseFile (rig::Node&, int delta) override;
     bool loadFileInto (rig::Node* target, rig::Chain* chain, int index, const juce::File&) override;
     bool insertPlugin (const juce::String& identifier, rig::Chain& chain, int index) override;
+    void randomise (rig::Node&, RandomWhat) override;
+    void showRandomMenu (rig::Node&, juce::Component* anchor) override;
+    void showBlockPresetMenu (rig::Node&, juce::Component* anchor) override;
+    void replaceWith (rig::Node& target, const juce::String& dragDescription) override;
+    void toggleLock (rig::Node&) override;
 
     // FileDragAndDropTarget
     bool isInterestedInFileDrag (const juce::StringArray&) override;
@@ -74,6 +80,34 @@ private:
     void updateTuner();
     rig::Chain* chainById (const juce::String& id);
 
+    // v0.3: layout, full screen, randomise, undo
+    void setLibraryVisible (bool);
+    void setFullScreen (bool);
+    bool isFullScreen() const;
+    void showRigRandomMenu();
+    void randomiseRig();
+    void doUndo (bool redo);
+    int getIntSetting (const juce::String& key, int def) const;
+    void setIntSetting (const juce::String& key, int value);
+
+    struct Divider : public juce::Component, public juce::SettableTooltipClient
+    {
+        Divider() { setMouseCursor (juce::MouseCursor::UpDownResizeCursor); setRepaintsOnMouseActivity (true); }
+        std::function<void (int)> onDrag;
+        std::function<void()> onStart, onDoubleClick;
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (rig::theme::panel);
+            g.setColour (rig::theme::border);
+            g.drawHorizontalLine (0, 0.0f, (float) getWidth());
+            g.setColour (isMouseOverOrDragging() ? rig::theme::accent : rig::theme::borderHi);
+            g.fillRoundedRectangle ((float) getWidth() * 0.5f - 22.0f, (float) getHeight() * 0.5f - 1.5f, 44.0f, 3.0f, 1.5f);
+        }
+        void mouseDown (const juce::MouseEvent&) override { if (onStart) onStart(); }
+        void mouseDrag (const juce::MouseEvent& e) override { if (onDrag) onDrag (e.getDistanceFromDragStartY()); }
+        void mouseDoubleClick (const juce::MouseEvent&) override { if (onDoubleClick) onDoubleClick(); }
+    };
+
     RigsmithProcessor& processor;
     rig::Engine& engine;
     rig::RigLookAndFeel lnf;
@@ -84,6 +118,11 @@ private:
     rig::Inspector inspector;
     rig::Library library;
     rig::TunerOverlay tunerOverlay;
+    rig::Randomiser randomiser { engine };
+    Divider divider;
+    juce::Label statusLabel;
+    bool libraryVisible = true;
+    int inspectorHeight = 330, dragStartHeight = 330;
     juce::TooltipWindow tooltips { this, 700 };
 
     juce::OwnedArray<PluginWindow> pluginWindows;

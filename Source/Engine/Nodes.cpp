@@ -184,9 +184,8 @@ void Node::prepare (double sr, int block)
     dry.setSize (2, maxBlock, false, true, true);
     wetGain.reset (sr, 0.015);
     wetGain.setCurrentAndTargetValue (bypassed.load() ? 0.0f : 1.0f);
-    compGain.reset (sr, 0.08);
-    compGain.setCurrentAndTargetValue (1.0f);
-    envIn = envOut = 0;
+    compGain.reset (sr, 0.25);
+    compGain.setCurrentAndTargetValue (autoGain.load() ? dbToGain (autoGainDb.load()) : 1.0f);
     prepareImpl (sr, maxBlock);
 }
 
@@ -215,25 +214,54 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
 
     if (ag)
     {
-        // Slow RMS followers on input and output; match output loudness to input.
-        const float ein = (dry.getRMSLevel (0, 0, n) + dry.getRMSLevel (1, 0, n)) * 0.5f;
-        const float eout = (buffer.getRMSLevel (0, 0, n) + buffer.getRMSLevel (1, 0, n)) * 0.5f;
-        const float a = std::exp (-(float) n / (0.4f * (float) sampleRate));
-        envIn = envIn * a + ein * ein * (1.0f - a);
-        envOut = envOut * a + eout * eout * (1.0f - a);
-        if (envIn > 1.0e-7f && envOut > 1.0e-9f)   // only adapt while playing (above about -70 dB)
-            compGain.setTargetValue (juce::jlimit (0.0631f, 4.0f, std::sqrt (envIn / envOut)));
-        for (int i = 0; i < n; ++i)
+        // Normalise-style gain compensation: measure while playing, then hold.
+        const auto ec = editCount.load (std::memory_order_relaxed);
+        if (relearn.exchange (false) || ec != learnedEdit.load (std::memory_order_relaxed))
         {
-            const float g = compGain.getNextValue();
-            l[i] *= g; r[i] *= g;
+            learnedEdit.store (ec);
+            learningNow = true;
+            accIn = accOut = 0;
+            accSamples = 0;
+            autoGainProgress.store (0.0f);
         }
-        autoGainDb.store (gainToDb (compGain.getCurrentValue()));
+
+        if (learningNow)
+        {
+            double ein = 0, eout = 0;
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* d = dry.getReadPointer (ch);
+                auto* o = buffer.getReadPointer (ch);
+                for (int i = 0; i < n; ++i) { ein += (double) d[i] * d[i]; eout += (double) o[i] * o[i]; }
+            }
+            // only count blocks where something is being played (input above about -54 dBFS)
+            if (ein / (2.0 * n) > 4.0e-6)
+            {
+                accIn += ein;
+                accOut += eout;
+                accSamples += n;
+            }
+            const int needed = (int) (sampleRate * 1.5);
+            if (accSamples > (int) (sampleRate * 0.12) && accOut > 1.0e-12)
+            {
+                const float g = juce::jlimit (0.0316f, 31.6f, (float) std::sqrt (accIn / accOut));   // +-30 dB
+                autoGainDb.store (gainToDb (g));
+            }
+            autoGainProgress.store (juce::jmin (1.0f, (float) accSamples / (float) needed));
+            if (accSamples >= needed) learningNow = false;
+        }
+
+        compGain.setTargetValue (dbToGain (autoGainDb.load (std::memory_order_relaxed)));
+        if (compGain.isSmoothing() || compGain.getCurrentValue() != 1.0f)
+            for (int i = 0; i < n; ++i)
+            {
+                const float g = compGain.getNextValue();
+                l[i] *= g; r[i] *= g;
+            }
     }
     else if (compGain.getCurrentValue() != 1.0f)
     {
         compGain.setCurrentAndTargetValue (1.0f);
-        autoGainDb.store (0.0f);
     }
 
     if (wetGain.isSmoothing())
@@ -257,7 +285,12 @@ juce::ValueTree Node::toState() const
     v.setProperty ("type", nodeTypeToString (type), nullptr);
     v.setProperty ("id", id, nullptr);
     v.setProperty ("bypass", bypassed.load(), nullptr);
-    if (autoGain.load()) v.setProperty ("autoGain", true, nullptr);
+    if (autoGain.load())
+    {
+        v.setProperty ("autoGain", true, nullptr);
+        v.setProperty ("autoGainDb", autoGainDb.load(), nullptr);
+    }
+    if (locked.load()) v.setProperty ("locked", true, nullptr);
     return v;
 }
 
@@ -267,6 +300,10 @@ void Node::fromState (const juce::ValueTree& v)
         id = v["id"].toString();
     bypassed = (bool) v.getProperty ("bypass", false);
     autoGain = (bool) v.getProperty ("autoGain", false);
+    autoGainDb = (float) v.getProperty ("autoGainDb", 0.0f);
+    relearn = false;
+    if (autoGain.load() && ! v.hasProperty ("autoGainDb")) requestRelearn();   // v0.2 presets: measure once
+    locked = (bool) v.getProperty ("locked", false);
 }
 
 //==============================================================================
@@ -299,6 +336,62 @@ void Chain::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 }
 
 //==============================================================================
+static float skewFor (const ParamSpec& s) noexcept
+{
+    if (! s.hasCentre || s.centre <= s.min || s.centre >= s.max) return 1.0f;
+    return (float) (std::log (0.5) / std::log ((s.centre - s.min) / (s.max - s.min)));
+}
+
+float ParamSpec::toProportion (float v) const noexcept
+{
+    if (max <= min) return 0.0f;
+    const float p = juce::jlimit (0.0f, 1.0f, (v - min) / (max - min));
+    const float k = skewFor (*this);
+    return k == 1.0f || p <= 0.0f ? p : std::pow (p, k);
+}
+
+float ParamSpec::fromProportion (float p) const noexcept
+{
+    p = juce::jlimit (0.0f, 1.0f, p);
+    const float k = skewFor (*this);
+    if (k != 1.0f && p > 0.0f) p = std::exp (std::log (p) / k);
+    return min + (max - min) * p;
+}
+
+void Block::randomise (juce::Random& rng, float amount)
+{
+    amount = juce::jlimit (0.0f, 1.0f, amount);
+    const bool full = amount >= 0.999f;
+    for (size_t i = 0; i < specs.size(); ++i)
+    {
+        const auto& s = specs[i];
+        if (s.noRand) continue;
+        if (! s.hasRand && s.isDb() && (s.id == "level" || s.id == "output" || s.id == "makeup" || s.id == "ceiling"))
+            continue;   // never randomise levels: random rigs should stay at a sane volume
+
+        if (s.toggle || s.isChoice())
+        {
+            if (full || rng.nextFloat() < amount * 0.5f)
+                set ((int) i, s.toggle ? (rng.nextBool() ? 1.0f : 0.0f) : (float) rng.nextInt (s.choices.size()));
+            continue;
+        }
+
+        const float lo = s.toProportion (s.hasRand ? s.randMin : s.min + (s.max - s.min) * 0.1f);
+        const float hi = s.toProportion (s.hasRand ? s.randMax : s.max - (s.max - s.min) * 0.1f);
+        float p;
+        if (full) p = lo + (hi - lo) * rng.nextFloat();
+        else
+        {
+            const float cur = s.toProportion (get ((int) i));
+            p = juce::jlimit (juce::jmin (lo, cur), juce::jmax (hi, cur), cur + (rng.nextFloat() * 2.0f - 1.0f) * 0.35f * amount);
+        }
+        float v = s.fromProportion (p);
+        if (s.decimals == 0 && s.unit != "Hz" && s.unit != "ms" && s.unit != "%") v = (float) juce::roundToInt (v);
+        set ((int) i, v);
+    }
+}
+
+//==============================================================================
 Block::Block (NodeType t, std::vector<ParamSpec> s)
     : Node (t), specs (std::move (s)), values (new std::atomic<float>[specs.size()])
 {
@@ -328,7 +421,8 @@ juce::String Block::formatValue (int i, float v) const
     if (s.unit == "ms" && v >= 1000.0f)
         return juce::String (v / 1000.0f, 2) + " s";
     // every dB readout is shown to one decimal place
-    juce::String txt = juce::String (v, s.isDb() ? 1 : s.decimals);
+    const int dp = s.isDb() ? 1 : s.decimals;
+    juce::String txt = dp == 0 ? juce::String (juce::roundToInt (v)) : juce::String (v, dp);   // String (v, 0) would print every digit
     if (s.isDb() && v > 0.05f)
         txt = "+" + txt;
     if (s.isDb() && v <= s.min && s.min <= -60.0f)
@@ -401,6 +495,7 @@ std::unique_ptr<Split::Branch> Split::makeBranch() const
 void Split::setMode (SplitMode m)
 {
     mode = (int) m;
+    touched();
     const int n = (int) branches.size();
     if (n == 0)
         return;
@@ -429,6 +524,7 @@ void Split::setMode (SplitMode m)
 void Split::setLevel (int index, float v, bool linked)
 {
     v = juce::jlimit (0.0f, 1.0f, v);
+    touched();
     const int n = (int) branches.size();
     if (! juce::isPositiveAndBelow (index, n))
         return;

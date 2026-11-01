@@ -27,7 +27,7 @@ Library::Library (GraphHost& h) : host (h)
     addAndMakeVisible (search);
 
     list.setModel (this);
-    list.setRowHeight (40);
+    list.setRowHeight (42);
     list.setColour (juce::ListBox::backgroundColourId, panel);
     list.setOutlineThickness (0);
     addAndMakeVisible (list);
@@ -162,10 +162,10 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
     g.fillRoundedRectangle (12.0f, (float) h * 0.5f - 9.0f, 4.0f, 18.0f, 2.0f);
     g.setColour (text);
     g.setFont (font (13.0f, true));
-    g.drawText (name, 24, 4, w - 30, h / 2, juce::Justification::bottomLeft, true);
+    g.drawText (name, 24, h / 2 - 17, w - 30, 18, juce::Justification::centredLeft, true);
     g.setColour (muted);
     g.setFont (font (11.0f));
-    g.drawText (sub, 24, h / 2, w - 30, h / 2 - 4, juce::Justification::topLeft, true);
+    g.drawText (sub, 24, h / 2 + 2, w - 30, 15, juce::Justification::centredLeft, true);
 }
 
 void Library::listBoxItemDoubleClicked (int row, const juce::MouseEvent&) { activate (row); }

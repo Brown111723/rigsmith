@@ -20,6 +20,14 @@ struct GraphHost
     virtual void showBranchMenu (Split&, int branch, juce::Component* anchor) = 0;
     virtual bool loadFileInto (Node* target, Chain* chain, int index, const juce::File&) = 0;
     virtual bool insertPlugin (const juce::String& identifier, Chain& chain, int index) = 0;
+
+    enum RandomWhat { RandomSettings = 0, RandomMutate, RandomType };
+    virtual void randomise (Node&, RandomWhat) = 0;
+    virtual void showRandomMenu (Node&, juce::Component* anchor) = 0;
+    virtual void showBlockPresetMenu (Node&, juce::Component* anchor) = 0;
+    /** Something dropped onto the middle of a block: a file, plug-in or another block ("node:id" swaps). */
+    virtual void replaceWith (Node& target, const juce::String& dragDescription) = 0;
+    virtual void toggleLock (Node&) = 0;
 };
 
 /** Anything laid out in a chain. */
@@ -48,18 +56,25 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
+    // Drop onto the middle of a card to replace it (or swap with a dragged block);
+    // near its left/right edge to insert before/after it instead.
     bool isInterestedInDragSource (const SourceDetails&) override;
-    void itemDragEnter (const SourceDetails&) override { dropHover = true; repaint(); }
-    void itemDragExit (const SourceDetails&) override { dropHover = false; repaint(); }
+    void itemDragEnter (const SourceDetails& d) override { itemDragMove (d); }
+    void itemDragMove (const SourceDetails&) override;
+    void itemDragExit (const SourceDetails&) override;
     void itemDropped (const SourceDetails&) override;
 
+    /** -1 = insert before, 0 = replace, 1 = insert after */
+    int dropZone (juce::Point<int> local) const;
     bool acceptsFile (const juce::File&) const;
 
 private:
     juce::Rectangle<float> footswitchArea() const;
+    ChainView* parentChain() const;
     GraphHost& host;
     Node& node;
-    bool dragging = false, dropHover = false, pressedSwitch = false;
+    bool dragging = false, pressedSwitch = false;
+    juce::String dropLabel;   // shown while something hovers over the middle
 };
 
 //==============================================================================
@@ -97,6 +112,10 @@ public:
     void itemDropped (const SourceDetails&) override;
 
     int indexForX (int x) const;
+    int indexOfItem (const juce::Component* c) const { for (int i = 0; i < items.size(); ++i) if (items[i] == c) return i; return -1; }
+    void setDropIndex (int i) { if (i != dropIndex) { dropIndex = i; repaint(); } }
+    /** Handles a drag description ("node:", "file:", "plugin:") dropped at a position in this chain. */
+    void dropAt (const juce::String& description, int index);
 
     static constexpr int gap = 30;
 
