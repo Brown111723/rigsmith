@@ -1,0 +1,88 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows (Standalone + VST3)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-win-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel --target Rigsmith_Standalone Rigsmith_VST3
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(Rigsmith VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $out = "dist/Rigsmith-${{ steps.version.outputs.version }}-windows"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item build/Rigsmith_artefacts/Release/Standalone/Rigsmith.exe $out/
+          Copy-Item -Recurse build/Rigsmith_artefacts/Release/VST3/Rigsmith.vst3 $out/
+          Copy-Item README.md, LICENSE $out/
+          Compress-Archive -Path "$out/*" -DestinationPath "$out.zip" -Force
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress | Out-Null
+          }
+          & $iscc /DAppVersion=${{ steps.version.outputs.version }} installer/Rigsmith.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Rigsmith-Windows
+          path: |
+            dist/*.zip
+            dist/*.exe
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.exe
+
+  engine-tests:
+    name: Engine tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxext-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev libjack-jackd2-dev ninja-build
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRIGSMITH_TESTS=ON
+      - name: Build
+        run: cmake --build build --target RigsmithTests
+      - name: Run
+        run: ./build/RigsmithTests_artefacts/Release/RigsmithTests build/_deps/namcore-src/example_models

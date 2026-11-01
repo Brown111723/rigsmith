@@ -1,0 +1,116 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+RigsmithProcessor::RigsmithProcessor()
+    : AudioProcessor (BusesProperties()
+                        .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+{
+    sceneParam = new juce::AudioParameterChoice (juce::ParameterID { "scene", 1 }, "Scene",
+                                                 juce::StringArray { "A", "B", "C", "D" }, 0);
+    addParameter (sceneParam);
+    sceneParam->addListener (this);
+
+    engine.onLatencyChanged = [this] (int samples) { setLatencySamples (samples); };
+    engine.onSceneChanged = [this] (int scene)
+    {
+        if (sceneParam->getIndex() != scene)
+        {
+            sceneParam->beginChangeGesture();
+            *sceneParam = scene;
+            sceneParam->endChangeGesture();
+        }
+    };
+}
+
+RigsmithProcessor::~RigsmithProcessor()
+{
+    alive->store (false);
+    sceneParam->removeListener (this);
+}
+
+void RigsmithProcessor::parameterValueChanged (int, float)
+{
+    engine.pendingHostScene = sceneParam->getIndex();
+}
+
+bool RigsmithProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+{
+    const auto out = layouts.getMainOutputChannelSet();
+    const auto in = layouts.getMainInputChannelSet();
+    if (out != juce::AudioChannelSet::stereo() && out != juce::AudioChannelSet::mono())
+        return false;
+    return in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo();
+}
+
+void RigsmithProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+{
+    engine.prepare (sampleRate, samplesPerBlock);
+    loadMeasurer.reset (sampleRate, samplesPerBlock);
+    setLatencySamples (engine.getLatency());
+}
+
+void RigsmithProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    juce::ScopedNoDenormals noDenormals;
+    juce::AudioProcessLoadMeasurer::ScopedTimer timer (loadMeasurer, buffer.getNumSamples());
+
+    const int ins = getTotalNumInputChannels();
+    for (int ch = ins; ch < buffer.getNumChannels(); ++ch)
+        buffer.clear (ch, 0, buffer.getNumSamples());
+
+    if (buffer.getNumChannels() >= 2)
+    {
+        engine.process (buffer, midi);
+    }
+    else
+    {
+        // mono-out host layout: run the stereo engine on a scratch copy, sum to mono
+        juce::AudioBuffer<float> tmp (2, buffer.getNumSamples());
+        tmp.copyFrom (0, 0, buffer, 0, 0, buffer.getNumSamples());
+        tmp.clear (1, 0, buffer.getNumSamples());
+        engine.process (tmp, midi);
+        buffer.copyFrom (0, 0, tmp, 0, 0, buffer.getNumSamples());
+        buffer.addFrom (0, 0, tmp, 1, 0, buffer.getNumSamples());
+        buffer.applyGain (0, 0, buffer.getNumSamples(), 0.5f);
+    }
+    midi.clear();
+}
+
+juce::AudioProcessorEditor* RigsmithProcessor::createEditor()
+{
+    return new RigsmithEditor (*this);
+}
+
+void RigsmithProcessor::getStateInformation (juce::MemoryBlock& dest)
+{
+    if (auto xml = engine.getState (true).createXml())
+        copyXmlToBinary (*xml, dest);
+}
+
+void RigsmithProcessor::setStateInformation (const void* data, int size)
+{
+    auto xml = getXmlFromBinary (data, size);
+    if (xml == nullptr)
+        return;
+
+    auto tree = juce::ValueTree::fromXml (*xml);
+    if (juce::MessageManager::getInstance()->isThisTheMessageThread())
+    {
+        engine.setState (tree, true);
+    }
+    else
+    {
+        // plug-in instances must be created on the message thread
+        auto flag = alive;
+        juce::MessageManager::callAsync ([this, flag, tree]
+        {
+            if (flag->load()) engine.setState (tree, true);
+        });
+    }
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new RigsmithProcessor();
+}

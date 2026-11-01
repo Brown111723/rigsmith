@@ -1,0 +1,830 @@
+#include "PluginEditor.h"
+
+#if JucePlugin_Build_Standalone
+ #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+ #define RIGSMITH_HAS_STANDALONE_HOLDER 1
+#endif
+
+using namespace rig;
+using namespace rig::theme;
+
+//==============================================================================
+class PluginWindow : public juce::DocumentWindow
+{
+public:
+    PluginWindow (PluginBlock& block, juce::LookAndFeel& lf, std::function<void (PluginWindow*)> closeFn)
+        : DocumentWindow (block.getName() + " - Rigsmith", bg, DocumentWindow::closeButton),
+          nodeId (block.id), onCloseFn (std::move (closeFn))
+    {
+        setLookAndFeel (&lf);
+        auto* inst = block.getInstance();
+        juce::AudioProcessorEditor* ed = inst->hasEditor() ? inst->createEditorAndMakeActive() : nullptr;
+        if (ed == nullptr)
+            ed = new juce::GenericAudioProcessorEditor (*inst);
+        setUsingNativeTitleBar (true);
+        setContentOwned (ed, true);
+        setResizable (ed->isResizable(), false);
+        setAlwaysOnTop (true);
+        centreWithSize (getWidth(), getHeight());
+        setVisible (true);
+    }
+
+    ~PluginWindow() override
+    {
+        clearContentComponent();
+        setLookAndFeel (nullptr);
+    }
+
+    void closeButtonPressed() override { onCloseFn (this); }
+
+    const juce::String nodeId;
+
+private:
+    std::function<void (PluginWindow*)> onCloseFn;
+};
+
+//==============================================================================
+RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
+    : AudioProcessorEditor (p), processor (p), engine (p.engine),
+      header (engine), graph (*this), inspector (*this), library (*this), tunerOverlay (engine)
+{
+    setLookAndFeel (&lnf);
+    juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
+
+    addAndMakeVisible (header);
+    viewport.setViewedComponent (&graph, false);
+    viewport.setScrollBarsShown (true, true);
+    viewport.setScrollBarThickness (10);
+    addAndMakeVisible (viewport);
+    addAndMakeVisible (inspector);
+    addAndMakeVisible (library);
+    addChildComponent (tunerOverlay);
+
+    header.onPresetMenu = [this] { showPresetMenu(); };
+    header.onSave = [this] { savePreset (false); };
+    header.onMenu = [this] { showMainMenu(); };
+    header.onTuner = [this] { engine.tunerActive = ! engine.tunerActive.load(); updateTuner(); };
+    header.onSceneRightClick = [this] (int s) { showSceneMenu (s); };
+    tunerOverlay.onClose = [this] { engine.tunerActive = false; updateTuner(); };
+
+    inspector.onOpen = [this] (Node& n) { openNode (n); };
+    inspector.onLearnParam = [this] (Node& n, int param)
+    {
+        MidiMapping m;
+        m.target = MidiMapping::Target::Param;
+        m.nodeId = n.id;
+        m.index = param;
+        engine.startLearn (m);
+    };
+
+    library.onActivateFile = [this] (const juce::File& f)
+    {
+        auto* sel = engine.findNode (selectedId);
+        auto* card = sel != nullptr && ((sel->getType() == NodeType::Nam && f.hasFileExtension ("nam"))
+                                        || (sel->getType() == NodeType::Ir && ! f.hasFileExtension ("nam"))) ? sel : nullptr;
+        loadFileInto (card, card == nullptr ? &engine.getRoot() : nullptr, -1, f);
+    };
+    library.onActivatePlugin = [this] (const juce::String& ident) { insertPlugin (ident, engine.getRoot(), -1); };
+    library.onScanPlugins = [this] { showPluginScanner(); };
+
+    engine.addListener (this);
+    engine.knownPlugins.addChangeListener (this);
+
+   #if RIGSMITH_HAS_STANDALONE_HOLDER
+    // a guitar rig wants to hear its input: JUCE's standalone wrapper mutes it by default
+    if (processor.isStandalone())
+        if (auto* holder = juce::StandalonePluginHolder::getInstance())
+            holder->getMuteInputValue().setValue (false);
+   #endif
+
+    setWantsKeyboardFocus (true);
+    setResizable (true, true);
+    setResizeLimits (1180, 700, 4000, 2600);
+    setSize (1440, 900);
+    updateTuner();
+    startTimerHz (30);
+}
+
+RigsmithEditor::~RigsmithEditor()
+{
+    stopTimer();
+    engine.cancelLearn();
+    engine.knownPlugins.removeChangeListener (this);
+    engine.removeListener (this);
+    pluginWindows.clear();
+    juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
+    setLookAndFeel (nullptr);
+}
+
+//==============================================================================
+void RigsmithEditor::paint (juce::Graphics& g) { g.fillAll (bg); }
+
+void RigsmithEditor::paintOverChildren (juce::Graphics& g)
+{
+    if (toast.isEmpty()) return;
+    const auto age = juce::Time::getMillisecondCounter() - toastTime;
+    const float alpha = engine.isLearning() ? 1.0f : juce::jlimit (0.0f, 1.0f, (5000.0f - (float) age) / 600.0f);
+    if (alpha <= 0) return;
+
+    const auto f = font (14.0f, true);
+    const int w = juce::jmin (viewport.getWidth() - 40, juce::GlyphArrangement::getStringWidthInt (f, toast) + 48);
+    const auto r = juce::Rectangle<int> (viewport.getX() + (viewport.getWidth() - w) / 2, viewport.getBottom() - 60, w, 40).toFloat();
+    g.setColour (card.withAlpha (0.97f * alpha));
+    g.fillRoundedRectangle (r, 10.0f);
+    g.setColour ((engine.isLearning() ? accent : borderHi).withAlpha (alpha));
+    g.drawRoundedRectangle (r, 10.0f, 1.5f);
+    g.setColour (text.withAlpha (alpha));
+    g.setFont (f);
+    g.drawFittedText (toast, r.toNearestInt().reduced (16, 0), juce::Justification::centred, 1);
+}
+
+void RigsmithEditor::resized()
+{
+    auto r = getLocalBounds();
+    header.setBounds (r.removeFromTop (64));
+    library.setBounds (r.removeFromRight (300));
+    inspector.setBounds (r.removeFromBottom (240));
+    viewport.setBounds (r);
+    tunerOverlay.setBounds (r);
+    graph.fitTo (viewport.getLocalBounds().withTrimmedBottom (viewport.getScrollBarThickness()));
+}
+
+void RigsmithEditor::showMessage (const juce::String& text)
+{
+    toast = text;
+    toastTime = juce::Time::getMillisecondCounter();
+    repaint();
+}
+
+void RigsmithEditor::updateTuner()
+{
+    tunerOverlay.setVisible (engine.tunerActive.load());
+    if (tunerOverlay.isVisible()) tunerOverlay.toFront (false);
+    header.repaint();
+}
+
+//==============================================================================
+void RigsmithEditor::timerCallback()
+{
+    ++tick;
+    inMeter = juce::jmax (engine.inPeak.exchange (0.0f), inMeter * 0.86f);
+    outMeter = juce::jmax (engine.outPeak.exchange (0.0f), outMeter * 0.86f);
+    graph.setMeters (inMeter, outMeter);
+
+    if (engine.tunerActive.load() && tick % 2 == 0)
+    {
+        reading = engine.tuner.analyse();
+        tunerOverlay.setReading (reading);
+    }
+    else if (! engine.tunerActive.load())
+    {
+        reading = {};
+    }
+
+    const double sr = engine.getSampleRate();
+    const int lat = engine.getLatency();
+    juce::String status;
+    status << juce::String (sr / 1000.0, 1) << " kHz  " << engine.getBlockSize() << " smp  "
+           << juce::String ((engine.getBlockSize() + lat) / sr * 1000.0, 1) << " ms\n"
+           << "CPU " << juce::roundToInt (processor.getCpuLoad() * 100.0) << "%";
+    if (lat > 0) status << "  PDC " << lat;
+    header.refresh (reading, status);
+
+    if (tick % 2 == 0)
+        graph.repaint();
+
+    if (toast.isNotEmpty() && ! engine.isLearning() && juce::Time::getMillisecondCounter() - toastTime > 5000)
+        toast.clear();
+    if (toast.isNotEmpty())
+        repaint (viewport.getBounds().removeFromBottom (70));
+}
+
+void RigsmithEditor::handleAsyncUpdate()
+{
+    const auto viewPos = viewport.getViewPosition();
+    graph.rebuild();
+    graph.setVisible (true);
+    graph.fitTo (viewport.getLocalBounds().withTrimmedBottom (viewport.getScrollBarThickness()));
+    viewport.setViewPosition (viewPos);
+    auto* n = engine.findNode (selectedId);
+    if (n == nullptr) selectedId.clear();
+    if (inspector.getNode() != n) inspector.setNode (n);
+    else if (dynamic_cast<Split*> (n) != nullptr) inspector.setNode (n);  // path count may have changed
+}
+
+void RigsmithEditor::nodeWillBeDeleted (Node& n)
+{
+    // The graph's cards hold references to nodes; stop them painting or reacting
+    // until the async rebuild replaces them (it can't be torn down here, as we may be
+    // inside one of its own callbacks).
+    graph.setVisible (false);
+    triggerAsyncUpdate();
+
+    for (int i = pluginWindows.size(); --i >= 0;)
+        if (pluginWindows[i]->nodeId == n.id)
+            pluginWindows.remove (i);
+    if (inspector.getNode() == &n)
+        inspector.setNode (nullptr);
+}
+
+//==============================================================================
+void RigsmithEditor::select (const juce::String& id)
+{
+    if (selectedId == id) return;
+    selectedId = id;
+    inspector.setNode (engine.findNode (id));
+    graph.repaint();
+}
+
+rig::Chain* RigsmithEditor::chainById (const juce::String& id)
+{
+    return dynamic_cast<Chain*> (engine.findNode (id));
+}
+
+void RigsmithEditor::openNode (Node& n)
+{
+    if (auto* pb = dynamic_cast<PluginBlock*> (&n))
+    {
+        if (pb->isMissing()) showMessage (pb->getName() + " isn't installed on this computer");
+        else openPluginWindow (*pb);
+    }
+    else if (n.getType() == NodeType::Nam || n.getType() == NodeType::Ir)
+    {
+        chooseFileFor (n);
+    }
+}
+
+void RigsmithEditor::openPluginWindow (PluginBlock& pb)
+{
+    for (auto* w : pluginWindows)
+        if (w->nodeId == pb.id) { w->toFront (true); return; }
+
+    pluginWindows.add (new PluginWindow (pb, lnf, [this] (PluginWindow* w)
+    {
+        juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<RigsmithEditor> (this), w]
+        {
+            if (sp != nullptr) sp->pluginWindows.removeObject (w);
+        });
+    }));
+}
+
+void RigsmithEditor::chooseFileFor (Node& n)
+{
+    const bool isNam = n.getType() == NodeType::Nam;
+    const auto id = n.id;
+    chooser = std::make_unique<juce::FileChooser> (isNam ? "Load a NAM model" : "Load a cab IR",
+                                                   engine.getFolder (isNam ? "modelFolder" : "irFolder"),
+                                                   isNam ? "*.nam" : "*.wav;*.aif;*.aiff;*.flac");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this, id] (const juce::FileChooser& fc)
+    {
+        const auto f = fc.getResult();
+        if (f.existsAsFile())
+            if (auto* node = engine.findNode (id))
+                loadFileInto (node, nullptr, -1, f);
+    });
+}
+
+bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const juce::File& f)
+{
+    if (f.hasFileExtension ("rig"))
+        return engine.loadPreset (f);
+
+    const bool isNam = f.hasFileExtension ("nam");
+    const bool isIr = f.hasFileExtension ("wav;aif;aiff;flac");
+    if (! isNam && ! isIr)
+    {
+        showMessage ("Rigsmith loads .nam models, .wav IRs and .rig presets");
+        return false;
+    }
+
+    juce::String err;
+    if (target != nullptr)
+    {
+        bool ok = false;
+        if (auto* nb = dynamic_cast<NamBlock*> (target); nb != nullptr && isNam) ok = nb->loadModel (f, err);
+        else if (auto* ir = dynamic_cast<IrBlock*> (target); ir != nullptr && isIr) ok = ir->loadIr (f, err);
+        else err = "That file doesn't fit this block";
+
+        if (! ok) { showMessage (err); return false; }
+        engine.markDirty();
+        showMessage ("Loaded " + f.getFileNameWithoutExtension());
+        select (target->id);
+        inspector.setNode (target);
+        graph.repaint();
+        return true;
+    }
+
+    if (chain == nullptr) chain = &engine.getRoot();
+    std::unique_ptr<Node> n;
+    if (isNam)
+    {
+        auto nb = std::make_unique<NamBlock>();
+        if (! nb->loadModel (f, err)) { showMessage (err); return false; }
+        n = std::move (nb);
+    }
+    else
+    {
+        auto ir = std::make_unique<IrBlock>();
+        if (! ir->loadIr (f, err)) { showMessage (err); return false; }
+        n = std::move (ir);
+    }
+    if (auto* added = engine.insert (std::move (n), *chain, index))
+    {
+        selectedId = added->id;
+        showMessage ("Added " + f.getFileNameWithoutExtension());
+    }
+    return true;
+}
+
+bool RigsmithEditor::insertPlugin (const juce::String& identifier, Chain& chain, int index)
+{
+    auto desc = engine.knownPlugins.getTypeForIdentifierString (identifier);
+    if (desc == nullptr) { showMessage ("Plug-in not found - try scanning again"); return false; }
+
+    juce::String err;
+    auto node = engine.createPlugin (*desc, err);
+    if (node == nullptr) { showMessage ("Couldn't load " + desc->name + ": " + err); return false; }
+
+    auto* added = engine.insert (std::move (node), chain, index);
+    if (added == nullptr) return false;
+    selectedId = added->id;
+    if (auto* pb = dynamic_cast<PluginBlock*> (added))
+        openPluginWindow (*pb);
+    return true;
+}
+
+//==============================================================================
+enum AddIds
+{
+    addNam = 1, addIr, addGate, addComp, addEq, addGain,
+    addSplit2 = 10, addSplit3, addXover, addStereo, addScan = 20, addPluginBase = 1000, insertOffset = 50000
+};
+
+void RigsmithEditor::populateAddMenu (juce::PopupMenu& m, int o)
+{
+    m.addSectionHeader ("Amp & cab");
+    m.addItem (o + addNam, "NAM Amp");
+    m.addItem (o + addIr, "Cab IR");
+    m.addSectionHeader ("Built-in");
+    m.addItem (o + addGate, "Noise Gate");
+    m.addItem (o + addComp, "Compressor");
+    m.addItem (o + addEq, "Studio EQ");
+    m.addItem (o + addGain, "Volume / Pan");
+    m.addSectionHeader ("Routing");
+    m.addItem (o + addSplit2, "Split - 2 paths");
+    m.addItem (o + addSplit3, "Split - 3 paths");
+    m.addItem (o + addXover, "Crossover - lows / mids / highs");
+    m.addItem (o + addStereo, "Stereo L/R - dual amp");
+    m.addSectionHeader ("VST3");
+
+    auto types = engine.knownPlugins.getTypes();
+    if (types.isEmpty())
+    {
+        m.addItem (o + addScan, "Scan for VST3 plug-ins...");
+        return;
+    }
+
+    std::map<juce::String, juce::PopupMenu> byMaker;
+    for (int i = 0; i < types.size(); ++i)
+        if (! types[i].isInstrument)
+            byMaker[types[i].manufacturerName.isEmpty() ? juce::String ("Other") : types[i].manufacturerName]
+                .addItem (o + addPluginBase + i, types[i].name);
+    for (auto& [maker, sub] : byMaker)
+        m.addSubMenu (maker, sub);
+    m.addSeparator();
+    m.addItem (o + addScan, "Scan for new plug-ins...");
+}
+
+void RigsmithEditor::handleAdd (int r, const juce::String& chainId, int index)
+{
+    auto* chain = chainById (chainId);
+    if (r <= 0 || chain == nullptr) return;
+
+    std::unique_ptr<Node> n;
+    switch (r)
+    {
+        case addNam:  n = engine.createNode (NodeType::Nam); break;
+        case addIr:   n = engine.createNode (NodeType::Ir); break;
+        case addGate: n = engine.createNode (NodeType::Gate); break;
+        case addComp: n = engine.createNode (NodeType::Comp); break;
+        case addEq:   n = engine.createNode (NodeType::Eq); break;
+        case addGain: n = engine.createNode (NodeType::Gain); break;
+        case addScan: showPluginScanner(); return;
+        case addSplit2: case addSplit3: case addXover: case addStereo:
+        {
+            auto* s = engine.addSplit (*chain, index, r == addSplit2 || r == addStereo ? 2 : 3);
+            if (s == nullptr) return;
+            if (r == addXover)  s->setMode (SplitMode::Crossover);
+            if (r == addStereo) s->setMode (SplitMode::Stereo);
+            // pre-fill each path with an amp + cab so it makes sound straight away
+            if (r != addXover)
+                for (auto& b : s->branches)
+                {
+                    engine.insert (engine.createNode (NodeType::Nam), *b->chain, -1);
+                    engine.insert (engine.createNode (NodeType::Ir), *b->chain, -1);
+                }
+            engine.storeScene();
+            selectedId = s->id;
+            return;
+        }
+        default:
+        {
+            auto types = engine.knownPlugins.getTypes();
+            const int i = r - addPluginBase;
+            if (juce::isPositiveAndBelow (i, types.size()))
+                insertPlugin (types[i].createIdentifierString(), *chain, index);
+            return;
+        }
+    }
+
+    if (n != nullptr)
+        if (auto* added = engine.insert (std::move (n), *chain, index))
+        {
+            selectedId = added->id;
+            if (added->getType() == NodeType::Nam || added->getType() == NodeType::Ir)
+                chooseFileFor (*added);
+        }
+}
+
+void RigsmithEditor::showAddMenu (Chain& chain, int index, juce::Component* anchor)
+{
+    juce::PopupMenu m;
+    populateAddMenu (m, 0);
+    const auto chainId = chain.id;
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor),
+                     [this, chainId, index] (int r) { handleAdd (r, chainId, index); });
+}
+
+void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
+{
+    const auto id = node.id;
+    auto* split = dynamic_cast<Split*> (&node);
+    auto loc = engine.locate (id);
+
+    juce::PopupMenu m;
+    if (node.getType() == NodeType::Nam)    m.addItem (1, "Load model...");
+    if (node.getType() == NodeType::Ir)     m.addItem (1, "Load IR...");
+    if (node.getType() == NodeType::Plugin) m.addItem (1, "Open plug-in window");
+    m.addItem (2, "Bypass", true, node.bypassed.load());
+    m.addItem (8, "MIDI learn: bypass footswitch");
+    m.addSeparator();
+    if (split != nullptr)
+    {
+        m.addItem (20, "Add path", (int) split->branches.size() < kMaxBranches);
+        juce::PopupMenu modes;
+        for (int i = 0; i < 4; ++i)
+            modes.addItem (21 + i, splitModeName ((SplitMode) i), true, (int) split->getMode() == i);
+        m.addSubMenu ("Mode", modes);
+        m.addItem (26, "MIDI learn: A/B blend (expression pedal)", split->branches.size() >= 2);
+        m.addItem (25, "Remove split, keep path A");
+    }
+    else
+    {
+        m.addItem (4, "Wrap in split (2 paths)");
+        m.addItem (5, "Wrap in split (3 paths)");
+    }
+    m.addItem (3, "Duplicate");
+    m.addItem (6, "Move left", loc.index > 0);
+    m.addItem (7, "Move right", loc.chain != nullptr && loc.index < (int) loc.chain->nodes.size() - 1);
+
+    juce::PopupMenu insertBefore;
+    populateAddMenu (insertBefore, insertOffset);
+    m.addSubMenu ("Insert before", insertBefore);
+    m.addSeparator();
+    m.addItem (9, "Remove");
+
+    const auto chainId = loc.chain != nullptr ? loc.chain->id : juce::String();
+    const int index = loc.index;
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor), [this, id, chainId, index] (int r)
+    {
+        auto* n = engine.findNode (id);
+        if (n == nullptr || r == 0) return;
+        if (r >= insertOffset)
+        {
+            handleAdd (r - insertOffset, chainId, index);
+            return;
+        }
+        auto* s = dynamic_cast<Split*> (n);
+        auto* chain = chainById (chainId);
+        switch (r)
+        {
+            case 1: openNode (*n); break;
+            case 2: n->bypassed = ! n->bypassed.load(); engine.storeScene(); engine.markDirty(); break;
+            case 3: if (auto* d = engine.duplicate (id)) selectedId = d->id; break;
+            case 4: engine.wrapInSplit (id, 2); break;
+            case 5: engine.wrapInSplit (id, 3); break;
+            case 6: if (chain != nullptr) engine.move (id, *chain, index - 1); break;
+            case 7: if (chain != nullptr) engine.move (id, *chain, index + 2); break;
+            case 8: { MidiMapping mm; mm.target = MidiMapping::Target::Bypass; mm.nodeId = id; engine.startLearn (mm); break; }
+            case 9: engine.remove (id); break;
+            case 20: if (s) engine.addBranch (*s); break;
+            case 21: case 22: case 23: case 24:
+                if (s) { s->setMode ((SplitMode) (r - 21)); engine.storeScene(); engine.markDirty(); inspector.setNode (s); }
+                break;
+            case 25: if (s) engine.unwrapSplit (*s); break;
+            case 26: { MidiMapping mm; mm.target = MidiMapping::Target::Blend; mm.nodeId = id; engine.startLearn (mm); break; }
+            default: break;
+        }
+        graph.repaint();
+    });
+}
+
+void RigsmithEditor::showBranchMenu (Split& split, int branch, juce::Component* anchor)
+{
+    if (! juce::isPositiveAndBelow (branch, (int) split.branches.size())) return;
+    auto& b = *split.branches[(size_t) branch];
+    const auto id = split.id;
+
+    juce::PopupMenu m;
+    m.addSectionHeader ("Path " + juce::String::charToString ((juce::juce_wchar) ('A' + branch)));
+    m.addItem (1, "Mute", true, b.mute.load());
+    m.addItem (3, "Solo");
+    m.addItem (2, "Invert polarity", true, b.phase.load());
+    m.addItem (4, "Pan left", true, b.pan.load() < -0.99f);
+    m.addItem (5, "Pan centre", true, std::abs (b.pan.load()) < 0.01f);
+    m.addItem (6, "Pan right", true, b.pan.load() > 0.99f);
+    m.addItem (7, "MIDI learn: path level");
+    m.addSeparator();
+    m.addItem (8, "Add path", (int) split.branches.size() < kMaxBranches);
+    m.addItem (9, "Remove this path", split.branches.size() > 1);
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor), [this, id, branch] (int r)
+    {
+        auto* s = dynamic_cast<Split*> (engine.findNode (id));
+        if (s == nullptr || r == 0 || ! juce::isPositiveAndBelow (branch, (int) s->branches.size())) return;
+        auto& br = *s->branches[(size_t) branch];
+        switch (r)
+        {
+            case 1: br.mute = ! br.mute.load(); break;
+            case 2: br.phase = ! br.phase.load(); break;
+            case 3: for (int i = 0; i < (int) s->branches.size(); ++i) s->branches[(size_t) i]->mute = i != branch; break;
+            case 4: br.pan = -1.0f; break;
+            case 5: br.pan = 0.0f; break;
+            case 6: br.pan = 1.0f; break;
+            case 7: { MidiMapping mm; mm.target = MidiMapping::Target::BranchLevel; mm.nodeId = id; mm.index = branch; engine.startLearn (mm); return; }
+            case 8: engine.addBranch (*s); return;
+            case 9: engine.removeBranch (*s, branch); return;
+            default: return;
+        }
+        engine.storeScene();
+        engine.markDirty();
+        graph.repaint();
+    });
+}
+
+//==============================================================================
+void RigsmithEditor::showPresetMenu()
+{
+    auto files = engine.getPresetFiles();
+    juce::PopupMenu m;
+    m.addItem (1, "Save");
+    m.addItem (2, "Save as...");
+    m.addItem (3, "New rig");
+    m.addItem (4, "Open preset file...");
+    m.addItem (5, "Show presets folder");
+    m.addSeparator();
+    if (files.isEmpty())
+        m.addItem (-1, "No presets yet - save one!", false);
+
+    std::map<juce::String, juce::PopupMenu> folders;
+    const auto root = engine.getPresetFolder();
+    for (int i = 0; i < files.size(); ++i)
+    {
+        const bool current = files[i] == engine.presetFile;
+        if (files[i].getParentDirectory() == root)
+            m.addItem (100 + i, files[i].getFileNameWithoutExtension(), true, current);
+        else
+            folders[files[i].getParentDirectory().getFileName()].addItem (100 + i, files[i].getFileNameWithoutExtension(), true, current);
+    }
+    for (auto& [name, sub] : folders)
+        m.addSubMenu (name, sub);
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&header.presetButton), [this, files] (int r)
+    {
+        if (r == 1) savePreset (false);
+        else if (r == 2) savePreset (true);
+        else if (r == 3) { engine.loadDefaultRig(); selectedId.clear(); }
+        else if (r == 4)
+        {
+            chooser = std::make_unique<juce::FileChooser> ("Open preset", engine.getPresetFolder(), "*.rig");
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [this] (const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) engine.loadPreset (fc.getResult()); });
+        }
+        else if (r == 5) engine.getPresetFolder().startAsProcess();
+        else if (r >= 100 && r - 100 < files.size()) engine.loadPreset (files[r - 100]);
+    });
+}
+
+void RigsmithEditor::savePreset (bool askForName)
+{
+    if (! askForName && engine.presetFile.existsAsFile())
+    {
+        engine.savePreset (engine.presetFile);
+        return;
+    }
+
+    auto* w = new juce::AlertWindow ("Save preset", "Give this rig a name", juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", engine.presetName == "Init Rig" ? juce::String() : engine.presetName, "Name");
+    w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int result)
+    {
+        if (result != 1) return;
+        const auto name = juce::File::createLegalFileName (w->getTextEditorContents ("name").trim());
+        if (name.isEmpty()) return;
+        const auto f = engine.getPresetFolder().getChildFile (name + ".rig");
+        if (f.existsAsFile())
+        {
+            juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Replace preset?",
+                "A preset called \"" + name + "\" already exists.", "Replace", "Cancel", this,
+                juce::ModalCallbackFunction::create ([this, f] (int ok) { if (ok) engine.savePreset (f); }));
+        }
+        else
+        {
+            engine.savePreset (f);
+        }
+    }), true);
+}
+
+void RigsmithEditor::showSceneMenu (int scene)
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Scene " + engine.sceneNames[scene]);
+    m.addItem (1, "Rename...");
+    m.addItem (2, "MIDI learn: select this scene");
+    m.addItem (3, "Copy current sound to this scene", scene != engine.getScene());
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&header.scenes[scene]), [this, scene] (int r)
+    {
+        if (r == 1)
+        {
+            auto* w = new juce::AlertWindow ("Rename scene", {}, juce::MessageBoxIconType::NoIcon, this);
+            w->addTextEditor ("name", engine.sceneNames[scene]);
+            w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, scene] (int res)
+            {
+                if (res == 1)
+                {
+                    engine.sceneNames[scene] = w->getTextEditorContents ("name").substring (0, 8).trim();
+                    if (engine.sceneNames[scene].isEmpty()) engine.sceneNames[scene] = juce::String::charToString ((juce::juce_wchar) ('A' + scene));
+                    engine.markDirty();
+                }
+            }), true);
+        }
+        else if (r == 2)
+        {
+            MidiMapping mm; mm.target = MidiMapping::Target::Scene; mm.index = scene;
+            engine.startLearn (mm);
+        }
+        else if (r == 3)
+        {
+            engine.copySceneTo (scene);
+            showMessage ("Copied scene " + engine.sceneNames[engine.getScene()] + " to " + engine.sceneNames[scene]);
+        }
+    });
+}
+
+void RigsmithEditor::showMainMenu()
+{
+    juce::PopupMenu m;
+    if (processor.isStandalone())
+        m.addItem (1, "Audio / MIDI settings...");
+    m.addItem (2, "Scan VST3 plug-ins...");
+    m.addSeparator();
+
+    juce::PopupMenu input;
+    const juce::StringArray inputs { "Input 1 (left)", "Input 2 (right)", "Inputs 1 + 2 summed", "Stereo" };
+    for (int i = 0; i < inputs.size(); ++i)
+        input.addItem (10 + i, inputs[i], true, engine.inputMode.load() == i);
+    m.addSubMenu ("Guitar input", input);
+    m.addItem (3, "Output safety limiter", true, engine.limiterOn.load());
+    m.addItem (4, "Tuner", true, engine.tunerActive.load());
+
+    juce::PopupMenu midi;
+    for (int i = 0; i < (int) engine.mappings.size(); ++i)
+    {
+        const auto& mm = engine.mappings[(size_t) i];
+        juce::PopupMenu one;
+        one.addItem (300 + i, "Latching switch (follow on/off)", true, mm.latching);
+        one.addItem (200 + i, "Remove");
+        midi.addSubMenu ("CC " + juce::String (mm.cc) + "  ->  " + engine.describe (mm), one);
+    }
+    if (! engine.mappings.empty()) midi.addSeparator();
+    midi.addItem (5, "Learn: next preset");
+    midi.addItem (6, "Learn: previous preset");
+    midi.addItem (7, "Learn: tuner on/off");
+    midi.addItem (8, "Learn: master volume (expression)");
+    midi.addSeparator();
+    midi.addItem (9, "Tip: right-click any block, knob, path or scene to MIDI-learn it", false);
+    m.addSubMenu ("MIDI mappings", midi);
+
+    m.addSeparator();
+    m.addItem (15, "Keyboard shortcuts");
+    m.addItem (16, "About Rigsmith");
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&header.menu), [this] (int r)
+    {
+        auto learn = [this] (MidiMapping::Target t) { MidiMapping mm; mm.target = t; engine.startLearn (mm); };
+        switch (r)
+        {
+            case 1:
+               #if RIGSMITH_HAS_STANDALONE_HOLDER
+                if (auto* h = juce::StandalonePluginHolder::getInstance()) h->showAudioSettingsDialog();
+               #endif
+                break;
+            case 2: showPluginScanner(); break;
+            case 3: engine.limiterOn = ! engine.limiterOn.load(); break;
+            case 4: engine.tunerActive = ! engine.tunerActive.load(); updateTuner(); break;
+            case 5: learn (MidiMapping::Target::PresetNext); break;
+            case 6: learn (MidiMapping::Target::PresetPrev); break;
+            case 7: learn (MidiMapping::Target::Tuner); break;
+            case 8: learn (MidiMapping::Target::MasterVolume); break;
+            case 15:
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Keyboard shortcuts",
+                    "1-4   Scenes A-D\n"
+                    "Space   Bypass selected block\n"
+                    "Delete   Remove selected block\n"
+                    "Ctrl+D   Duplicate selected block\n"
+                    "Ctrl+S   Save preset\n"
+                    "Page Up / Down   Previous / next preset\n"
+                    "T   Tuner\n"
+                    "Esc   Close tuner / cancel MIDI learn", "OK", this);
+                break;
+            case 16:
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Rigsmith " JucePlugin_VersionString,
+                    "A standalone guitar rig and VST3 host built around Neural Amp Modeler.\n\n"
+                    "NAM core by Steven Atkinson (MIT). Built with JUCE (AGPLv3).\n"
+                    "github.com/brown111723/rigsmith", "OK", this);
+                break;
+            default:
+                if (r >= 10 && r < 14) engine.inputMode = r - 10;
+                else if (r >= 300) { auto i = (size_t) (r - 300); if (i < engine.mappings.size()) { engine.mappings[i].latching = ! engine.mappings[i].latching; engine.markDirty(); } }
+                else if (r >= 200) engine.removeMapping (r - 200);
+                break;
+        }
+    });
+}
+
+void RigsmithEditor::showPluginScanner()
+{
+    juce::DialogWindow::LaunchOptions o;
+    auto* list = new juce::PluginListComponent (engine.formatManager, engine.knownPlugins, engine.getDeadMansPedalFile(),
+                                                engine.props.getUserSettings(), true);
+    list->setSize (760, 540);
+    o.content.setOwned (list);
+    o.dialogTitle = "VST3 plug-ins - use Options to scan";
+    o.dialogBackgroundColour = panel;
+    o.useNativeTitleBar = true;
+    o.resizable = true;
+    o.componentToCentreAround = this;
+    o.launchAsync();
+}
+
+//==============================================================================
+bool RigsmithEditor::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (auto& f : files)
+        if (juce::File (f).hasFileExtension ("nam;wav;aif;aiff;flac;rig"))
+            return true;
+    return false;
+}
+
+void RigsmithEditor::filesDropped (const juce::StringArray& files, int x, int y)
+{
+    const auto pt = graph.getLocalPoint (this, juce::Point<int> (x, y));
+    for (auto& path : files)
+    {
+        const juce::File f (path);
+        if (f.hasFileExtension ("rig")) { engine.loadPreset (f); return; }
+        if (viewport.getBounds().contains (x, y)) graph.dropFile (f, pt);
+        else loadFileInto (nullptr, &engine.getRoot(), -1, f);
+    }
+}
+
+bool RigsmithEditor::keyPressed (const juce::KeyPress& k)
+{
+    const auto c = k.getTextCharacter();
+    if (c >= '1' && c <= '4') { engine.setScene (c - '1'); return true; }
+    if (k == juce::KeyPress::escapeKey)
+    {
+        if (engine.isLearning()) engine.cancelLearn();
+        engine.tunerActive = false;
+        updateTuner();
+        return true;
+    }
+    if (c == 't' || c == 'T') { engine.tunerActive = ! engine.tunerActive.load(); updateTuner(); return true; }
+    if (k == juce::KeyPress::pageUpKey)   { engine.stepPreset (-1); return true; }
+    if (k == juce::KeyPress::pageDownKey) { engine.stepPreset (1); return true; }
+    if (k == juce::KeyPress ('s', juce::ModifierKeys::commandModifier, 0)) { savePreset (false); return true; }
+
+    if (auto* n = engine.findNode (selectedId))
+    {
+        if (k == juce::KeyPress::spaceKey) { n->bypassed = ! n->bypassed.load(); engine.storeScene(); engine.markDirty(); graph.repaint(); return true; }
+        if (k == juce::KeyPress::deleteKey || k == juce::KeyPress::backspaceKey) { engine.remove (selectedId); return true; }
+        if (k == juce::KeyPress ('d', juce::ModifierKeys::commandModifier, 0)) { if (auto* d = engine.duplicate (selectedId)) selectedId = d->id; return true; }
+    }
+    return false;
+}
