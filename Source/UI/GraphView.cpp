@@ -301,16 +301,39 @@ void BlockCard::itemDropped (const SourceDetails& d)
 }
 
 //==============================================================================
-AddButton::AddButton (GraphHost& h, Chain& c, int i) : host (h), chain (c), index (i)
+AddButton::AddButton (GraphHost& h, Chain& c, int i, bool small) : host (h), chain (c), index (i), compact (small)
 {
     setTitle ("Add block");
+    setTooltip (compact ? "Add a block here" : "Add a block, split or plug-in");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
 void AddButton::paint (juce::Graphics& g)
 {
-    const auto r = getLocalBounds().toFloat().reduced (2.0f);
     const bool over = isMouseOver();
+    if (compact)
+    {
+        // a quiet node on the wire that wakes up when you point at it
+        const auto c = getLocalBounds().toFloat().getCentre();
+        const float rad = over ? 10.0f : 7.0f;
+        const auto r = juce::Rectangle<float> (rad * 2.0f, rad * 2.0f).withCentre (c);
+        if (over)
+        {
+            g.setColour (accent.withAlpha (0.25f));
+            g.fillEllipse (r.expanded (3.0f));
+        }
+        g.setColour (over ? cardHi : bg);
+        g.fillEllipse (r);
+        g.setColour (over ? accent : borderHi);
+        g.drawEllipse (r.reduced (0.5f), over ? 1.6f : 1.1f);
+        const float arm = over ? 5.0f : 3.5f, th = over ? 2.0f : 1.4f;
+        g.setColour (over ? accent : muted);
+        g.fillRoundedRectangle (c.x - arm, c.y - th * 0.5f, arm * 2.0f, th, th * 0.5f);
+        g.fillRoundedRectangle (c.x - th * 0.5f, c.y - arm, th, arm * 2.0f, th * 0.5f);
+        return;
+    }
+
+    const auto r = getLocalBounds().toFloat().reduced (2.0f);
     g.setColour (over ? cardHi : bg);
     g.fillEllipse (r);
     juce::Path circle;
@@ -344,6 +367,8 @@ ChainView::ChainView (GraphHost& h, Chain& c, juce::Colour wire, std::function<f
         items.add (item);
         addAndMakeVisible (item);
     }
+    for (int i = 0; i < items.size(); ++i)
+        addAndMakeVisible (gapButtons.add (new AddButton (host, chain, i, true)));
     addButton = std::make_unique<AddButton> (host, chain, (int) chain.nodes.size());
     addAndMakeVisible (*addButton);
 }
@@ -364,9 +389,12 @@ juce::Point<int> ChainView::preferredSize() const
 void ChainView::resized()
 {
     int x = gap;
-    for (auto* it : items)
+    for (int i = 0; i < items.size(); ++i)
     {
+        auto* it = items[i];
         const auto p = it->preferredSize();
+        // the small + sits on the wire just before the arrowhead
+        gapButtons[i]->setBounds (x - gap / 2 - miniSize / 2 - 4, getHeight() / 2 - miniSize / 2, miniSize, miniSize);
         it->setBounds (x, (getHeight() - p.y) / 2, p.x, p.y);
         x += p.x + gap;
     }

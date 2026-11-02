@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.4.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -105,6 +105,7 @@ target_sources(Rigsmith PRIVATE
     Source/Engine/Tuner.cpp
     Source/Engine/Fx.cpp
     Source/Engine/Randomiser.cpp
+    Source/Engine/IniFile.cpp
     Source/UI/Theme.cpp
     Source/UI/Icons.cpp
     Source/UI/GraphView.cpp
@@ -179,7 +180,8 @@ if(RIGSMITH_TESTS)
         Source/Engine/Engine.cpp
         Source/Engine/Tuner.cpp
         Source/Engine/Fx.cpp
-        Source/Engine/Randomiser.cpp)
+        Source/Engine/Randomiser.cpp
+    Source/Engine/IniFile.cpp)
     target_include_directories(RigsmithTests PRIVATE Source)
     target_compile_definitions(RigsmithTests PRIVATE
         JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_XINPUT=0

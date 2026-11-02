@@ -32,6 +32,12 @@ Library::Library (GraphHost& h) : host (h)
     list.setOutlineThickness (0);
     addAndMakeVisible (list);
 
+    list.setMultipleSelectionEnabled (true);
+
+    diceButton.setTooltip ("Which of these the dice can pick: tick or untick everything shown (use Search to narrow it down first)");
+    diceButton.onClick = [this] { showDiceMenu(); };
+    addAndMakeVisible (diceButton);
+
     footer.setFont (font (11.0f));
     footer.setColour (juce::Label::textColourId, muted);
     addAndMakeVisible (footer);
@@ -125,6 +131,11 @@ void Library::applyFilter()
         f = juce::String (rows.size()) + " files in " + juce::String (paths.getNumPaths()) + (paths.getNumPaths() == 1 ? " folder" : " folders");
     }
     footer.setText (f, juce::dontSendNotification);
+
+    int included = 0;
+    for (int i = 0; i < rows.size(); ++i) included += isIncluded (i) ? 1 : 0;
+    diceButton.setButtonText (juce::String (included) + " / " + juce::String (rows.size()) + " in dice");
+    diceButton.setColour (juce::TextButton::textColourOffId, included < rows.size() ? accent : muted);
 }
 
 int Library::getNumRows() { return rows.size(); }
@@ -158,17 +169,152 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
         c = tab == Models ? categoryColour (Category::Amp) : categoryColour (Category::Cab);
     }
 
-    g.setColour (c);
+    const bool in = isIncluded (row);
+    if (! in) sub = "Not in dice - " + sub;
+
+    g.setColour (in ? c : c.withAlpha (0.35f));
     g.fillRoundedRectangle (12.0f, (float) h * 0.5f - 9.0f, 4.0f, 18.0f, 2.0f);
-    g.setColour (text);
+    g.setColour (in ? text : text.withAlpha (0.55f));
     g.setFont (font (13.0f, true));
-    g.drawText (name, 24, h / 2 - 17, w - 30, 18, juce::Justification::centredLeft, true);
-    g.setColour (muted);
+    g.drawText (name, 24, h / 2 - 17, w - 66, 18, juce::Justification::centredLeft, true);
+    g.setColour (muted.withAlpha (in ? 1.0f : 0.8f));
     g.setFont (font (11.0f));
-    g.drawText (sub, 24, h / 2 + 2, w - 30, 15, juce::Justification::centredLeft, true);
+    g.drawText (sub, 24, h / 2 + 2, w - 66, 15, juce::Justification::centredLeft, true);
+
+    // the randomise tick: a little die face when included, an empty box when not
+    const auto t = tickArea (w, h).toFloat();
+    if (in)
+    {
+        g.setColour (accent.withAlpha (0.18f));
+        g.fillRoundedRectangle (t, 5.0f);
+        g.setColour (accent);
+        g.drawRoundedRectangle (t.reduced (0.5f), 5.0f, 1.3f);
+        juce::Path tick;
+        tick.startNewSubPath (t.getX() + 5.0f, t.getCentreY() + 0.5f);
+        tick.lineTo (t.getX() + 8.5f, t.getBottom() - 5.5f);
+        tick.lineTo (t.getRight() - 4.5f, t.getY() + 5.5f);
+        g.strokePath (tick, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+    else
+    {
+        g.setColour (borderHi);
+        g.drawRoundedRectangle (t.reduced (0.5f), 5.0f, 1.2f);
+    }
 }
 
-void Library::listBoxItemDoubleClicked (int row, const juce::MouseEvent&) { activate (row); }
+void Library::listBoxItemDoubleClicked (int row, const juce::MouseEvent& e)
+{
+    if (! tickArea (list.getVisibleRowWidth(), list.getRowHeight()).expanded (6).contains (e.getPosition()))
+        activate (row);
+}
+
+void Library::listBoxItemClicked (int row, const juce::MouseEvent& e)
+{
+    if (! juce::isPositiveAndBelow (row, rows.size())) return;
+    if (e.mods.isPopupMenu()) { showRowMenu (row); return; }
+    if (tickArea (list.getVisibleRowWidth(), list.getRowHeight()).expanded (6).contains (e.getPosition()))
+        setIncluded (rowsFor (row), ! isIncluded (row));
+}
+
+bool Library::isIncluded (int row) const
+{
+    if (! juce::isPositiveAndBelow (row, rows.size())) return true;
+    auto& engine = host.getEngine();
+    return tab == Plugins ? ! engine.isRandomExcluded (plugins[rows[row]])
+                          : ! engine.isRandomExcluded (files[rows[row]]);
+}
+
+juce::Array<int> Library::rowsFor (int clicked) const
+{
+    juce::Array<int> out;
+    if (list.isRowSelected (clicked) && list.getNumSelectedRows() > 1)
+        for (int i = 0; i < list.getNumSelectedRows(); ++i) out.add (list.getSelectedRow (i));
+    else
+        out.add (clicked);
+    return out;
+}
+
+void Library::setIncluded (const juce::Array<int>& which, bool include)
+{
+    auto& engine = host.getEngine();
+    if (tab == Plugins)
+    {
+        juce::Array<juce::PluginDescription> d;
+        for (int r : which) if (juce::isPositiveAndBelow (r, rows.size())) d.add (plugins[rows[r]]);
+        engine.setRandomExcluded (d, ! include);
+    }
+    else
+    {
+        juce::Array<juce::File> f;
+        for (int r : which) if (juce::isPositiveAndBelow (r, rows.size())) f.add (files[rows[r]]);
+        engine.setRandomExcluded (f, ! include);
+    }
+    applyFilter();   // refreshes the counts
+}
+
+void Library::showRowMenu (int row)
+{
+    const auto which = rowsFor (row);
+    const bool in = isIncluded (row);
+    const auto what = which.size() > 1 ? juce::String (which.size()) + " selected" : juce::String ("this");
+
+    juce::PopupMenu m;
+    m.addItem (1, in ? "Leave " + what + " out of the dice" : "Let the dice pick " + what);
+    juce::String folderName, maker;
+    if (tab == Plugins)
+    {
+        maker = plugins[rows[row]].manufacturerName;
+        if (maker.isNotEmpty())
+        {
+            m.addItem (2, "Leave everything by " + maker + " out of the dice");
+            m.addItem (3, "Let the dice pick everything by " + maker);
+        }
+    }
+    else
+    {
+        folderName = files[rows[row]].getParentDirectory().getFileName();
+        m.addItem (2, "Leave everything in \"" + folderName + "\" out of the dice");
+        m.addItem (3, "Let the dice pick everything in \"" + folderName + "\"");
+        m.addSeparator();
+        m.addItem (4, "Show in folder");
+    }
+    m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [this, which, in, row] (int r)
+    {
+        if (! juce::isPositiveAndBelow (row, rows.size())) return;
+        if (r == 1) setIncluded (which, ! in);
+        else if (r == 2 || r == 3)
+        {
+            juce::Array<int> same;
+            for (int i = 0; i < rows.size(); ++i)
+            {
+                const bool match = tab == Plugins ? plugins[rows[i]].manufacturerName == plugins[rows[row]].manufacturerName
+                                                  : files[rows[i]].getParentDirectory() == files[rows[row]].getParentDirectory();
+                if (match) same.add (i);
+            }
+            setIncluded (same, r == 3);
+        }
+        else if (r == 4) files[rows[row]].revealToUser();
+    });
+}
+
+void Library::showDiceMenu()
+{
+    const bool filtered = search.getText().trim().isNotEmpty();
+    const auto what = filtered ? juce::String ("matching \"") + search.getText().trim() + "\"" : juce::String ("in this list");
+    juce::PopupMenu m;
+    m.addSectionHeader ("Ticked items can be picked by the dice");
+    m.addItem (1, "Tick all " + juce::String (rows.size()) + " " + what);
+    m.addItem (2, "Untick all " + juce::String (rows.size()) + " " + what);
+    m.addSeparator();
+    m.addItem (3, "Tip: search first (e.g. \"RX\" or a folder name) to change just those", false);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&diceButton), [this] (int r)
+    {
+        if (r != 1 && r != 2) return;
+        juce::Array<int> all;
+        for (int i = 0; i < rows.size(); ++i) all.add (i);
+        setIncluded (all, r == 1);
+    });
+}
 
 void Library::activate (int row)
 {
@@ -189,8 +335,10 @@ juce::var Library::getDragSourceDescription (const juce::SparseSet<int>& selecte
 juce::String Library::getTooltipForRow (int row)
 {
     if (! juce::isPositiveAndBelow (row, rows.size())) return {};
-    if (tab == Plugins) return plugins[rows[row]].descriptiveName;
-    return files[rows[row]].getFullPathName();
+    const auto tip = isIncluded (row) ? "\nTicked: the dice can pick this (click the tick to leave it out)"
+                                      : "\nNot ticked: the dice never pick this";
+    if (tab == Plugins) return plugins[rows[row]].descriptiveName + tip;
+    return files[rows[row]].getFullPathName() + tip;
 }
 
 void Library::paint (juce::Graphics& g)
@@ -216,7 +364,9 @@ void Library::resized()
     searchRow.removeFromRight (6);
     search.setBounds (searchRow);
     r.removeFromTop (8);
-    footer.setBounds (r.removeFromBottom (28));
+    auto foot = r.removeFromBottom (32);
+    diceButton.setBounds (foot.removeFromRight (juce::jmin (130, foot.getWidth() / 2)).reduced (0, 3));
+    footer.setBounds (foot);
     list.setBounds (r.withTrimmedLeft (-12).withTrimmedRight (-12));
 }
 

@@ -11,16 +11,13 @@ SettingsPanel::SettingsPanel (Engine& e) : engine (e)
     setupSection (irs, "Cab IR folders", "Searched for .wav / .aif / .flac impulse responses");
     irs.list.setPath (engine.getPaths ("irPaths"));
 
-    auto* settings = engine.props.getUserSettings();
     for (auto* f : engine.formatManager.getFormats())
     {
         if (! f->canScanForPlugins() || f->getDefaultLocationsToSearch().getNumPaths() == 0) continue;
         auto* s = pluginSections.add (new Section());
         const auto name = f->getName() == "VST" ? juce::String ("VST2") : f->getName();
         setupSection (*s, name + " plug-in folders", "Scanned for " + name + " effects");
-        auto path = settings != nullptr ? juce::PluginListComponent::getLastSearchPath (*settings, *f) : juce::FileSearchPath();
-        if (path.getNumPaths() == 0) path = f->getDefaultLocationsToSearch();
-        s->list.setPath (path);
+        s->list.setPath (engine.getPluginPaths (*f));
         pluginFormats.add (f);
     }
 
@@ -34,7 +31,9 @@ SettingsPanel::SettingsPanel (Engine& e) : engine (e)
     addAndMakeVisible (vst2Note);
 
     autoCategorise.setToggleState (engine.getSetting ("autoCategorise", true), juce::dontSendNotification);
-    scanOnStartup.setToggleState (engine.getSetting ("scanOnStartup", true), juce::dontSendNotification);
+    scanOnStartup.setToggleState (engine.getSetting ("scanOnStartup", false), juce::dontSendNotification);
+    scanOnStartup.setTooltip ("Off: Rigsmith only scans the first time it runs (and whenever you click Scan). "
+                              "Your plug-in list is remembered either way.");
     addAndMakeVisible (autoCategorise);
     addAndMakeVisible (scanOnStartup);
     startFullScreen.setToggleState (engine.getSetting ("fullScreen", false), juce::dontSendNotification);
@@ -42,16 +41,24 @@ SettingsPanel::SettingsPanel (Engine& e) : engine (e)
     scanNow.onClick = [this] { if (onScanNow) onScanNow(); };
     addAndMakeVisible (scanNow);
 
-    setSize (720, 670 + pluginSections.size() * 150);
+    const auto ini = engine.ini.getFile();
+    iniNote.setFont (font (12.0f));
+    iniNote.setColour (juce::Label::textColourId, muted);
+    iniNote.setText ("Saved in " + ini.getFullPathName() + " - folders, preferences and the randomise ticks. "
+                     "Put a copy next to Rigsmith.exe to make a portable install.", juce::dontSendNotification);
+    addAndMakeVisible (iniNote);
+    showIni.onClick = [ini] { if (ini.existsAsFile()) ini.revealToUser(); else ini.getParentDirectory().startAsProcess(); };
+    addAndMakeVisible (showIni);
+
+    setSize (720, 720 + pluginSections.size() * 150);
 }
 
 SettingsPanel::~SettingsPanel()
 {
     engine.setPaths ("modelPaths", models.list.getPath());
     engine.setPaths ("irPaths", irs.list.getPath());
-    if (auto* settings = engine.props.getUserSettings())
-        for (int i = 0; i < pluginFormats.size(); ++i)
-            juce::PluginListComponent::setLastSearchPath (*settings, *pluginFormats[i], pluginSections[i]->list.getPath());
+    for (int i = 0; i < pluginFormats.size(); ++i)
+        engine.setPluginPaths (*pluginFormats[i], pluginSections[i]->list.getPath());
     engine.setSetting ("autoCategorise", autoCategorise.getToggleState());
     engine.setSetting ("scanOnStartup", scanOnStartup.getToggleState());
     engine.setSetting ("fullScreen", startFullScreen.getToggleState());
@@ -92,7 +99,12 @@ void SettingsPanel::resized()
     scanOnStartup.setBounds (r.removeFromTop (28));
     startFullScreen.setBounds (r.removeFromTop (28));
     r.removeFromTop (8);
-    scanNow.setBounds (r.removeFromTop (32).removeFromLeft (180));
+    auto buttons = r.removeFromTop (32);
+    scanNow.setBounds (buttons.removeFromLeft (180));
+    buttons.removeFromLeft (10);
+    showIni.setBounds (buttons.removeFromLeft (180));
+    r.removeFromTop (10);
+    iniNote.setBounds (r.removeFromTop (40));
 }
 
 } // namespace rig

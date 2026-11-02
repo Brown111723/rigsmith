@@ -86,11 +86,14 @@ private:
 };
 
 //==============================================================================
-class AddButton : public juce::Component
+class AddButton : public juce::Component,
+                  public juce::SettableTooltipClient
 {
 public:
-    AddButton (GraphHost&, Chain&, int index);
+    /** compact: the small + that sits on the wire between two blocks. */
+    AddButton (GraphHost&, Chain&, int index, bool compact = false);
     void paint (juce::Graphics&) override;
+    bool isCompact() const noexcept { return compact; }
     void mouseUp (const juce::MouseEvent&) override;
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
     void mouseExit (const juce::MouseEvent&) override { repaint(); }
@@ -99,6 +102,7 @@ private:
     GraphHost& host;
     Chain& chain;
     int index;
+    bool compact;
 };
 
 //==============================================================================
@@ -125,7 +129,8 @@ public:
     /** Handles a drag description ("node:", "file:", "plugin:") dropped at a position in this chain. */
     void dropAt (const juce::String& description, int index);
 
-    static constexpr int gap = 30;
+    static constexpr int gap = 46;
+    static constexpr int miniSize = 22;
 
 private:
     GraphHost& host;
@@ -134,6 +139,7 @@ private:
     std::function<float()> level;
     juce::OwnedArray<GraphItem> items;
     std::unique_ptr<AddButton> addButton;
+    juce::OwnedArray<AddButton> gapButtons;   // a small + before every block
     int dropIndex = -1;
 };
 

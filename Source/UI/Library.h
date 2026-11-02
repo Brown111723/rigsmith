@@ -4,7 +4,8 @@
 
 namespace rig
 {
-/** Right-hand browser: NAM models, cab IRs and scanned VST3s. Drag onto the rig or double-click. */
+/** Right-hand browser: NAM models, cab IRs and scanned VST3s. Drag onto the rig or double-click.
+    The tick on each row says whether the dice may pick it (saved in Rigsmith.ini). */
 class Library : public juce::Component,
                 private juce::ListBoxModel
 {
@@ -26,10 +27,19 @@ private:
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
     void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override;
     void returnKeyPressed (int row) override { activate (row); }
     void activate (int row);
     juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override;
     juce::String getTooltipForRow (int row) override;
+
+    // randomise ticks
+    bool isIncluded (int row) const;
+    void setIncluded (const juce::Array<int>& rowsToChange, bool include);
+    juce::Array<int> rowsFor (int clickedRow) const;   // the clicked row, or every selected row if it's one of them
+    void showRowMenu (int row);
+    void showDiceMenu();
+    static juce::Rectangle<int> tickArea (int w, int h) { return { w - 34, h / 2 - 10, 20, 20 }; }
 
     void setTab (Tab);
     void applyFilter();
@@ -42,6 +52,7 @@ private:
     juce::TextEditor search;
     juce::ListBox list;
     juce::Label footer;
+    juce::TextButton diceButton;
 
     juce::Array<juce::File> files;
     juce::Array<juce::PluginDescription> plugins;

@@ -11,6 +11,7 @@
 #include <functional>
 #include <array>
 #include <map>
+#include <set>
 #include <complex>
 
 namespace rig

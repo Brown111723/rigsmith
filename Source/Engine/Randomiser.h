@@ -50,6 +50,7 @@ private:
     juce::Random rng;
     juce::Array<juce::File> models, irs;
     juce::uint32 lastScan = 0;
+    int lastExclusions = -1;
 };
 
 } // namespace rig

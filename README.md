@@ -2,6 +2,8 @@
 
 A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flexible routing system and a VST3 host — shipped as both **`Rigsmith.exe`** and **`Rigsmith.vst3`** from one codebase.
 
+![The Dual Amp Rig starting point: gate, drive, two NAM + IR paths, then chorus, delay and reverb, with a + on every wire and randomise ticks in the library](docs/screenshot-dual.png)
+
 ![A delay selected: name, icon row and echo display on the left, every control on the right](docs/screenshot-v3.png)
 
 ![The OUT block selected: stereo meters, limiter gain reduction and history, master, width and brickwall ceiling](docs/screenshot-io.png)
@@ -39,9 +41,16 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - Utility: tuner, volume / pan
 - Displays: filter curves over a live pre/post spectrum, compressor transfer curves with the signal riding on them, waveshaper curves, LFO shapes, echo taps, reverb decay
 
+**Starting points** (top of the preset menu, and first in Page Up / Down)
+- **Init**: gate, amp, cab.
+- **Classic Rig**: gate → overdrive → NAM amp → cab IR → chorus → delay → plate reverb, the standard pedalboard order.
+- **Dual Amp Rig**: the same, with a split into two NAM + IR paths in parallel (panned a little apart, auto gain on the sum).
+- They keep the amp and cab you have loaded, or use the first ones in your library (the second amp is the next model in the same folder). Scenes come ready: **Clean**, **Crunch**, **Lead** and **Dry**.
+
 **Randomise** (dice icons)
 - **Whole rig** (dice, top bar; right-click for options): dynamics, drives, NAM amps picked from your model folders, cabs from your IR folders, modulation, delays and reverbs, sometimes as a 2- or 3-amp split. Musical ranges, levels never randomised.
 - **Lock** blocks you like (lock icon, or right-click) and they survive every roll.
+- **Ticks in the library** choose what the dice can pick: untick audio-repair plug-ins, test models or noisy IRs and they're never chosen. Shift/Ctrl-click to tick several at once, right-click for a whole folder or manufacturer, or search and use **"x / y in dice"** to change everything shown. Saved in `Rigsmith.ini`.
 - **Dice on each block** (bottom-right of its card): swaps it for a random block of the same kind (a delay becomes another delay or a delay plug-in, a NAM amp gets another model).
 - **Dice in the bottom panel**: randomises the selected block's settings.
 - More in the top dice's right-click menu: new blocks in the same layout, randomise every block's settings, include plug-ins, allow splits.
@@ -55,7 +64,10 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - Step through models and IRs in a folder with the `<` `>` buttons.
 - **Plug-in parameters in the panel**: every automatable parameter appears as a knob; right-click to pin your favourites.
 - **Auto-categorised, colour-coded plug-ins** (Dynamics, Drive, Amp, Cab, EQ, Filter, Modulation, Delay, Reverb, Pitch).
-- **Remembered folders**: several NAM, IR and plug-in folders, set once in **Menu → Settings & folders**. New plug-ins are picked up automatically at launch.
+- **Add anywhere**: a small **+** sits on the wire before every block, as well as the big one at the end of each chain.
+- **Remembered folders**: several NAM, IR and plug-in folders, set once in **Menu → Settings & folders**.
+- **`Rigsmith.ini`** holds your folders, preferences and randomise ticks, and is read every time Rigsmith starts. It's created on first run in `%APPDATA%\Rigsmith\` (the settings window has a **Show Rigsmith.ini** button). It's plain text, so it's safe to edit or back up, and a `Rigsmith.ini` next to `Rigsmith.exe` makes a **portable** copy. Older settings are brought across automatically.
+- **Plug-in scanning**: the first run scans for plug-ins. After that, Rigsmith opens straight away with the remembered list, unless you tick **Look for new plug-ins every time Rigsmith opens** (or click **Scan**).
 - Every dB readout is shown to one decimal place.
 - **More room**: drag the bar above the bottom panel to make it taller (double-click toggles), hide the library (`L`), and go **full screen** (`F11`, or open full screen every time in Settings).
 - **Init** is always the first preset; Page Up / Down steps from Init through your presets.
@@ -80,7 +92,7 @@ Every push builds on GitHub Actions. Open the **Actions** tab, pick the latest r
 To publish a GitHub Release, push a tag:
 
 ```
-git tag v0.4.0 && git push origin v0.4.0
+git tag v0.5.0 && git push origin v0.5.0
 ```
 
 ## Quick start
@@ -102,7 +114,8 @@ git tag v0.4.0 && git push origin v0.4.0
 | More options | Right-click any block, pill, scene or knob |
 | MIDI learn | Right-click a control, choose **MIDI learn**, then press a footswitch or move a pedal |
 | Switch scenes | Keys `1`–`4` |
-| Change presets | `Page Up` / `Page Down` |
+| Change presets | `Page Up` / `Page Down` (Init, Classic Rig, Dual Amp Rig, then yours) |
+| Add a block between two others | Click the small **+** on the wire |
 | Save | `Ctrl+S` |
 | Tuner | `T` |
 | Undo / redo | `Ctrl+Z` / `Ctrl+Y` |

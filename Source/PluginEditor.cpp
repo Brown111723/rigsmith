@@ -152,7 +152,8 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
 
     // once per run: pick up plug-ins installed since last time
     static bool scannedThisRun = false;
-    if (! scannedThisRun && engine.getSetting ("scanOnStartup", true))
+    // (the first run always looks; after that only if "scan on startup" is ticked)
+    if (! scannedThisRun && engine.shouldScanOnStartup())
     {
         scannedThisRun = true;
         juce::Timer::callAfterDelay (1500, [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
@@ -801,8 +802,12 @@ void RigsmithEditor::showPresetMenu()
 {
     auto files = engine.getPresetFiles();
     juce::PopupMenu m;
-    m.addItem (3, juce::String (Engine::initName) + "  (gate, amp, cab)", true, engine.isInit());
+    m.addSectionHeader ("Starting points");
+    const int fi = engine.getFactoryIndex();
+    for (int i = 0; i < Engine::getFactoryNames().size(); ++i)
+        m.addItem (50 + i, Engine::getFactoryNames()[i] + "  (" + Engine::getFactoryDescription (i) + ")", true, fi == i);
     m.addSeparator();
+    m.addSectionHeader ("Your presets");
     if (files.isEmpty())
         m.addItem (-1, "No presets yet - save one!", false);
 
@@ -828,7 +833,7 @@ void RigsmithEditor::showPresetMenu()
     {
         if (r == 1) savePreset (false);
         else if (r == 2) savePreset (true);
-        else if (r == 3) { engine.loadDefaultRig(); selectedId.clear(); }
+        else if (r >= 50 && r < 60) { engine.loadFactory (r - 50); selectedId.clear(); }
         else if (r == 4)
         {
             chooser = std::make_unique<juce::FileChooser> ("Open preset", engine.getPresetFolder(), "*.rig");
@@ -1047,14 +1052,11 @@ void RigsmithEditor::showSettings()
 
 void RigsmithEditor::scanForNewPlugins (bool always)
 {
-    auto* settings = engine.props.getUserSettings();
-    if (settings == nullptr) return;
     const auto& blacklist = engine.knownPlugins.getBlacklistedFiles();
     for (auto* f : engine.formatManager.getFormats())
     {
         if (! f->canScanForPlugins()) continue;
-        auto path = juce::PluginListComponent::getLastSearchPath (*settings, *f);
-        if (path.getNumPaths() == 0) path = f->getDefaultLocationsToSearch();
+        const auto path = engine.getPluginPaths (*f);   // the folders in Rigsmith.ini
         juce::StringArray fresh;
         for (auto& file : f->searchPathsForPlugins (path, true, false))
             if (! blacklist.contains (file) && ! engine.knownPlugins.isListingUpToDate (file, *f))
@@ -1065,6 +1067,7 @@ void RigsmithEditor::scanForNewPlugins (bool always)
             list->scanFor (*f, fresh);
         return;   // one format at a time; the rest are found next launch or with Scan
     }
+    engine.markPluginsScanned();
     if (always) showMessage ("No new plug-ins found");
 }
 
@@ -1133,13 +1136,12 @@ bool RigsmithEditor::keyPressed (const juce::KeyPress& k)
 //==============================================================================
 int RigsmithEditor::getIntSetting (const juce::String& key, int def) const
 {
-    if (auto* st = engine.props.getUserSettings()) return st->getIntValue (key, def);
-    return def;
+    return engine.getIntSetting (key, def);
 }
 
 void RigsmithEditor::setIntSetting (const juce::String& key, int value)
 {
-    if (auto* st = engine.props.getUserSettings()) { st->setValue (key, value); st->saveIfNeeded(); }
+    engine.setIntSetting (key, value);
 }
 
 void RigsmithEditor::setLibraryVisible (bool v)

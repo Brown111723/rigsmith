@@ -48,7 +48,12 @@ void Header::refresh (const Tuner::Reading& r, const juce::String& s)
     for (int i = 0; i < kNumScenes; ++i)
     {
         scenes[i].setToggleState (engine.getScene() == i, juce::dontSendNotification);
-        if (scenes[i].getButtonText() != engine.sceneNames[i]) scenes[i].setButtonText (engine.sceneNames[i]);
+        if (scenes[i].getButtonText() != engine.sceneNames[i])
+        {
+            scenes[i].setButtonText (engine.sceneNames[i]);
+            scenes[i].setTooltip ("Scene " + engine.sceneNames[i] + " (key " + juce::String (i + 1) + ", right-click for options)");
+            resized();   // named scenes ("Crunch") get wider buttons
+        }
     }
     undo.setEnabled (engine.canUndo());
     redo.setEnabled (engine.canRedo());
@@ -99,7 +104,12 @@ void Header::resized()
 
     // left: logo (full name only if there is room for everything else), presets, undo, scenes
     const int textW = juce::GlyphArrangement::getStringWidthInt (logoFont(), logoText) + 14;
-    const int sceneW = kNumScenes * 49;
+    int sceneWidths[kNumScenes], sceneW = 0;
+    for (int i = 0; i < kNumScenes; ++i)
+    {
+        sceneWidths[i] = juce::jlimit (44, 96, juce::GlyphArrangement::getStringWidthInt (font (13.0f, true), scenes[i].getButtonText()) + 22);
+        sceneW += sceneWidths[i] + 5;
+    }
     const int fixed = bh + 4 + 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + sceneW;
     const bool showName = r.getWidth() - (30 + textW + 10) - fixed >= 150;
     logoArea = r.removeFromLeft (showName ? 30 + textW : 30);
@@ -119,7 +129,7 @@ void Header::resized()
     redo.setBounds (r.removeFromLeft (bh));
     r.removeFromLeft (14);
 
-    for (auto& s : scenes) { s.setBounds (r.removeFromLeft (44)); r.removeFromLeft (5); }
+    for (int i = 0; i < kNumScenes; ++i) { scenes[i].setBounds (r.removeFromLeft (sceneWidths[i])); r.removeFromLeft (5); }
 }
 
 void Header::mouseUp (const juce::MouseEvent&) {}

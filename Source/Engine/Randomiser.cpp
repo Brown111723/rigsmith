@@ -56,14 +56,16 @@ Category Randomiser::categoryOf (const Node& n)
 void Randomiser::collectFiles()
 {
     const auto now = juce::Time::getMillisecondCounter();
-    if (lastScan != 0 && now - lastScan < 10000) return;
+    if (lastScan != 0 && now - lastScan < 10000 && lastExclusions == engine.exclusionsVersion) return;
     lastScan = now;
-    auto scan = [] (const juce::FileSearchPath& paths, const juce::String& pattern, juce::Array<juce::File>& out)
+    lastExclusions = engine.exclusionsVersion;
+    auto scan = [this] (const juce::FileSearchPath& paths, const juce::String& pattern, juce::Array<juce::File>& out)
     {
         out.clear();
         for (int p = 0; p < paths.getNumPaths() && out.size() < 4000; ++p)
             for (const auto& entry : juce::RangedDirectoryIterator (paths.getRawString (p), true, pattern, juce::File::findFiles))
             {
+                if (engine.isRandomExcluded (entry.getFile())) continue;   // unticked in the library
                 out.add (entry.getFile());
                 if (out.size() >= 4000) break;
             }
@@ -136,7 +138,7 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
     const auto types = engine.knownPlugins.getTypes();
     if (options.usePlugins)
         for (auto& d : types)
-            if (! d.isInstrument && categoriseDescription (d) == cat)
+            if (! d.isInstrument && categoriseDescription (d) == cat && ! engine.isRandomExcluded (d))
                 cands.push_back ({ NodeType::Plugin, &d, 1.0f });
 
     // prefer something different from what's there now (but a NAM/IR always gets a new file)

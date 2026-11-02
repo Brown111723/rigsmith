@@ -38,6 +38,16 @@ static float runNoise (Engine& e, int blocks, int blockSize, bool* finite, float
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
+    // keep the tests' settings away from the real Rigsmith.ini
+    const auto testDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rigsmith-tests");
+    testDir.deleteRecursively();
+    testDir.createDirectory();
+    const auto iniPath = testDir.getChildFile ("Rigsmith.ini");
+   #if JUCE_WINDOWS
+    _putenv_s ("RIGSMITH_INI", iniPath.getFullPathName().toRawUTF8());
+   #else
+    setenv ("RIGSMITH_INI", iniPath.getFullPathName().toRawUTF8(), 1);
+   #endif
     const juce::File models (argc > 1 ? argv[1] : "");
     const auto model = models.getChildFile ("wavenet_a1_standard.nam");
 
@@ -482,6 +492,154 @@ int main (int argc, char** argv)
         CHECK (e.findNode (tid) != nullptr, "random rig keeps the tuner");
         CHECK (rz.randomiseType (tid) == nullptr, "a tuner isn't swapped for another block");
     }
+
+    //==========================================================================
+    std::printf ("--- v0.5: Rigsmith.ini, randomise ticks, starting points\n");
+    {
+        // the ini format itself
+        IniFile a (testDir.getChildFile ("t.ini"));
+        a.header = { "hello" };
+        a.set ("General", "Name", "Rig = smith");
+        a.setList ("NAM Folders", "Folder", { "C:\\Amps", "D:\\More Amps" });
+        a.setBool ("Window", "FullScreen", true);
+        IniFile b (testDir.getChildFile ("t.ini"));
+        CHECK (b.get ("general", "name") == "Rig = smith", "ini keeps values containing '=' (case-insensitive lookup)");
+        CHECK (b.getList ("NAM Folders") == juce::StringArray ({ "C:\\Amps", "D:\\More Amps" }), "ini numbered lists round trip");
+        CHECK (b.getBool ("Window", "FullScreen", false), "ini booleans");
+        CHECK (testDir.getChildFile ("t.ini").loadFileAsString().startsWith ("; hello"), "ini has its comment header");
+        b.set ("General", "Other", "x");
+        a.set ("General", "Third", "y");   // a's copy is stale: it must re-read before writing
+        IniFile c (testDir.getChildFile ("t.ini"));
+        CHECK (c.get ("General", "Other") == "x" && c.get ("General", "Third") == "y", "two writers don't undo each other");
+
+        // created on first run, with startup scans off once a scan has happened
+        {
+            Engine e;
+            CHECK (iniPath.existsAsFile(), "Rigsmith.ini is created when it isn't found");
+            CHECK (e.ini.has ("Plug-ins", "ScanOnStartup") && ! e.getSetting ("scanOnStartup", true), "scan on startup defaults to off");
+            CHECK (e.shouldScanOnStartup(), "...but the very first run scans");
+            e.markPluginsScanned();
+            CHECK (! e.shouldScanOnStartup(), "no startup scan once one has been done");
+            e.setSetting ("scanOnStartup", true);
+            CHECK (e.shouldScanOnStartup(), "ticking 'scan on startup' turns it back on");
+            e.setSetting ("scanOnStartup", false);
+        }
+
+        // a library: two amps and two cabs
+        const auto lib = testDir.getChildFile ("Library");
+        lib.getChildFile ("Amps").createDirectory();
+        lib.getChildFile ("Cabs").createDirectory();
+        model.copyFileTo (lib.getChildFile ("Amps/1 Clean Amp.nam"));
+        model.copyFileTo (lib.getChildFile ("Amps/2 Lead Amp.nam"));
+        model.copyFileTo (lib.getChildFile ("Amps/3 Audio Repair.nam"));
+        for (auto name : { "1 Greenback.wav", "2 V30.wav" })
+        {
+            juce::AudioBuffer<float> ir (1, 256);
+            ir.clear();
+            ir.setSample (0, 0, 1.0f);
+            ir.setSample (0, 9, 0.3f);
+            juce::WavAudioFormat wav;
+            auto out = lib.getChildFile ("Cabs").getChildFile (name).createOutputStream();
+            if (auto w = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (out.release(), 48000.0, 1, 24, {}, 0)))
+                w->writeFromAudioSampleBuffer (ir, 0, 256);
+        }
+        const auto excludedAmp = lib.getChildFile ("Amps/3 Audio Repair.nam");
+        {
+            Engine e;
+            e.setPaths ("modelPaths", juce::FileSearchPath (lib.getChildFile ("Amps").getFullPathName()));
+            e.setPaths ("irPaths", juce::FileSearchPath (lib.getChildFile ("Cabs").getFullPathName()));
+            e.setRandomExcluded (juce::Array<juce::File> { excludedAmp }, true);
+            e.setIntSetting ("inspectorHeight", 412);
+        }
+        const auto iniText = iniPath.loadFileAsString();
+        CHECK (iniText.contains ("[NAM Folders]") && iniText.contains (lib.getChildFile ("Amps").getFullPathName()), "folders are written to the ini");
+        CHECK (iniText.contains ("[Randomise - excluded NAM models]") && iniText.contains ("3 Audio Repair.nam"), "randomise exclusions are written to the ini");
+
+        Engine e;   // a fresh start reads it all back
+        e.prepare (48000.0, 256);
+        CHECK (e.getPaths ("modelPaths").getRawString (0) == lib.getChildFile ("Amps").getFullPathName(), "model folders come back on startup");
+        CHECK (e.isRandomExcluded (excludedAmp) && ! e.isRandomExcluded (lib.getChildFile ("Amps/1 Clean Amp.nam")), "exclusions come back on startup");
+        CHECK (e.getIntSetting ("inspectorHeight", 0) == 412, "window preferences come back on startup");
+        CHECK (e.numRandomExcluded (0) == 1 && e.numRandomExcluded (1) == 0, "exclusion counts");
+
+        // the dice never pick an unticked model
+        {
+            Randomiser rz (e);
+            bool pickedExcluded = false, pickedOthers = false;
+            for (int i = 0; i < 12; ++i)
+            {
+                rz.randomiseRig();
+                visitNodes (e.getRoot(), [&] (Node& n)
+                {
+                    if (auto* nb = dynamic_cast<NamBlock*> (&n))
+                    {
+                        if (nb->getFile() == excludedAmp) pickedExcluded = true;
+                        else if (nb->getFile().existsAsFile()) pickedOthers = true;
+                    }
+                });
+            }
+            CHECK (! pickedExcluded && pickedOthers, "randomise skips unticked models");
+            e.setRandomExcluded (juce::Array<juce::File> { excludedAmp }, false);
+            CHECK (! e.isRandomExcluded (excludedAmp), "ticking it again lets the dice pick it");
+            e.setRandomExcluded (juce::Array<juce::File> { excludedAmp }, true);
+        }
+
+        // starting points
+        e.loadFactory (0);
+        e.loadFactory (1);
+        std::vector<NodeType> got;
+        for (auto& n : e.getRoot().nodes) got.push_back (n->getType());
+        const std::vector<NodeType> classic { NodeType::Gate, NodeType::Overdrive, NodeType::Nam, NodeType::Ir,
+                                              NodeType::Chorus, NodeType::Delay, NodeType::Reverb };
+        CHECK (got == classic, "Classic Rig: gate, drive, amp, cab, chorus, delay, reverb");
+        auto* amp = dynamic_cast<NamBlock*> (e.getRoot().nodes[2].get());
+        auto* cab = dynamic_cast<IrBlock*> (e.getRoot().nodes[3].get());
+        CHECK (amp != nullptr && amp->getFile() == lib.getChildFile ("Amps/1 Clean Amp.nam"), "Classic Rig loads the first amp in the library");
+        CHECK (cab != nullptr && cab->getFile().getFileName() == "1 Greenback.wav", "...and the first cab");
+        CHECK (e.presetName == "Classic Rig" && e.getFactoryIndex() == 1 && ! e.dirty, "Classic Rig is a clean, named starting point");
+        bool finite = false;
+        const float pk = runNoise (e, 60, 256, &finite);
+        CHECK (finite && pk > 1.0e-4f, "Classic Rig makes sound");
+
+        e.loadFactory (2);
+        auto* split = e.getRoot().nodes.size() == 6 ? dynamic_cast<Split*> (e.getRoot().nodes[2].get()) : nullptr;
+        CHECK (split != nullptr && split->branches.size() == 2 && split->getMode() == SplitMode::Parallel, "Dual Amp Rig splits into two parallel paths");
+        if (split != nullptr && split->branches.size() == 2)
+        {
+            auto* a0 = dynamic_cast<NamBlock*> (split->branches[0]->chain->nodes[0].get());
+            auto* a1 = dynamic_cast<NamBlock*> (split->branches[1]->chain->nodes[0].get());
+            auto* c0 = dynamic_cast<IrBlock*> (split->branches[0]->chain->nodes[1].get());
+            auto* c1 = dynamic_cast<IrBlock*> (split->branches[1]->chain->nodes[1].get());
+            CHECK (a0 && a1 && c0 && c1, "each path is NAM -> IR");
+            if (a0 && a1 && c0 && c1)
+            {
+                CHECK (a0->getFile() == lib.getChildFile ("Amps/1 Clean Amp.nam") && a1->getFile() == lib.getChildFile ("Amps/2 Lead Amp.nam"),
+                       "it keeps the loaded amp and adds the next one in the folder");
+                CHECK (c0->getFile() != c1->getFile() && c1->getFile().existsAsFile(), "two different cabs");
+            }
+        }
+        CHECK (e.getRoot().nodes.back()->getType() == NodeType::Reverb, "Dual Amp Rig ends with the reverb");
+        CHECK (runNoise (e, 60, 256, &finite) > 1.0e-4f && finite, "Dual Amp Rig makes sound");
+
+        // scenes: A clean (no drive), B crunch (drive, no chorus), D dry
+        auto* drive = e.getRoot().nodes[1].get();
+        auto* chorus = e.getRoot().nodes[3].get();
+        CHECK (drive->bypassed.load() && ! chorus->bypassed.load() && e.sceneNames[0] == "Clean", "scene A is Clean");
+        e.setScene (1);
+        CHECK (! drive->bypassed.load() && chorus->bypassed.load() && e.sceneNames[1] == "Crunch", "scene B is Crunch");
+        e.setScene (3);
+        CHECK (drive->bypassed.load() && e.getRoot().nodes.back()->bypassed.load(), "scene D is Dry");
+
+        // Page Up / Down walks Init -> Classic -> Dual -> your presets
+        e.loadFactory (0);
+        e.stepPreset (1);
+        CHECK (e.presetName == "Classic Rig", "next after Init is Classic Rig");
+        e.stepPreset (1);
+        CHECK (e.presetName == "Dual Amp Rig", "then Dual Amp Rig");
+        e.stepPreset (-2);
+        CHECK (e.isInit(), "and back to Init");
+    }
+    testDir.deleteRecursively();
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;

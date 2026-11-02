@@ -34,6 +34,64 @@ MidiMapping MidiMapping::fromState (const juce::ValueTree& v)
 }
 
 //==============================================================================
+namespace
+{
+    /** Where each generic setting key lives in Rigsmith.ini. */
+    struct IniKey { const char* key; const char* section; const char* name; };
+    const IniKey iniKeys[] =
+    {
+        { "scanOnStartup",    "Plug-ins",  "ScanOnStartup" },
+        { "pluginsScanned",   "Plug-ins",  "Scanned" },
+        { "autoCategorise",   "Plug-ins",  "AutoCategorise" },
+        { "fullScreen",       "Window",    "FullScreen" },
+        { "libraryVisible",   "Window",    "ShowLibrary" },
+        { "inspectorHeight",  "Window",    "PanelHeight" },
+        { "randomUsePlugins", "Randomise", "UsePlugins" },
+        { "randomSplits",     "Randomise", "AllowSplits" },
+    };
+
+    std::pair<juce::String, juce::String> iniLocation (const juce::String& key)
+    {
+        for (auto& k : iniKeys)
+            if (key == k.key) return { k.section, k.name };
+        return { "General", key };
+    }
+
+    const char* folderSection (const juce::String& key)
+    {
+        if (key == "modelPaths") return "NAM Folders";
+        if (key == "irPaths")    return "IR Folders";
+        if (key == "modelFolder" || key == "irFolder" || key == "presetFolder") return "Folders";
+        return "Folders";
+    }
+
+    juce::String pluginSection (const juce::AudioPluginFormat& f)
+    {
+        return (f.getName() == "VST" ? juce::String ("VST2") : f.getName()) + " Folders";
+    }
+
+    constexpr const char* exModels = "Randomise - excluded NAM models";
+    constexpr const char* exIrs = "Randomise - excluded IRs";
+    constexpr const char* exPlugins = "Randomise - excluded plug-ins";
+
+    juce::String fileKey (const juce::File& f) { return f.getFullPathName().toLowerCase(); }
+}
+
+juce::File Engine::findSettingsFile()
+{
+    // tests (and power users) can point Rigsmith somewhere else
+    const auto env = juce::SystemStats::getEnvironmentVariable ("RIGSMITH_INI", {});
+    if (env.isNotEmpty()) return juce::File (env);
+
+    // portable copy: an ini next to Rigsmith.exe wins
+    const auto beside = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getSiblingFile ("Rigsmith.ini");
+    if (beside.existsAsFile()) return beside;
+
+    // %APPDATA%\Rigsmith\Rigsmith.ini (not %TEMP%: Windows clears that out)
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+        .getChildFile ("Rigsmith").getChildFile ("Rigsmith.ini");
+}
+
 Engine::Engine() : root (std::make_unique<Chain>())
 {
     juce::PropertiesFile::Options o;
@@ -48,6 +106,8 @@ Engine::Engine() : root (std::make_unique<Chain>())
     if (auto* s = props.getUserSettings())
         if (auto xml = s->getXmlValue ("pluginList"))
             knownPlugins.recreateFromXml (*xml);
+
+    openSettings();
     PluginBlock::autoCategorise = getSetting ("autoCategorise", true);
     knownPlugins.addChangeListener (this);
 
@@ -62,6 +122,86 @@ Engine::~Engine()
     knownPlugins.removeChangeListener (this);
 }
 
+void Engine::openSettings()
+{
+    ini.setFile (findSettingsFile());
+    ini.header = { "Rigsmith settings - read every time Rigsmith starts.",
+                   "Safe to edit with Notepad while Rigsmith is closed. Delete it to reset everything.",
+                   "Lists are numbered (Folder1=, Folder2=...). 1 = on, 0 = off.",
+                   "The scanned plug-in list itself is cached in Rigsmith.settings in the same folder." };
+
+    auto* old = props.getUserSettings();
+    IniFile::Batch batch (ini);
+    for (auto* sec : { "General", "Folders", "NAM Folders", "IR Folders", "VST3 Folders", "Plug-ins", "Window", "Randomise" })
+        ini.addSection (sec);
+   #ifdef JucePlugin_VersionString
+    ini.set ("General", "Version", JucePlugin_VersionString);
+   #endif
+
+    if (! ini.existed() && old != nullptr)
+    {
+        // first run of v0.5: bring across everything the old settings file remembered
+        for (auto& k : iniKeys)
+            if (old->containsKey (k.key))
+                ini.set (k.section, k.name, old->getValue (k.key) == "1" || old->getValue (k.key) == "true" ? "1"
+                                         : old->getValue (k.key) == "0" || old->getValue (k.key) == "false" ? "0"
+                                         : old->getValue (k.key));
+        for (auto key : { "modelPaths", "irPaths" })
+        {
+            juce::FileSearchPath p (old->getValue (key));
+            if (p.getNumPaths() == 0)
+            {
+                const juce::File single (old->getValue (juce::String (key) == "modelPaths" ? "modelFolder" : "irFolder"));
+                if (single.isDirectory()) p.add (single);
+            }
+            juce::StringArray list;
+            for (int i = 0; i < p.getNumPaths(); ++i) list.add (p.getRawString (i));
+            if (! list.isEmpty()) ini.setList (folderSection (key), "Folder", list);
+        }
+        if (old->containsKey ("presetFolder")) ini.set ("Folders", "Presets", old->getValue ("presetFolder"));
+        if (knownPlugins.getNumTypes() > 0) ini.set ("Plug-ins", "Scanned", "1");
+    }
+
+    // defaults, written out so they're easy to find and edit
+    auto ensure = [this] (const char* section, const char* key, const juce::String& v)
+    {
+        if (! ini.has (section, key)) ini.set (section, key, v);
+    };
+    ensure ("Folders", "Presets", getFolder ("presetFolder").getFullPathName());
+    ensure ("Plug-ins", "ScanOnStartup", "0");
+    ensure ("Plug-ins", "Scanned", knownPlugins.getNumTypes() > 0 ? "1" : "0");
+    ensure ("Plug-ins", "AutoCategorise", "1");
+    ensure ("Window", "FullScreen", "0");
+    ensure ("Window", "ShowLibrary", "1");
+    ensure ("Randomise", "UsePlugins", "1");
+    ensure ("Randomise", "AllowSplits", "1");
+
+    for (auto* f : formatManager.getFormats())
+    {
+        if (! f->canScanForPlugins()) continue;
+        const auto section = pluginSection (*f);
+        if (ini.getList (section).isEmpty())
+        {
+            // seed from the scanner's last folders, or the standard locations
+            auto p = old != nullptr ? juce::PluginListComponent::getLastSearchPath (*old, *f) : juce::FileSearchPath();
+            if (p.getNumPaths() == 0) p = f->getDefaultLocationsToSearch();
+            juce::StringArray list;
+            for (int i = 0; i < p.getNumPaths(); ++i) list.add (p.getRawString (i));
+            ini.setList (section, "Folder", list);
+        }
+        else if (old != nullptr)
+            juce::PluginListComponent::setLastSearchPath (*old, *f, getPluginPaths (*f));   // the ini wins
+    }
+    for (auto key : { "modelPaths", "irPaths" })
+        if (ini.getList (folderSection (key)).isEmpty())
+            ini.setList (folderSection (key), "Folder", { getFolder (juce::String (key) == "modelPaths" ? "modelFolder" : "irFolder").getFullPathName() });
+
+    for (auto* sec : { exModels, exIrs, exPlugins })
+        if (ini.getList (sec).isEmpty()) ini.setList (sec, juce::String (sec) == exPlugins ? "Plugin" : "File", {});
+
+    loadExclusions();
+}
+
 void Engine::changeListenerCallback (juce::ChangeBroadcaster*)
 {
     if (auto xml = knownPlugins.createXml())
@@ -69,57 +209,189 @@ void Engine::changeListenerCallback (juce::ChangeBroadcaster*)
         {
             s->setValue ("pluginList", xml.get());
             s->saveIfNeeded();
+            // folders changed in the scanner window go back into the ini
+            for (auto* f : formatManager.getFormats())
+                if (f->canScanForPlugins())
+                {
+                    const auto p = juce::PluginListComponent::getLastSearchPath (*s, *f);
+                    if (p.getNumPaths() > 0) setPluginPaths (*f, p);
+                }
         }
+    markPluginsScanned();
 }
 
 juce::File Engine::getFolder (const juce::String& key) const
 {
-    if (auto* s = const_cast<juce::ApplicationProperties&> (props).getUserSettings())
+    const auto name = key == "modelFolder" ? "Models" : key == "irFolder" ? "IRs" : key == "presetFolder" ? "Presets" : "";
+    if (juce::String (name).isNotEmpty())
     {
-        const juce::File f (s->getValue (key));
+        const juce::File f (ini.get ("Folders", name));
         if (f.isDirectory()) return f;
     }
     auto base = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rigsmith");
-    const auto sub = key == "modelFolder" ? "Models" : key == "irFolder" ? "IRs" : key == "presetFolder" ? "Presets" : "";
-    auto f = juce::String (sub).isEmpty() ? base : base.getChildFile (sub);
+    auto f = juce::String (name).isEmpty() ? base : base.getChildFile (name);
     f.createDirectory();
     return f;
+}
+
+void Engine::setFolder (const juce::String& key, const juce::File& f)
+{
+    const auto name = key == "modelFolder" ? "Models" : key == "irFolder" ? "IRs" : key == "presetFolder" ? "Presets" : key.toRawUTF8();
+    ini.set ("Folders", name, f.getFullPathName());
 }
 
 juce::FileSearchPath Engine::getPaths (const juce::String& key) const
 {
     juce::FileSearchPath p;
-    if (auto* s = const_cast<juce::ApplicationProperties&> (props).getUserSettings())
-        p = juce::FileSearchPath (s->getValue (key));
+    for (auto& s : ini.getList (folderSection (key))) p.add (juce::File (s));
     p.removeNonExistentPaths();
     if (p.getNumPaths() == 0)
-        p.add (getFolder (key == "modelPaths" ? "modelFolder" : "irFolder"));   // v0.1 single folder, or the default
+        p.add (getFolder (key == "modelPaths" ? "modelFolder" : "irFolder"));
     return p;
 }
 
 void Engine::setPaths (const juce::String& key, const juce::FileSearchPath& p)
 {
+    juce::StringArray list;
+    for (int i = 0; i < p.getNumPaths(); ++i) list.add (p.getRawString (i));
+    ini.setList (folderSection (key), "Folder", list);
+}
+
+juce::FileSearchPath Engine::getPluginPaths (juce::AudioPluginFormat& f) const
+{
+    juce::FileSearchPath p;
+    for (auto& s : ini.getList (pluginSection (f))) p.add (juce::File (s));
+    if (p.getNumPaths() == 0) p = f.getDefaultLocationsToSearch();
+    return p;
+}
+
+void Engine::setPluginPaths (juce::AudioPluginFormat& f, const juce::FileSearchPath& p)
+{
+    juce::StringArray list;
+    for (int i = 0; i < p.getNumPaths(); ++i) list.add (p.getRawString (i));
+    ini.setList (pluginSection (f), "Folder", list);
     if (auto* s = props.getUserSettings())
-    {
-        s->setValue (key, p.toString());
-        s->saveIfNeeded();
-    }
+        juce::PluginListComponent::setLastSearchPath (*s, f, p);
+}
+
+bool Engine::hasScannedPlugins() const
+{
+    return ini.getBool ("Plug-ins", "Scanned", false);
+}
+
+void Engine::markPluginsScanned()
+{
+    IniFile::Batch b (ini);
+    ini.set ("Plug-ins", "Scanned", "1");
+    ini.set ("Plug-ins", "LastScan", juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M"));
 }
 
 bool Engine::getSetting (const juce::String& key, bool def) const
 {
-    if (auto* s = const_cast<juce::ApplicationProperties&> (props).getUserSettings())
-        return s->getBoolValue (key, def);
-    return def;
+    const auto [section, name] = iniLocation (key);
+    return ini.getBool (section, name, def);
 }
 
 void Engine::setSetting (const juce::String& key, bool value)
 {
-    if (auto* s = props.getUserSettings())
+    const auto [section, name] = iniLocation (key);
+    ini.setBool (section, name, value);
+}
+
+int Engine::getIntSetting (const juce::String& key, int def) const
+{
+    const auto [section, name] = iniLocation (key);
+    return ini.getInt (section, name, def);
+}
+
+void Engine::setIntSetting (const juce::String& key, int value)
+{
+    const auto [section, name] = iniLocation (key);
+    ini.setInt (section, name, value);
+}
+
+//==============================================================================
+void Engine::loadExclusions()
+{
+    excludedFiles.clear();
+    excludedPlugins.clear();
+    excludedPluginNames.clear();
+    for (auto* sec : { exModels, exIrs })
+        for (auto& v : ini.getList (sec))
+            excludedFiles[v.trim().toLowerCase()] = v.trim();
+    // "Name (Maker) | identifier": the name is only there to make the file readable
+    for (auto& v : ini.getList (exPlugins))
     {
-        s->setValue (key, value);
-        s->saveIfNeeded();
+        const auto id = v.containsChar ('|') ? v.fromLastOccurrenceOf ("|", false, false).trim() : v.trim();
+        excludedPlugins.insert (id);
+        excludedPluginNames[id] = v.upToLastOccurrenceOf ("|", false, false).trim();
     }
+}
+
+void Engine::saveExclusions()
+{
+    juce::StringArray models, irs, plugins;
+    for (auto& [key, path] : excludedFiles)
+        (key.endsWithIgnoreCase (".nam") ? models : irs).add (path);
+    for (auto& id : excludedPlugins)
+    {
+        juce::String name = excludedPluginNames.count (id) ? excludedPluginNames[id] : juce::String();
+        plugins.add (name.isNotEmpty() ? name + " | " + id : id);
+    }
+    models.sortNatural(); irs.sortNatural(); plugins.sortNatural();
+    ++exclusionsVersion;
+    IniFile::Batch b (ini);
+    ini.setList (exModels, "File", models);
+    ini.setList (exIrs, "File", irs);
+    ini.setList (exPlugins, "Plugin", plugins);
+}
+
+bool Engine::isRandomExcluded (const juce::File& f) const
+{
+    return excludedFiles.count (fileKey (f)) > 0;
+}
+
+bool Engine::isRandomExcluded (const juce::PluginDescription& d) const
+{
+    return excludedPlugins.count (d.createIdentifierString()) > 0;
+}
+
+void Engine::setRandomExcluded (const juce::Array<juce::File>& files, bool excluded)
+{
+    ini.reloadIfChanged();
+    loadExclusions();   // pick up changes another instance made
+    for (auto& f : files)
+    {
+        if (excluded) excludedFiles[fileKey (f)] = f.getFullPathName();
+        else excludedFiles.erase (fileKey (f));
+    }
+    saveExclusions();
+}
+
+void Engine::setRandomExcluded (const juce::Array<juce::PluginDescription>& descs, bool excluded)
+{
+    ini.reloadIfChanged();
+    loadExclusions();
+    for (auto& d : descs)
+    {
+        const auto id = d.createIdentifierString();
+        if (excluded)
+        {
+            excludedPlugins.insert (id);
+            excludedPluginNames[id] = d.name + (d.manufacturerName.isNotEmpty() ? " (" + d.manufacturerName + ")" : juce::String());
+        }
+        else { excludedPlugins.erase (id); excludedPluginNames.erase (id); }
+    }
+    saveExclusions();
+}
+
+int Engine::numRandomExcluded (int kind) const
+{
+    if (kind == 2) return (int) excludedPlugins.size();
+    int n = 0;
+    for (auto& kv : excludedFiles)
+        if (kv.first.endsWithIgnoreCase (".nam") == (kind == 0)) ++n;
+    return n;
 }
 
 void Engine::setAnalyzedNode (Node* n)
@@ -127,15 +399,6 @@ void Engine::setAnalyzedNode (Node* n)
     visitNodes (*root, [] (Node& x) { x.tap = nullptr; });
     analyzer.reset();
     if (n != nullptr) n->tap = &analyzer;
-}
-
-void Engine::setFolder (const juce::String& key, const juce::File& f)
-{
-    if (auto* s = props.getUserSettings())
-    {
-        s->setValue (key, f.getFullPathName());
-        s->saveIfNeeded();
-    }
 }
 
 juce::File Engine::getDeadMansPedalFile() const
@@ -1132,13 +1395,159 @@ void Engine::setState (const juce::ValueTree& v, bool includeSession)
     listeners.call ([] (Listener& l) { l.presetChanged(); l.sceneChanged(); l.midiMapChanged(); });
 }
 
-void Engine::loadDefaultRig()
+void Engine::loadDefaultRig() { loadFactory (0); }
+
+const juce::StringArray& Engine::getFactoryNames()
+{
+    static const juce::StringArray names { initName, "Classic Rig", "Dual Amp Rig" };
+    return names;
+}
+
+juce::String Engine::getFactoryDescription (int index)
+{
+    switch (index)
+    {
+        case 1:  return "gate, drive, amp, cab, chorus, delay, reverb";
+        case 2:  return "the same, with two amps + cabs in parallel";
+        default: return "gate, amp, cab";
+    }
+}
+
+int Engine::getFactoryIndex() const
+{
+    if (presetFile != juce::File()) return -1;
+    return getFactoryNames().indexOf (presetName);
+}
+
+juce::Array<juce::File> Engine::pickLibraryFiles (bool models, int count) const
+{
+    // what's loaded now comes first, so switching to a starting point keeps your amp and cab
+    juce::Array<juce::File> out;
+    visitNodes (*root, [&] (Node& n)
+    {
+        juce::File f;
+        if (auto* nb = dynamic_cast<NamBlock*> (&n)) { if (models) f = nb->getFile(); }
+        else if (auto* ir = dynamic_cast<IrBlock*> (&n)) { if (! models) f = ir->getFile(); }
+        if (f.existsAsFile()) out.addIfNotAlreadyThere (f);
+    });
+    if (out.size() >= count) { out.resize (count); return out; }
+
+    // then the first files (by name) in the folder of the first one, then in the library folders
+    const auto pattern = models ? juce::String ("*.nam") : juce::String ("*.wav;*.aif;*.aiff;*.flac");
+    auto addFrom = [&] (const juce::File& folder, bool recursive)
+    {
+        if (! folder.isDirectory() || out.size() >= count) return;
+        auto found = folder.findChildFiles (juce::File::findFiles, recursive, pattern);
+        std::sort (found.begin(), found.end(), [] (const juce::File& a, const juce::File& b)
+        {
+            return a.getFullPathName().compareNatural (b.getFullPathName()) < 0;
+        });
+        for (auto& f : found)
+        {
+            if (out.size() >= count) break;
+            if (! isRandomExcluded (f)) out.addIfNotAlreadyThere (f);
+        }
+    };
+    if (! out.isEmpty()) addFrom (out[0].getParentDirectory(), false);
+    const auto paths = getPaths (models ? "modelPaths" : "irPaths");
+    for (int i = 0; i < paths.getNumPaths(); ++i) addFrom (paths.getRawString (i), true);
+    return out;
+}
+
+std::unique_ptr<Chain> Engine::buildFactory (int index, juce::StringArray& sceneLabels)
+{
+    auto r = std::make_unique<Chain>();
+    sceneLabels = { "A", "B", "C", "D" };
+    juce::String err;
+
+    if (index <= 0)
+    {
+        r->nodes.push_back (std::make_unique<GateBlock>());
+        r->nodes.push_back (std::make_unique<NamBlock>());
+        r->nodes.push_back (std::make_unique<IrBlock>());
+        return r;
+    }
+
+    const int amps = index == 2 ? 2 : 1;
+    const auto models = pickLibraryFiles (true, amps);
+    const auto irFiles = pickLibraryFiles (false, amps);
+
+    auto ampAndCab = [&] (Chain& c, int which)
+    {
+        auto nam = std::make_unique<NamBlock>();
+        // the second amp falls back to the first model (or IR) if the library only has one
+        if (! models.isEmpty()) nam->loadModel (models[juce::jmin (which, models.size() - 1)], err);
+        c.nodes.push_back (std::move (nam));
+        auto cab = std::make_unique<IrBlock>();
+        if (! irFiles.isEmpty()) cab->loadIr (irFiles[juce::jmin (which, irFiles.size() - 1)], err);
+        c.nodes.push_back (std::move (cab));
+    };
+
+    // the classic order: gate -> drive -> amp -> cab -> modulation -> delay -> reverb
+    auto gate = std::make_unique<GateBlock>();
+    auto drive = std::make_unique<OverdriveBlock>();
+    drive->set (OverdriveBlock::pDrive, 3.5f);
+    drive->set (OverdriveBlock::pTone, 5.5f);
+    drive->set (OverdriveBlock::pLevel, 2.0f);
+    auto chorus = std::make_unique<ChorusBlock>();
+    chorus->set (ChorusBlock::pRate, 0.6f);
+    chorus->set (ChorusBlock::pDepth, 35.0f);
+    chorus->set (ChorusBlock::pMix, 35.0f);
+    auto delay = std::make_unique<DelayBlock>();
+    delay->set (DelayBlock::pTime, 380.0f);
+    delay->set (DelayBlock::pFeedback, 28.0f);
+    delay->set (DelayBlock::pMix, 18.0f);
+    delay->set (DelayBlock::pHighCut, 5500.0f);
+    auto reverb = std::make_unique<ReverbBlock>();
+    reverb->set (ReverbBlock::pType, 2.0f);   // plate
+    reverb->set (ReverbBlock::pDecay, 1.8f);
+    reverb->set (ReverbBlock::pMix, 18.0f);
+
+    auto* driveP = drive.get();
+    auto* chorusP = chorus.get();
+    auto* delayP = delay.get();
+    auto* reverbP = reverb.get();
+
+    r->nodes.push_back (std::move (gate));
+    r->nodes.push_back (std::move (drive));
+    if (amps == 1)
+        ampAndCab (*r, 0);
+    else
+    {
+        auto split = std::make_unique<Split>();
+        for (int i = 0; i < 2; ++i)
+        {
+            auto b = split->makeBranch();
+            ampAndCab (*b->chain, i);
+            b->pan = i == 0 ? -0.4f : 0.4f;   // a little width between the two amps
+            split->branches.push_back (std::move (b));
+        }
+        split->setMode (SplitMode::Parallel);
+        split->autoGainSum = true;
+        r->nodes.push_back (std::move (split));
+    }
+    r->nodes.push_back (std::move (chorus));
+    r->nodes.push_back (std::move (delay));
+    r->nodes.push_back (std::move (reverb));
+
+    // scenes: clean, crunch, lead, dry (bypass states; set up by loadFactory)
+    sceneLabels = { "Clean", "Crunch", "Lead", "Dry" };
+    factoryScenes =
+    {
+        //  drive  chorus delay  reverb  (true = on)
+        { driveP->id, chorusP->id, delayP->id, reverbP->id },
+    };
+    return r;
+}
+
+void Engine::loadFactory (int index)
 {
     if (dirty) checkpoint();
-    auto r = std::make_unique<Chain>();
-    r->nodes.push_back (std::make_unique<GateBlock>());
-    r->nodes.push_back (std::make_unique<NamBlock>());
-    r->nodes.push_back (std::make_unique<IrBlock>());
+    index = juce::jlimit (0, getFactoryNames().size() - 1, index);
+
+    factoryScenes.clear();
+    juce::StringArray labels;
+    auto r = buildFactory (index, labels);
     r->prepare (sampleRate, blockSize);
     {
         const juce::ScopedLock sl (lock);
@@ -1146,14 +1555,48 @@ void Engine::loadDefaultRig()
     }
     if (r != nullptr) announceDeletion (*r);
     r.reset();
-    presetName = initName;
+
+    presetName = getFactoryNames()[index];
     presetFile = juce::File();
+    for (int i = 0; i < kNumScenes; ++i) sceneNames[i] = labels[i];
+
+    if (! factoryScenes.empty())
+    {
+        const auto& ids = factoryScenes[0];   // drive, chorus, delay, reverb
+        static constexpr bool on[kNumScenes][4] =
+        {
+            { false, true,  true,  true  },   // Clean: chorus, delay, reverb
+            { true,  false, false, true  },   // Crunch: drive, reverb
+            { true,  false, true,  true  },   // Lead: drive, delay, reverb
+            { false, false, false, false },   // Dry: just the amp
+        };
+        for (int sc = kNumScenes - 1; sc >= 0; --sc)
+        {
+            for (int k = 0; k < 4; ++k)
+                if (auto* n = findNode (ids[(size_t) k])) n->bypassed = ! on[sc][k];
+            scenes[sc] = captureScene();
+        }
+        // leaves scene A (Clean) live
+    }
+    else
+        for (auto& s : scenes) s = captureScene();
+
     activeScene = 0;
-    for (auto& s : scenes) s = captureScene();
     mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [] (const MidiMapping& m) { return ! m.isGlobal(); }), mappings.end());
     dirty = false;
     notifyGraphChanged();
     listeners.call ([] (Listener& l) { l.presetChanged(); l.sceneChanged(); });
+
+    if (index > 0)
+    {
+        int missing = 0;
+        visitNodes (*root, [&] (Node& n)
+        {
+            if (auto* nb = dynamic_cast<NamBlock*> (&n)) missing += nb->getFile().existsAsFile() ? 0 : 1;
+        });
+        if (missing > 0)
+            message ("No .nam models found yet: add your model folder in Settings, or drop a model on the amp");
+    }
 }
 
 //==============================================================================
@@ -1212,13 +1655,15 @@ bool Engine::savePreset (const juce::File& f)
 
 void Engine::stepPreset (int delta)
 {
-    // position 0 is Init, then the saved presets
+    // Init and the starting points first, then the saved presets
     auto files = getPresetFiles();
-    const int count = files.size() + 1;
-    const int cur = files.indexOf (presetFile) + 1;   // 0 when on Init or an unsaved rig
+    const int nf = getFactoryNames().size();
+    const int count = files.size() + nf;
+    int cur = files.indexOf (presetFile);
+    cur = cur >= 0 ? cur + nf : juce::jmax (0, getFactoryIndex());   // an unsaved rig counts as Init
     const int next = ((cur + delta) % count + count) % count;
-    if (next == 0) loadDefaultRig();
-    else loadPreset (files[next - 1]);
+    if (next < nf) loadFactory (next);
+    else loadPreset (files[next - nf]);
 }
 
 //==============================================================================

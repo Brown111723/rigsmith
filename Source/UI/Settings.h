@@ -4,8 +4,8 @@
 
 namespace rig
 {
-/** Library and plug-in folders plus a few preferences. Everything is saved when the
-    window closes and read back automatically next time Rigsmith opens. */
+/** Library and plug-in folders plus a few preferences. Everything is saved to Rigsmith.ini
+    when the window closes and read back automatically next time Rigsmith opens. */
 class SettingsPanel : public juce::Component
 {
 public:
@@ -30,9 +30,9 @@ private:
     juce::OwnedArray<Section> pluginSections;
     juce::Array<juce::AudioPluginFormat*> pluginFormats;
     juce::ToggleButton autoCategorise { "Auto-categorise and colour plug-ins (Drive, Delay, Reverb...)" };
-    juce::ToggleButton startFullScreen { "Open Rigsmith full screen (standalone; F11 toggles)" }, scanOnStartup { "Look for new plug-ins every time Rigsmith opens" };
-    juce::TextButton scanNow { "Scan plug-ins now" };
-    juce::Label vst2Note;
+    juce::ToggleButton startFullScreen { "Open Rigsmith full screen (standalone; F11 toggles)" }, scanOnStartup { "Look for new plug-ins every time Rigsmith opens (otherwise only the first time)" };
+    juce::TextButton scanNow { "Scan plug-ins now" }, showIni { "Show Rigsmith.ini" };
+    juce::Label vst2Note, iniNote;
 
     void setupSection (Section&, const juce::String& title, const juce::String& hint);
 };

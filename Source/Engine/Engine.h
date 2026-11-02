@@ -6,6 +6,7 @@
 #include "NamBlock.h"
 #include "PluginBlock.h"
 #include "Tuner.h"
+#include "IniFile.h"
 
 namespace rig
 {
@@ -112,6 +113,12 @@ public:
     juce::ValueTree getState (bool includeSession) const;
     void setState (const juce::ValueTree&, bool includeSession);
     void loadDefaultRig();
+    /** Built-in starting points: 0 Init, 1 Classic Rig, 2 Dual Amp Rig. They're built fresh
+        each time, keeping the amp and cab you have loaded (or the first ones in your library). */
+    static const juce::StringArray& getFactoryNames();
+    static juce::String getFactoryDescription (int index);
+    void loadFactory (int index);
+    int getFactoryIndex() const;   // -1 unless a starting point is loaded (and unsaved)
 
     juce::File getPresetFolder() const;
     juce::Array<juce::File> getPresetFiles() const;
@@ -160,7 +167,12 @@ public:
     //--- Plug-ins & folders -----------------------------------------------------
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPlugins;
-    juce::ApplicationProperties props;
+    juce::ApplicationProperties props;   // internal cache only: the scanned plug-in list
+    /** Rigsmith.ini: folders, preferences and randomise exclusions, readable and editable.
+        Lives in %APPDATA%\Rigsmith (or next to Rigsmith.exe for a portable copy). Created on
+        first run if it isn't there, and read every time Rigsmith starts. */
+    IniFile ini;
+    static juce::File findSettingsFile();
     juce::File getFolder (const juce::String& key) const;
     void setFolder (const juce::String& key, const juce::File&);
     /** Library folders ("modelPaths", "irPaths"): several folders each, remembered between runs. */
@@ -168,6 +180,23 @@ public:
     void setPaths (const juce::String& key, const juce::FileSearchPath&);
     bool getSetting (const juce::String& key, bool def) const;
     void setSetting (const juce::String& key, bool value);
+    int getIntSetting (const juce::String& key, int def) const;
+    void setIntSetting (const juce::String& key, int value);
+    /** Plug-in folders per format (VST3, VST2), remembered in the ini. */
+    juce::FileSearchPath getPluginPaths (juce::AudioPluginFormat&) const;
+    void setPluginPaths (juce::AudioPluginFormat&, const juce::FileSearchPath&);
+    /** True once any plug-in scan has run: after that, startup scans are opt-in. */
+    bool hasScannedPlugins() const;
+    void markPluginsScanned();
+    bool shouldScanOnStartup() const { return ! hasScannedPlugins() || getSetting ("scanOnStartup", false); }
+
+    //--- Randomise include / exclude (the ticks in the library) ---------------------
+    bool isRandomExcluded (const juce::File&) const;
+    bool isRandomExcluded (const juce::PluginDescription&) const;
+    void setRandomExcluded (const juce::Array<juce::File>&, bool excluded);
+    void setRandomExcluded (const juce::Array<juce::PluginDescription>&, bool excluded);
+    int numRandomExcluded (int kind) const;   // 0 models, 1 IRs, 2 plug-ins
+    int exclusionsVersion = 0;                // bumped on every change
 
     //--- Analyzer ---------------------------------------------------------------
     AnalyzerTap analyzer;
@@ -201,10 +230,19 @@ public:
 private:
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void openSettings();
+    void loadExclusions();
+    void saveExclusions();
+    std::map<juce::String, juce::String> excludedFiles;        // lower-case path -> path as written
+    std::set<juce::String> excludedPlugins;                     // identifier strings
+    std::map<juce::String, juce::String> excludedPluginNames;   // identifier -> "Name (Maker)" for the ini
     void handleMidi (int type, int channel, int number, int value);
     void applyMapping (const MidiMapping&, int value);
 
     std::unique_ptr<Node> buildNode (const juce::ValueTree&);
+    std::unique_ptr<Chain> buildFactory (int index, juce::StringArray& sceneNames);
+    juce::Array<juce::File> pickLibraryFiles (bool models, int count) const;
+    std::vector<std::array<juce::String, 4>> factoryScenes;
     juce::ValueTree snapshot() const;
     void restore (const juce::ValueTree&);
     std::vector<juce::ValueTree> undoStack, redoStack;
