@@ -229,6 +229,9 @@ public:
     void addListener (Listener* l) { listeners.add (l); }
     void removeListener (Listener* l) { listeners.remove (l); }
     void notifyGraphChanged();
+    /** Switches cab IRs out after "Amp + Cab" models (see IrBlock::skipAfterFullRig).
+        Runs on every graph change and a few times a second; returns true if anything changed. */
+    bool updateAutoSkips();
     void message (const juce::String& text);
 
     juce::CriticalSection& getLock() noexcept { return lock; }

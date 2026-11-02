@@ -93,8 +93,9 @@ void BlockCard::paint (juce::Graphics& g)
     const auto r = getLocalBounds().toFloat().reduced (1.0f);
     const bool selected = host.getSelectedId() == node.id;
     const bool on = ! node.bypassed.load();
+    const bool skipped = on && node.autoSkipped.load();   // e.g. a cab IR after an "Amp + Cab" model
     const auto c = colourFor (node);
-    const float alpha = on ? 1.0f : 0.55f;
+    const float alpha = on && ! skipped ? 1.0f : 0.55f;
 
     g.setColour (selected ? cardHi : (isMouseOver() ? cardHi.darker (0.08f) : card));
     g.fillRoundedRectangle (r, 10.0f);
@@ -103,8 +104,14 @@ void BlockCard::paint (juce::Graphics& g)
     else if (selected)      { g.setColour (c); g.drawRoundedRectangle (r, 10.0f, 2.0f); }
     else                    { g.setColour (border); g.drawRoundedRectangle (r, 10.0f, 1.0f); }
 
-    g.setColour (c.withMultipliedAlpha (on ? 1.0f : 0.35f));
+    g.setColour (c.withMultipliedAlpha (on && ! skipped ? 1.0f : 0.35f));
     g.fillRoundedRectangle (12.0f, 11.0f, r.getWidth() - 22.0f, 5.0f, 2.5f);
+    if (auto* nb = dynamic_cast<NamBlock*> (&node); nb != nullptr && gearIncludesCab (nb->getGear()))
+    {
+        // amp + cab: the right end of the stripe takes the cab colour
+        g.setColour (gearColour (Gear::Cab).withMultipliedAlpha (on ? 1.0f : 0.35f));
+        g.fillRoundedRectangle (12.0f + (r.getWidth() - 22.0f) * 0.62f, 11.0f, (r.getWidth() - 22.0f) * 0.38f, 5.0f, 2.5f);
+    }
 
     g.setColour (muted.withMultipliedAlpha (alpha));
     g.setFont (font (10.0f, true).withExtraKerningFactor (0.08f));
@@ -129,7 +136,21 @@ void BlockCard::paint (juce::Graphics& g)
     drawFootswitch (g, sw, c, on);
     g.setColour (on ? text : muted);
     g.setFont (font (11.0f));
-    g.drawText (on ? "On" : "Bypassed", (int) sw.getRight() + 8, (int) sw.getY(), 70, (int) sw.getHeight(), juce::Justification::centredLeft);
+    g.drawText (! on ? "Bypassed" : skipped ? "Auto off" : "On", (int) sw.getRight() + 8, (int) sw.getY(), 70, (int) sw.getHeight(), juce::Justification::centredLeft);
+
+    // TONE3000 tones carry a small mark (with the creator in the detail line)
+    ToneInfo tone;
+    if (auto* nb = dynamic_cast<NamBlock*> (&node)) tone = nb->getToneInfo();
+    else if (auto* ir = dynamic_cast<IrBlock*> (&node)) tone = ir->getToneInfo();
+    if (tone.valid)
+    {
+        const juce::Rectangle<float> badge ((float) getWidth() - 70.0f, sw.getCentreY() - 8.0f, 30.0f, 16.0f);
+        g.setColour (text.withAlpha (0.12f * alpha + 0.05f));
+        g.fillRoundedRectangle (badge, 4.0f);
+        g.setColour (text.withMultipliedAlpha (0.8f * alpha));
+        g.setFont (font (9.5f, true));
+        g.drawText ("T3K", badge, juce::Justification::centred);
+    }
 
     // latency or gain-compensation readout, top right
     const int readoutRight = getWidth() - (node.locked.load() ? 32 : 12);

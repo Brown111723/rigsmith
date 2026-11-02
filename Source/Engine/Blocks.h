@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Nodes.h"
+#include "Gear.h"
 #include "Tuner.h"
 
 namespace rig
@@ -80,6 +80,13 @@ public:
     juce::File getFile() const { return file; }
     int getIrLength() const;
 
+    Gear getGear() const noexcept { return (Gear) gearKind.load(); }
+    Category getCategory() const override { return gearCategory (getGear(), true); }
+    ToneInfo getToneInfo() const { return tone; }
+    /** On by default: when the amp model before this IR already includes a cab
+        ("Amp + Cab"), the IR switches itself out so the cab isn't doubled. */
+    std::atomic<bool> skipAfterFullRig { true };
+
     juce::ValueTree toState() const override;
     void fromState (const juce::ValueTree&) override;
 
@@ -90,6 +97,8 @@ protected:
 private:
     juce::dsp::Convolution conv;
     juce::File file;
+    std::atomic<int> gearKind { (int) Gear::Cab };
+    ToneInfo tone;
     std::atomic<bool> hasIr { false };
     juce::AudioBuffer<float> dryBuf;
     Biquad hp, lp;

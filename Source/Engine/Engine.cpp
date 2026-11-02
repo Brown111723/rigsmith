@@ -622,6 +622,7 @@ void Engine::timerCallback()
     if (hs >= 0 && hs != activeScene)
         setScene (hs);
 
+    if (tick % 20 == 0) updateAutoSkips();   // models loaded, blocks bypassed...
     if (++tick % 10 == 0)
     {
         const int lat = getLatency();
@@ -1143,8 +1144,39 @@ void Engine::unwrapSplit (Split& split)
     notifyGraphChanged();
 }
 
+bool Engine::updateAutoSkips()
+{
+    // An "Amp + Cab" capture already has its cabinet: a cab IR after it (in the same chain,
+    // or on a path of a later split) switches itself out unless the user turned that off.
+    bool changed = false;
+    std::function<void (Chain&, Gear)> walk = [&] (Chain& c, Gear upstream)
+    {
+        for (auto& n : c.nodes)
+        {
+            if (auto* nb = dynamic_cast<NamBlock*> (n.get()))
+            {
+                if (! nb->bypassed.load() && nb->getFile() != juce::File()) upstream = nb->getGear();
+            }
+            else if (auto* ir = dynamic_cast<IrBlock*> (n.get()))
+            {
+                const bool skip = ir->skipAfterFullRig.load() && gearIncludesCab (upstream) && ir->getGear() != Gear::Space;
+                if (ir->autoSkipped.exchange (skip) != skip) changed = true;
+                if (! skip && ! ir->bypassed.load() && ir->getFile() != juce::File()) upstream = Gear::Cab;
+            }
+            else if (auto* sp = dynamic_cast<Split*> (n.get()))
+            {
+                for (auto& b : sp->branches) walk (*b->chain, upstream);
+                upstream = Gear::Unknown;   // after the paths merge, nothing is certain
+            }
+        }
+    };
+    walk (*root, Gear::Unknown);
+    return changed;
+}
+
 void Engine::notifyGraphChanged()
 {
+    updateAutoSkips();
     listeners.call ([] (Listener& l) { l.graphChanged(); });
 }
 
@@ -1475,12 +1507,19 @@ juce::Array<juce::File> Engine::pickLibraryFiles (bool models, int count) const
 {
     // what's loaded now comes first, so switching to a starting point keeps your amp and cab
     juce::Array<juce::File> out;
+    // amps for the amp, cabinets for the cab (no pedal captures, rooms or experiments)
+    auto suitable = [models] (const juce::File& f)
+    {
+        const auto g = classifyFile (f);
+        return models ? (g == Gear::AmpHead || g == Gear::AmpCab || g == Gear::Unknown)
+                      : (g == Gear::Cab || g == Gear::Unknown);
+    };
     visitNodes (*root, [&] (Node& n)
     {
         juce::File f;
         if (auto* nb = dynamic_cast<NamBlock*> (&n)) { if (models) f = nb->getFile(); }
         else if (auto* ir = dynamic_cast<IrBlock*> (&n)) { if (! models) f = ir->getFile(); }
-        if (f.existsAsFile()) out.addIfNotAlreadyThere (f);
+        if (f.existsAsFile() && suitable (f)) out.addIfNotAlreadyThere (f);
     });
     if (out.size() >= count) { out.resize (count); return out; }
 
@@ -1497,7 +1536,7 @@ juce::Array<juce::File> Engine::pickLibraryFiles (bool models, int count) const
         for (auto& f : found)
         {
             if (out.size() >= count) break;
-            if (! isRandomExcluded (f)) out.addIfNotAlreadyThere (f);
+            if (! isRandomExcluded (f) && suitable (f)) out.addIfNotAlreadyThere (f);
         }
     };
     if (! out.isEmpty()) addFrom (out[0].getParentDirectory(), false);

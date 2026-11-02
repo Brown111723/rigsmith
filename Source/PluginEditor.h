@@ -44,6 +44,10 @@ public:
     bool insertBuiltIn (rig::NodeType, rig::Chain& chain, int index) override;
     /** Where a double-clicked library item goes: after the selected block, else the end of the rig. */
     std::pair<rig::Chain*, int> insertionPoint();
+    /** Loads a model / IR where it belongs (see the .cpp). */
+    void placeFile (const juce::File&);
+    /** TONE3000 catalog in the browser; the picked tone downloads and goes to `into`. */
+    void browseTone3000 (const juce::String& format, std::function<void (const juce::File&)> into);
     void randomise (rig::Node&, RandomWhat) override;
     void showRandomMenu (rig::Node&, juce::Component* anchor) override;
     void showBlockPresetMenu (rig::Node&, juce::Component* anchor) override;
@@ -121,6 +125,7 @@ private:
     rig::GraphView graph;
     rig::Inspector inspector;
     rig::IoPanel ioPanel { *this };
+    std::unique_ptr<rig::t3k::Client> tone3000;   // before the library, which shows it
     rig::Library library;
     rig::TunerOverlay tunerOverlay;
     rig::Randomiser randomiser { engine };

@@ -75,6 +75,9 @@ public:
     virtual juce::ValueTree toState() const;
     virtual void fromState (const juce::ValueTree&);
 
+    /** Set by the engine, not the user: e.g. a cab IR after an amp model that already
+        includes a cab. Processed like bypass, but kept apart from it so scenes don't change. */
+    std::atomic<bool> autoSkipped { false };
     juce::String id = juce::Uuid().toString();
     std::atomic<bool> bypassed { false };
 

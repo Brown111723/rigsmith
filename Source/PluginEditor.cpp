@@ -116,13 +116,10 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
         engine.startLearn (m);
     };
 
-    library.onActivateFile = [this] (const juce::File& f)
-    {
-        auto* sel = engine.findNode (selectedId);
-        auto* target = sel != nullptr && ((sel->getType() == NodeType::Nam && f.hasFileExtension ("nam"))
-                                          || (sel->getType() == NodeType::Ir && ! f.hasFileExtension ("nam"))) ? sel : nullptr;
-        loadFileInto (target, target == nullptr ? &engine.getRoot() : nullptr, -1, f);
-    };
+    library.onActivateFile = [this] (const juce::File& f) { placeFile (f); };
+    tone3000 = std::make_unique<rig::t3k::Client> (engine);
+    library.setTone3000 (*tone3000);
+    library.getTone3000Panel()->onFileReady = [this] (const juce::File& f) { placeFile (f); };
     library.onActivatePlugin = [this] (const juce::String& ident) { auto [c, i] = insertionPoint(); insertPlugin (ident, *c, i); };
     library.onActivateBuiltIn = [this] (NodeType t) { auto [c, i] = insertionPoint(); insertBuiltIn (t, *c, i); };
     library.onScanPlugins = [this] { showPluginScanner(); };
@@ -382,6 +379,68 @@ void RigsmithEditor::chooseFileFor (Node& n)
     });
 }
 
+void RigsmithEditor::browseTone3000 (const juce::String& format, std::function<void (const juce::File&)> into)
+{
+    auto* panel = library.getTone3000Panel();
+    if (panel == nullptr) return;
+    if (! libraryVisible) setLibraryVisible (true);
+    library.setTab (Library::Tone3000);   // progress shows there
+    if (! tone3000->hasKey()) { showMessage ("Add a TONE3000 key first - see the TONE3000 tab"); return; }
+    panel->browse (format, std::move (into));
+}
+
+void RigsmithEditor::placeFile (const juce::File& f)
+{
+    // Where a double-clicked (or downloaded) model / IR goes:
+    //  1. into the selected block, if it's the same kind (amp for amp, pedal for pedal, IR for IR)
+    //  2. into an empty block of that kind in the main chain
+    //  3. otherwise a new block where it belongs: pedals before the amp, amps before the cab,
+    //     IRs after the amp (or after the selection, if something is selected)
+    const bool isNam = f.hasFileExtension ("nam");
+    const auto gear = classifyFile (f);
+    const bool isPedal = isNam && gear == Gear::Pedal;
+    auto role = [] (Node& n) -> int
+    {
+        if (auto* nb = dynamic_cast<NamBlock*> (&n)) return nb->getGear() == Gear::Pedal ? 1 : 0;
+        if (dynamic_cast<IrBlock*> (&n) != nullptr) return 2;
+        return -1;
+    };
+    const int want = isNam ? (isPedal ? 1 : 0) : 2;
+
+    if (auto* sel = engine.findNode (selectedId))
+    {
+        if (role (*sel) == want || (want != 2 && sel->getType() == NodeType::Nam && dynamic_cast<NamBlock*> (sel)->getFile() == juce::File()))
+        {
+            loadFileInto (sel, nullptr, -1, f);
+            return;
+        }
+        auto [c, i] = insertionPoint();
+        loadFileInto (nullptr, c, i, f);
+        return;
+    }
+
+    auto& root = engine.getRoot();
+    for (auto& n : root.nodes)
+    {
+        const bool empty = (n->getType() == NodeType::Nam && dynamic_cast<NamBlock*> (n.get())->getFile() == juce::File())
+                        || (n->getType() == NodeType::Ir && dynamic_cast<IrBlock*> (n.get())->getFile() == juce::File());
+        if (empty && ((isNam && n->getType() == NodeType::Nam) || (! isNam && n->getType() == NodeType::Ir)))
+        {
+            loadFileInto (n.get(), nullptr, -1, f);
+            return;
+        }
+    }
+    int at = -1;
+    for (int i = 0; i < (int) root.nodes.size(); ++i)
+    {
+        const int r = role (*root.nodes[(size_t) i]);
+        if (want == 1 && r == 0) { at = i; break; }       // pedal: before the amp
+        if (want == 0 && r == 2) { at = i; break; }       // amp: before the cab
+        if (want == 2 && r == 0) at = i + 1;              // IR: after the (last) amp
+    }
+    loadFileInto (nullptr, &root, at, f);
+}
+
 bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const juce::File& f)
 {
     if (f.hasFileExtension ("rig"))
@@ -470,7 +529,7 @@ std::pair<Chain*, int> RigsmithEditor::insertionPoint()
 //==============================================================================
 enum AddIds
 {
-    addSplit2 = 10, addSplit3, addXover, addStereo, addScan = 20,
+    addSplit2 = 10, addSplit3, addXover, addStereo, addScan = 20, addT3kNam = 30, addT3kIr,
     addBuiltInBase = 100,           // + (int) NodeType
     addPluginBase = 1000,
     insertOffset = 50000, replaceOffset = 70000
@@ -481,6 +540,8 @@ void RigsmithEditor::populateAddMenu (juce::PopupMenu& m, int o, bool includeRou
     m.addSectionHeader ("Amp & cab");
     m.addItem (o + addBuiltInBase + (int) NodeType::Nam, "NAM Amp");
     m.addItem (o + addBuiltInBase + (int) NodeType::Ir, "Cab IR");
+    m.addItem (o + addT3kNam, "Browse TONE3000: amps, pedals, full rigs...");
+    m.addItem (o + addT3kIr, "Browse TONE3000: cab and space IRs...");
     m.addSectionHeader ("Built-in effects");
     for (auto& [group, types] : builtInGroups())
     {
@@ -550,6 +611,12 @@ void RigsmithEditor::handleAdd (int r, const juce::String& chainId, int index)
     switch (r)
     {
         case addScan: showPluginScanner(); return;
+        case addT3kNam: case addT3kIr:
+            browseTone3000 (r == addT3kNam ? "nam" : "ir", [this, chainId, index] (const juce::File& f)
+            {
+                if (auto* c = chainById (chainId)) loadFileInto (nullptr, c, index, f);
+            });
+            return;
         case addSplit2: case addSplit3: case addXover: case addStereo:
         {
             auto* s = engine.addSplit (*chain, index, r == addSplit2 || r == addStereo ? 2 : 3);
@@ -604,6 +671,20 @@ void RigsmithEditor::showReplaceMenu (Node& node, juce::Component* anchor)
         auto* n = engine.findNode (id);
         if (n == nullptr || r == 0) return;
         if (r == 1) { chooseFileFor (*n); return; }
+        if (r - replaceOffset == addT3kNam || r - replaceOffset == addT3kIr)
+        {
+            const bool fits = (n->getType() == NodeType::Nam && r - replaceOffset == addT3kNam)
+                           || (n->getType() == NodeType::Ir && r - replaceOffset == addT3kIr);
+            browseTone3000 (r - replaceOffset == addT3kNam ? "nam" : "ir", [this, id, fits] (const juce::File& f)
+            {
+                auto* target = engine.findNode (id);
+                if (target == nullptr) { placeFile (f); return; }
+                if (fits) { loadFileInto (target, nullptr, -1, f); return; }
+                const auto loc = engine.locate (id);   // a different kind: swap the block for a new one
+                if (loc.chain != nullptr && loadFileInto (nullptr, loc.chain, loc.index, f)) engine.remove (id);
+            });
+            return;
+        }
         handleReplace (r - replaceOffset, id);
     });
 }

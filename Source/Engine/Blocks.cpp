@@ -170,12 +170,16 @@ IrBlock::IrBlock()
 
 juce::String IrBlock::getName() const
 {
-    return file.existsAsFile() ? file.getFileNameWithoutExtension() : juce::String ("Cab IR");
+    if (! file.existsAsFile()) return "Cab IR";
+    return tone.valid && tone.title.isNotEmpty() ? tone.title : file.getFileNameWithoutExtension();
 }
 
 juce::String IrBlock::getDetail() const
 {
-    return file.existsAsFile() ? "Lo " + formatValue (0) + " - Hi " + formatValue (1) : juce::String ("Double-click to load .wav");
+    if (autoSkipped.load()) return "Off: the amp includes a cab";
+    if (! file.existsAsFile()) return "Double-click to load .wav";
+    if (tone.valid && tone.creator.isNotEmpty()) return "by " + tone.creator;
+    return "Lo " + formatValue (0) + " - Hi " + formatValue (1);
 }
 
 float IrBlock::responseDb (double hz) const
@@ -200,6 +204,8 @@ bool IrBlock::loadIr (const juce::File& f, juce::String& error)
     conv.loadImpulseResponse (f, juce::dsp::Convolution::Stereo::yes, juce::dsp::Convolution::Trim::yes, 0,
                               juce::dsp::Convolution::Normalise::yes);
     file = f;
+    tone = ToneInfo::forFile (f);
+    gearKind = (int) classifyFile (f);
     hasIr = true;
     touched();
     return true;
@@ -209,12 +215,14 @@ juce::ValueTree IrBlock::toState() const
 {
     auto v = Block::toState();
     v.setProperty ("file", file.getFullPathName(), nullptr);
+    v.setProperty ("skipAfterFullRig", skipAfterFullRig.load(), nullptr);
     return v;
 }
 
 void IrBlock::fromState (const juce::ValueTree& v)
 {
     Block::fromState (v);
+    skipAfterFullRig = (bool) v.getProperty ("skipAfterFullRig", true);
     const juce::String path = v.getProperty ("file").toString();
     if (path.isNotEmpty())
     {

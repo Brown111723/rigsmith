@@ -37,9 +37,13 @@ jobs:
 
       - name: Configure
         shell: pwsh
+        env:
+          T3K_PUBLISHABLE_KEY: ${{ secrets.T3K_PUBLISHABLE_KEY }}
         run: |
           $extra = @()
           if ("${{ steps.vst2.outputs.dir }}") { $extra += "-DRIGSMITH_VST2_SDK=${{ steps.vst2.outputs.dir }}" }
+          # TONE3000: a repository secret T3K_PUBLISHABLE_KEY (t3k_pub_...) builds the key in
+          if ($env:T3K_PUBLISHABLE_KEY) { $extra += "-DRIGSMITH_T3K_KEY=$env:T3K_PUBLISHABLE_KEY"; "TONE3000 key built in" } else { "No TONE3000 key: users can paste one in Settings" }
           cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release @extra
 
       - name: Build

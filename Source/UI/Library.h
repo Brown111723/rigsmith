@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GraphView.h"
+#include "Tone3000Panel.h"
 
 namespace rig
 {
@@ -24,8 +25,14 @@ public:
     std::function<void()> onManageFolders;
 
 private:
-    enum Tab { Models = 0, Irs, Plugins, Effects };
-    static constexpr int numTabs = 4;
+public:
+    enum Tab { Models = 0, Irs, Plugins, Effects, Tone3000 };
+    void setTab (Tab);
+    /** Adds the TONE3000 page (the editor owns the client). */
+    void setTone3000 (t3k::Client&);
+    Tone3000Panel* getTone3000Panel() const { return t3kPanel.get(); }
+private:
+    static constexpr int numTabs = 5;
 
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
@@ -44,13 +51,14 @@ private:
     void showDiceMenu();
     static juce::Rectangle<int> tickArea (int w, int h) { return { w - 34, h / 2 - 10, 20, 20 }; }
 
-    void setTab (Tab);
     void applyFilter();
+    std::unique_ptr<Tone3000Panel> t3kPanel;
     juce::String pathsKey() const { return tab == Models ? "modelPaths" : "irPaths"; }
 
     GraphHost& host;
     Tab tab = Models;
-    juce::TextButton tabs[numTabs] { juce::TextButton ("Models"), juce::TextButton ("IRs"), juce::TextButton ("VST3"), juce::TextButton ("Built-in") };
+    juce::TextButton tabs[numTabs] { juce::TextButton ("Models"), juce::TextButton ("IRs"), juce::TextButton ("VST3"), juce::TextButton ("Built-in"),
+                                    juce::TextButton ("TONE3000  -  amps, pedals & IRs from the community") };
     juce::TextButton folderButton;
     juce::TextEditor search;
     juce::ListBox list;
@@ -60,6 +68,12 @@ private:
     juce::Array<juce::File> files;
     juce::Array<juce::PluginDescription> plugins;
     juce::Array<NodeType> effects;
+    juce::Array<int> gears;       // Gear of each file
+    int gearFilter = -1;          // -1 = all
+    juce::TextButton gearButton;
+    void showGearMenu();
+    void updateGearButton();
+    static int gearRank (Gear);
     bool hasTick (int row) const;   // the tuner has none: it's never randomised
     juce::Array<int> rows;   // indices into files/plugins after filtering
 };

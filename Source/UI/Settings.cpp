@@ -41,6 +41,23 @@ SettingsPanel::SettingsPanel (Engine& e, bool isStandalone) : engine (e)
     scanNow.onClick = [this] { if (onScanNow) onScanNow(); };
     addAndMakeVisible (scanNow);
 
+    t3kTitle.setText ("TONE3000", juce::dontSendNotification);
+    t3kTitle.setFont (font (14.0f, true));
+    t3kHint.setText ("Publishable key (t3k_pub_..., from tone3000.com > Settings > API Keys; leave empty to use the built-in one)",
+                     juce::dontSendNotification);
+    t3kHint.setFont (font (12.0f));
+    t3kHint.setColour (juce::Label::textColourId, muted);
+    t3kKey.setFont (mono (13.0f));
+    t3kKey.setIndents (8, 7);
+    t3kKey.setTextToShowWhenEmpty ("t3k_pub_...", dim);
+    t3kKey.setText (engine.ini.get ("TONE3000", "PublishableKey"), false);
+    t3kArch.addItem ("Download A2 captures (newest, recommended)", 2);
+    t3kArch.addItem ("Download A1 captures", 1);
+    t3kArch.setSelectedId (engine.ini.getInt ("TONE3000", "Architecture", 2) == 1 ? 1 : 2, juce::dontSendNotification);
+    t3kArch.setTooltip ("Rigsmith plays both. A tone without the chosen kind falls back to the other one.");
+    for (auto* c : std::initializer_list<juce::Component*> { &t3kTitle, &t3kHint, &t3kKey, &t3kArch })
+        addAndMakeVisible (c);
+
     iniNote.setFont (font (12.0f));
     iniNote.setColour (juce::Label::textColourId, muted);
     addAndMakeVisible (iniNote);
@@ -66,7 +83,7 @@ SettingsPanel::SettingsPanel (Engine& e, bool isStandalone) : engine (e)
     addChildComponent (portable);
     portable.setVisible (isStandalone);
 
-    setSize (720, 720 + pluginSections.size() * 150);
+    setSize (720, 840 + pluginSections.size() * 150);
 }
 
 SettingsPanel::~SettingsPanel()
@@ -75,6 +92,8 @@ SettingsPanel::~SettingsPanel()
     engine.setPaths ("irPaths", irs.list.getPath());
     for (int i = 0; i < pluginFormats.size(); ++i)
         engine.setPluginPaths (*pluginFormats[i], pluginSections[i]->list.getPath());
+    engine.ini.set ("TONE3000", "PublishableKey", t3kKey.getText().trim());
+    engine.ini.setInt ("TONE3000", "Architecture", t3kArch.getSelectedId() == 1 ? 1 : 2);
     engine.setSetting ("autoCategorise", autoCategorise.getToggleState());
     engine.setSetting ("scanOnStartup", scanOnStartup.getToggleState());
     engine.setSetting ("fullScreen", startFullScreen.getToggleState());
@@ -122,6 +141,12 @@ void SettingsPanel::resized()
     place (irs, 120);
     for (auto* s : pluginSections) place (*s, 110);
     vst2Note.setBounds (r.removeFromTop (36));
+    t3kTitle.setBounds (r.removeFromTop (22));
+    t3kHint.setBounds (r.removeFromTop (18));
+    t3kKey.setBounds (r.removeFromTop (32).removeFromLeft (440));
+    r.removeFromTop (6);
+    t3kArch.setBounds (r.removeFromTop (28).removeFromLeft (360));
+    r.removeFromTop (14);
     r.removeFromTop (6);
     autoCategorise.setBounds (r.removeFromTop (28));
     scanOnStartup.setBounds (r.removeFromTop (28));

@@ -33,6 +33,10 @@ private:
     juce::ToggleButton startFullScreen { "Open Rigsmith full screen (standalone; F11 toggles)" }, scanOnStartup { "Look for new plug-ins every time Rigsmith opens (otherwise only the first time)" };
     juce::TextButton scanNow { "Scan plug-ins now" }, showIni { "Show Rigsmith.ini" }, portable;
     juce::Label vst2Note, iniNote;
+    // TONE3000
+    juce::Label t3kTitle, t3kHint;
+    juce::TextEditor t3kKey;
+    juce::ComboBox t3kArch;
 
     void updateIniNote();
     void setupSection (Section&, const juce::String& title, const juce::String& hint);

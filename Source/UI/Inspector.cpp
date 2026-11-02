@@ -416,6 +416,22 @@ void Inspector::buildBlock (Block& b)
         case NodeType::Ir:
             openButton.setIcon (Icon::Folder); openButton.setTooltip ("Load a cab IR (or drop a .wav file on the block)");
             openButton.setVisible (true); prevFile.setVisible (true); nextFile.setVisible (true);
+            if (auto* ir = dynamic_cast<IrBlock*> (&b))
+            {
+                // not a parameter: a setting of this block, saved with the preset
+                auto* t = toggles.add (new juce::ToggleButton ("Switch off after an Amp + Cab model"));
+                t->setTooltip ("Amp + Cab captures already include a cabinet, so a second one would muffle the sound. "
+                               "With this on, the IR turns itself off (\"Auto off\") whenever the amp before it is an Amp + Cab model.");
+                t->setToggleState (ir->skipAfterFullRig.load(), juce::dontSendNotification);
+                t->onClick = [this, ir, t]
+                {
+                    ir->skipAfterFullRig = t->getToggleState();
+                    host.getEngine().updateAutoSkips();
+                    host.getEngine().markDirty();
+                };
+                controls.addAndMakeVisible (t);
+                toggleParam.push_back (-1);
+            }
             break;
         case NodeType::Plugin:
             openButton.setIcon (Icon::Open); openButton.setTooltip ("Open the plug-in's window");
@@ -629,7 +645,8 @@ void Inspector::timerCallback()
                 knobs[(int) k]->refreshText();
             }
         for (size_t t = 0; t < toggleParam.size(); ++t)
-            toggles[(int) t]->setToggleState (b->get (toggleParam[t]) > 0.5f, juce::dontSendNotification);
+            if (toggleParam[t] >= 0)
+                toggles[(int) t]->setToggleState (b->get (toggleParam[t]) > 0.5f, juce::dontSendNotification);
         for (size_t c = 0; c < choiceParam.size(); ++c)
             choices[(int) c]->setSelected (b->getChoice (choiceParam[c]));
     }
@@ -697,9 +714,11 @@ void Inspector::layoutControls()
 
     if (! toggles.isEmpty())
     {
-        int y = 22;
-        for (auto* t : toggles) { t->setBounds (x + 8, y, 150, 28); y += 34; }
-        x += 166;
+        int y = 22, tw = 150;
+        for (auto* t : toggles)
+            tw = juce::jmax (tw, juce::GlyphArrangement::getStringWidthInt (font (14.0f), t->getButtonText()) + 44);
+        for (auto* t : toggles) { t->setBounds (x + 8, y, tw, 28); y += 34; }
+        x += tw + 16;
     }
 
     if (pluginHeader.isVisible())

@@ -50,7 +50,7 @@ Category Randomiser::categoryOf (const Node& n)
 {
     if (auto* pb = dynamic_cast<const PluginBlock*> (&n))
         return categoriseDescription (pb->getDescription());
-    return categoryForBuiltIn (n.getType());
+    return n.getCategory();   // a NAM pedal capture is a drive, a space IR a reverb
 }
 
 void Randomiser::collectFiles()
@@ -70,8 +70,27 @@ void Randomiser::collectFiles()
                 if (out.size() >= 4000) break;
             }
     };
-    scan (engine.getPaths ("modelPaths"), "*.nam", models);
-    scan (engine.getPaths ("irPaths"), "*.wav;*.aif;*.aiff;*.flac", irs);
+    juce::Array<juce::File> allModels, allIrs;
+    scan (engine.getPaths ("modelPaths"), "*.nam", allModels);
+    scan (engine.getPaths ("irPaths"), "*.wav;*.aif;*.aiff;*.flac", allIrs);
+
+    // sort by what they are: amps for the amp slot, pedal captures for drives,
+    // cabinets for the cab slot, rooms and halls for the reverb slot
+    models.clear(); pedalModels.clear(); irs.clear(); spaceIrs.clear();
+    for (auto& f : allModels)
+        switch (classifyFile (f))
+        {
+            case Gear::Pedal:                                     pedalModels.add (f); break;
+            case Gear::Outboard: case Gear::Experimental:         break;   // not a sound to roll by chance
+            default:                                              models.add (f); break;
+        }
+    for (auto& f : allIrs)
+        switch (classifyFile (f))
+        {
+            case Gear::Space:                                     spaceIrs.add (f); break;
+            case Gear::Pedal: case Gear::Experimental:            break;
+            default:                                              irs.add (f); break;
+        }
 }
 
 juce::File Randomiser::pick (const juce::Array<juce::File>& files)
@@ -79,7 +98,7 @@ juce::File Randomiser::pick (const juce::Array<juce::File>& files)
     return files.isEmpty() ? juce::File() : files[rng.nextInt (files.size())];
 }
 
-std::unique_ptr<Node> Randomiser::makeBuiltIn (NodeType t)
+std::unique_ptr<Node> Randomiser::makeBuiltIn (NodeType t, int variant)
 {
     if (engine.isRandomExcluded (t)) return nullptr;   // unticked in the library: that slot stays empty
     auto n = engine.createNode (t);
@@ -91,13 +110,16 @@ std::unique_ptr<Node> Randomiser::makeBuiltIn (NodeType t)
     {
         collectFiles();
         // try a couple of files in case one is unreadable
-        for (int attempt = 0; attempt < 3 && ! models.isEmpty(); ++attempt)
-            if (nb->loadModel (pick (models), err)) break;
+        const auto& pool = variant == 1 ? pedalModels : models;
+        for (int attempt = 0; attempt < 3 && ! pool.isEmpty(); ++attempt)
+            if (nb->loadModel (pick (pool), err)) break;
     }
     else if (auto* ir = dynamic_cast<IrBlock*> (b))
     {
         collectFiles();
-        if (! irs.isEmpty()) ir->loadIr (pick (irs), err);
+        const auto& pool = variant == 1 ? spaceIrs : irs;
+        if (! pool.isEmpty()) ir->loadIr (pick (pool), err);
+        if (variant == 1) ir->set (2, 35.0f);   // a room / hall IR as a send-style blend
     }
     b->randomise (rng, 1.0f);
     b->syncEdits();
@@ -121,7 +143,7 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
 {
     collectFiles();
 
-    struct Candidate { NodeType type; const juce::PluginDescription* plugin; float weight; };
+    struct Candidate { NodeType type; const juce::PluginDescription* plugin; float weight; int variant = 0; };
     std::vector<Candidate> cands;
 
     const auto avoidType = avoid != nullptr ? avoid->getType() : NodeType::Chain;
@@ -137,6 +159,10 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
             if (! engine.isRandomExcluded (t))
                 cands.push_back ({ t, nullptr, t == NodeType::Comp ? 2.5f : (t == NodeType::Gate || t == NodeType::Limiter ? 0.6f : 1.0f) });
 
+    // NAM pedal captures can be the drive; space IRs can be the reverb
+    if (cat == Category::Drive && ! pedalModels.isEmpty())  cands.push_back ({ NodeType::Nam, nullptr, 1.5f, 1 });
+    if (cat == Category::Reverb && ! spaceIrs.isEmpty())    cands.push_back ({ NodeType::Ir, nullptr, 0.6f, 1 });
+
     const auto types = engine.knownPlugins.getTypes();
     if (options.usePlugins)
         for (auto& d : types)
@@ -148,7 +174,7 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
         cands.erase (std::remove_if (cands.begin(), cands.end(), [&] (const Candidate& c)
         {
             if (c.plugin != nullptr) return c.plugin->createIdentifierString() == avoidPlugin;
-            return c.type == avoidType && c.type != NodeType::Nam && c.type != NodeType::Ir && builtInsFor (cat).size() > 1;
+            return c.variant == 0 && c.type == avoidType && c.type != NodeType::Nam && c.type != NodeType::Ir && builtInsFor (cat).size() > 1;
         }), cands.end());
 
     for (int attempt = 0; attempt < 4 && ! cands.empty(); ++attempt)
@@ -159,7 +185,7 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
         size_t i = 0;
         for (; i < cands.size() - 1; ++i) { r -= cands[i].weight; if (r <= 0) break; }
 
-        auto n = cands[i].plugin != nullptr ? makePlugin (*cands[i].plugin) : makeBuiltIn (cands[i].type);
+        auto n = cands[i].plugin != nullptr ? makePlugin (*cands[i].plugin) : makeBuiltIn (cands[i].type, cands[i].variant);
         if (n != nullptr) return n;
         cands.erase (cands.begin() + (long) i);   // plug-in failed to load: try another
     }
@@ -188,6 +214,14 @@ void Randomiser::randomiseRig()
     auto add = [] (Chain& c, std::unique_ptr<Node> n) { if (n != nullptr) c.nodes.push_back (std::move (n)); };
     auto chance = [this] (float p) { return rng.nextFloat() < p; };
     auto oneOf = [this] (std::initializer_list<NodeType> ts) { return *(ts.begin() + rng.nextInt ((int) ts.size())); };
+    // an "Amp + Cab" capture already has its cabinet: no IR after it
+    auto addAmpAndCab = [&] (Chain& c)
+    {
+        auto amp = makeAmp();
+        const bool hasCab = [&] { auto* nb = dynamic_cast<NamBlock*> (amp.get()); return nb != nullptr && gearIncludesCab (nb->getGear()); }();
+        add (c, std::move (amp));
+        if (! hasCab) add (c, makeCab());
+    };
 
     // --- front end: gate, wah, dynamics, drive, pitch
     if (chance (0.7f))  add (*chain, makeBuiltIn (NodeType::Gate));
@@ -205,8 +239,7 @@ void Randomiser::randomiseRig()
         for (int i = 0; i < n; ++i)
         {
             auto b = std::make_unique<Split::Branch>();
-            add (*b->chain, makeAmp());
-            add (*b->chain, makeCab());
+            addAmpAndCab (*b->chain);
             if (chance (0.25f))
                 add (*b->chain, makeRandom (chance (0.5f) ? Category::Modulation : Category::Delay));
             s->branches.push_back (std::move (b));
@@ -217,10 +250,7 @@ void Randomiser::randomiseRig()
         add (*chain, std::move (s));
     }
     else
-    {
-        add (*chain, makeAmp());
-        add (*chain, makeCab());
-    }
+        addAmpAndCab (*chain);
 
     // --- post: EQ, modulation, delay, reverb
     if (chance (0.35f)) add (*chain, makeRandom (Category::Eq));

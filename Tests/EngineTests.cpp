@@ -1,12 +1,98 @@
 // Headless smoke tests for the Rigsmith engine. Build with -DRIGSMITH_TESTS=ON.
 #include "Engine/Engine.h"
 #include "Engine/Randomiser.h"
+#include "T3K/Tone3000.h"
 #include <cstdio>
 
 using namespace rig;
 
 static int failures = 0;
 #define CHECK(cond, msg) do { if (! (cond)) { std::printf ("FAIL: %s\n", msg); ++failures; } else std::printf ("ok:   %s\n", msg); } while (0)
+
+/** A stand-in for tone3000.com: just enough of the API for the sign-in + download flow. */
+struct MockTone3000 : juce::Thread
+{
+    juce::StreamingSocket listener;
+    int port = 0;
+    juce::MemoryBlock modelBytes;
+    std::atomic<int> tokenCalls { 0 }, unauthorised { 0 };
+    juce::String lastTokenBody;
+
+    MockTone3000() : juce::Thread ("mock t3k") {}
+    ~MockTone3000() override { signalThreadShouldExit(); listener.close(); stopThread (2000); }
+    bool start() { if (! listener.createListener (0, "127.0.0.1")) return false; port = listener.getBoundPort(); startThread(); return true; }
+    juce::String origin() const { return "http://127.0.0.1:" + juce::String (port); }
+
+    void run() override
+    {
+        while (! threadShouldExit())
+        {
+            std::unique_ptr<juce::StreamingSocket> c (listener.waitForNextConnection());
+            if (c == nullptr) continue;
+            juce::MemoryOutputStream in;
+            char buf[4096];
+            int contentLength = -1;
+            for (;;)
+            {
+                if (c->waitUntilReady (true, 2000) != 1) break;
+                const int n = c->read (buf, sizeof (buf), false);
+                if (n <= 0) break;
+                in.write (buf, (size_t) n);
+                const auto t = in.toString();
+                const int hdrEnd = t.indexOf ("\r\n\r\n");
+                if (hdrEnd < 0) continue;
+                if (contentLength < 0)
+                {
+                    contentLength = 0;
+                    for (auto& line : juce::StringArray::fromLines (t.substring (0, hdrEnd)))
+                        if (line.startsWithIgnoreCase ("Content-Length:")) contentLength = line.fromFirstOccurrenceOf (":", false, false).trim().getIntValue();
+                }
+                if ((int) in.getDataSize() >= hdrEnd + 4 + contentLength) break;
+            }
+            const auto req = in.toString();
+            const auto line = req.upToFirstOccurrenceOf ("\r\n", false, false);
+            const auto method = line.upToFirstOccurrenceOf (" ", false, false);
+            const auto target = line.fromFirstOccurrenceOf (" ", false, false).upToFirstOccurrenceOf (" ", false, false);
+            const auto path = target.upToFirstOccurrenceOf ("?", false, false);
+            const auto body = req.fromFirstOccurrenceOf ("\r\n\r\n", false, false);
+            const bool authed = req.contains ("Authorization: Bearer AT1");
+
+            int status = 200;
+            juce::String type = "application/json";
+            juce::MemoryBlock out;
+            auto json = [&] (const juce::String& j) { out.replaceAll (j.toRawUTF8(), j.getNumBytesAsUTF8()); };
+            const juce::String tone = R"({"id":42,"title":"Plexi Crunch","gear":"amp-cab","format":"nam","license":"t3k",)"
+                                      R"("url":"https://www.tone3000.com/tones/plexi-42","images":[],"user":{"username":"tonemaker","avatar_url":""}})";
+            if (method == "POST" && path == "/api/v1/oauth/token")
+            {
+                ++tokenCalls;
+                lastTokenBody = body;
+                if (body.contains ("grant_type=authorization_code") && body.contains ("code=CODE1") && body.contains ("code_verifier="))
+                    json (R"({"access_token":"AT1","refresh_token":"RT1","token_type":"bearer","expires_in":3600})");
+                else { status = 400; json (R"({"error":"invalid_grant"})"); }
+            }
+            else if (! authed) { status = 401; ++unauthorised; json (R"({"error":"unauthorized"})"); }
+            else if (path == "/api/v1/user") json (R"({"id":1,"username":"guitarist","display_name":"Guitar Ist","avatar_url":""})");
+            else if (path == "/api/v1/tones/42") json (tone);
+            else if (path == "/api/v1/tones/favorited") json ("{\"data\":[" + tone + "],\"page\":1,\"total\":1}");
+            else if (path == "/api/v1/models")
+            {
+                if (target.contains ("architecture=2"))
+                    json ("{\"data\":[{\"id\":7,\"tone_id\":42,\"name\":\"Crunch 5\",\"architecture_version\":\"2\",\"model_url\":\"" + origin() + "/files/7.nam\"}]}");
+                else json (R"({"data":[]})");
+            }
+            else if (path == "/files/7.nam") { type = "application/octet-stream"; out = modelBytes; }
+            else { status = 404; json ("{}"); }
+
+            juce::String head;
+            head << "HTTP/1.1 " << status << (status == 200 ? " OK" : " Error") << "\r\nContent-Type: " << type
+                 << "\r\nContent-Length: " << (int) out.getSize() << "\r\nConnection: close\r\n\r\n";
+            c->write (head.toRawUTF8(), (int) head.getNumBytesAsUTF8());
+            if (out.getSize() > 0) c->write (out.getData(), (int) out.getSize());
+            c->close();
+        }
+    }
+};
 
 static float runNoise (Engine& e, int blocks, int blockSize, bool* finite, float amp = 0.2f)
 {
@@ -669,6 +755,171 @@ int main (int argc, char** argv)
         CHECK (e.presetName == "Dual Amp Rig", "then Dual Amp Rig");
         e.stepPreset (-2);
         CHECK (e.isInit(), "and back to Init");
+    }
+    //==========================================================================
+    std::printf ("--- v0.6: gear types, amp + cab, TONE3000\n");
+    {
+        const auto lib = testDir.getChildFile ("Gear");
+        auto put = [&] (const juce::String& rel) { auto f = lib.getChildFile (rel); f.getParentDirectory().createDirectory(); model.copyFileTo (f); return f; };
+        const auto head = put ("Amps/Plexi head.nam");
+        const auto full = put ("Full Rigs/JCM800 amp + cab.nam");
+        const auto pedal = put ("Pedals/Klon boost.nam");
+        CHECK (classifyFile (head) == Gear::AmpHead && classifyFile (full) == Gear::AmpCab && classifyFile (pedal) == Gear::Pedal,
+               "models sorted by folder and file names (head, amp + cab, pedal)");
+        CHECK (classifyFile (model) == Gear::Unknown, "a model with no clues stays uncategorised");
+
+        // the model's own metadata wins over names
+        auto meta = lib.getChildFile ("Misc/thing.nam");
+        meta.getParentDirectory().createDirectory();
+        meta.replaceWithText (R"({"version":"0.5.4","metadata":{"gear_type":"amp_cab","name":"x"},"architecture":"LSTM"})");
+        CHECK (classifyFile (meta) == Gear::AmpCab, "NAM metadata gear_type amp_cab means Amp + Cab");
+        CHECK (gearFromNamMetadata ("pedal") == Gear::Pedal && gearFromNamMetadata ("studio") == Gear::Outboard
+               && gearFromNamMetadata ("pedal_amp") == Gear::AmpHead, "NAM gear types map to TONE3000's");
+
+        // a TONE3000 sidecar wins over everything
+        ToneInfo ti; ti.valid = true; ti.id = 5; ti.title = "Big Room"; ti.gear = "space"; ti.format = "ir"; ti.creator = "someone";
+        const auto spaceIr = lib.getChildFile ("Downloads/hall.wav");
+        spaceIr.getParentDirectory().createDirectory();
+        testDir.getChildFile ("Library/Cabs/1 Greenback.wav").copyFileTo (spaceIr);
+        ti.write (spaceIr.getParentDirectory());
+        CHECK (classifyFile (spaceIr) == Gear::Space, "a TONE3000 sidecar sets the type");
+        CHECK (classifyFile (testDir.getChildFile ("Library/Cabs/1 Greenback.wav")) == Gear::Cab, "IRs default to cabinets");
+        const auto roomIr = lib.getChildFile ("Rooms/studio A.wav");
+        roomIr.getParentDirectory().createDirectory();
+        testDir.getChildFile ("Library/Cabs/1 Greenback.wav").copyFileTo (roomIr);
+        CHECK (classifyFile (roomIr) == Gear::Space, "IRs in a Rooms folder are spaces");
+
+        // an Amp + Cab model switches the following cab IR off; an amp head doesn't
+        Engine e;
+        e.prepare (48000.0, 256);
+        e.loadFactory (0);
+        auto* nam = dynamic_cast<NamBlock*> (e.getRoot().nodes[1].get());
+        auto* ir = dynamic_cast<IrBlock*> (e.getRoot().nodes[2].get());
+        juce::String err;
+        ir->loadIr (testDir.getChildFile ("Library/Cabs/1 Greenback.wav"), err);
+        nam->loadModel (full, err);
+        e.updateAutoSkips();
+        CHECK (nam->getGear() == Gear::AmpCab && ir->autoSkipped.load() && ! ir->bypassed.load(), "cab IR turns itself off after an Amp + Cab model");
+        CHECK (ir->getDetail().contains ("amp includes a cab"), "...and says why");
+        nam->loadModel (head, err);
+        e.updateAutoSkips();
+        CHECK (! ir->autoSkipped.load(), "back on with an amp head");
+        nam->loadModel (full, err);
+        ir->skipAfterFullRig = false;
+        e.updateAutoSkips();
+        CHECK (! ir->autoSkipped.load(), "unless that's turned off for the IR");
+        ir->skipAfterFullRig = true;
+        e.updateAutoSkips();
+        // audio: with the IR auto-off, the output equals the rig without the IR
+        bool finite = false;
+        CHECK (runNoise (e, 40, 256, &finite) > 1.0e-4f && finite, "Amp + Cab rig makes sound");
+        auto st = e.getState (false);
+        Engine e2; e2.prepare (48000.0, 256); e2.setState (st, false);
+        auto* ir2 = dynamic_cast<IrBlock*> (e2.getRoot().nodes[2].get());
+        CHECK (ir2 != nullptr && ir2->skipAfterFullRig.load() && ir2->autoSkipped.load(), "IR auto-off survives a preset round trip");
+        CHECK (dynamic_cast<NamBlock*> (e2.getRoot().nodes[1].get())->getCategory() == Category::Amp, "an Amp + Cab model is an amp");
+        nam->loadModel (pedal, err);
+        CHECK (nam->getCategory() == Category::Drive, "a NAM pedal capture counts as a drive");
+
+        // the dice: amps from amp captures only; amp + cab gets no IR; pedals can be drives
+        e.setPaths ("modelPaths", juce::FileSearchPath (lib.getFullPathName()));
+        e.setPaths ("irPaths", juce::FileSearchPath (testDir.getChildFile ("Library/Cabs").getFullPathName()));
+        Randomiser rz (e);
+        rz.options.usePlugins = false;
+        bool pedalAsAmp = false, cabAfterFullRig = false, pedalAsDrive = false;
+        for (int i = 0; i < 40; ++i)
+        {
+            rz.randomiseRig();
+            std::function<void (Chain&)> scan = [&] (Chain& c)
+            {
+                for (size_t k = 0; k < c.nodes.size(); ++k)
+                {
+                    if (auto* nb = dynamic_cast<NamBlock*> (c.nodes[k].get()))
+                    {
+                        const bool nextIsIr = k + 1 < c.nodes.size() && dynamic_cast<IrBlock*> (c.nodes[k + 1].get()) != nullptr;
+                        if (nb->getGear() == Gear::Pedal) { if (nextIsIr) pedalAsAmp = true; else pedalAsDrive = true; }
+                        if (nb->getGear() == Gear::AmpCab && nextIsIr) cabAfterFullRig = true;
+                    }
+                    if (auto* sp = dynamic_cast<Split*> (c.nodes[k].get()))
+                        for (auto& b : sp->branches) scan (*b->chain);
+                }
+            };
+            scan (e.getRoot());
+        }
+        CHECK (! pedalAsAmp, "the dice never use a pedal capture as the amp");
+        CHECK (! cabAfterFullRig, "the dice don't add a cab IR after an Amp + Cab model");
+        CHECK (pedalAsDrive, "the dice sometimes use a NAM pedal capture as the drive");
+
+        // TONE3000: sign in + pick a tone (browser simulated) -> download -> categorised in the library
+        MockTone3000 mock;
+        model.loadFileAsData (mock.modelBytes);
+        CHECK (mock.start(), "mock TONE3000 server starts");
+        e.ini.set ("TONE3000", "ApiOrigin", mock.origin());
+        e.ini.set ("TONE3000", "PublishableKey", "t3k_pub_test");
+        t3k::Client client (e);
+        CHECK (! client.isConnected(), "not signed in to start with");
+
+        juce::URL opened;
+        client.openBrowser = [&] (const juce::URL& u)
+        {
+            opened = u;
+            // the "browser": TONE3000 redirects back to Rigsmith's loopback address
+            const auto params = u.getParameterNames(), values = u.getParameterValues();
+            const auto redirect = values[params.indexOf ("redirect_uri")], state = values[params.indexOf ("state")];
+            juce::Thread::launch ([redirect, state]
+            {
+                juce::URL back (redirect + "?code=CODE1&state=" + state + "&tone_id=42");
+                back.createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress).withConnectionTimeoutMs (3000));
+            });
+        };
+        int pickedTone = -1;
+        juce::String flowError = "pending";
+        client.startFlow ("select_tone", "nam", {}, [&] (int id, juce::String error) { pickedTone = id; flowError = error; });
+        for (int i = 0; i < 300 && flowError == "pending"; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        const auto names = opened.getParameterNames(), vals = opened.getParameterValues();
+        CHECK (vals[names.indexOf ("client_id")] == "t3k_pub_test" && vals[names.indexOf ("code_challenge_method")] == "S256"
+               && vals[names.indexOf ("prompt")] == "select_tone" && vals[names.indexOf ("architecture")] == "2"
+               && vals[names.indexOf ("redirect_uri")].startsWith ("http://127.0.0.1:"), "authorize URL: PKCE, select_tone, A2, loopback redirect");
+        CHECK (flowError.isEmpty() && pickedTone == 42, "picking a tone on TONE3000 comes back to Rigsmith");
+        CHECK (client.isConnected() && client.userName == "Guitar Ist", "signed in, with the user's name");
+        CHECK (mock.lastTokenBody.contains ("code_verifier="), "the code is exchanged with the PKCE verifier");
+        CHECK (iniPath.getSiblingFile ("tone3000.dat").existsAsFile()
+               && ! iniPath.getSiblingFile ("tone3000.dat").loadFileAsString().contains ("AT1"), "the sign-in is stored, not in plain text");
+
+        auto pump = [] (const std::function<bool()>& doneYet) { for (int i = 0; i < 500 && ! doneYet(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (10); };
+        t3k::Tone got; juce::String terr = "pending";
+        client.getTone (42, [&] (t3k::Tone t, juce::String er) { got = t; terr = er; });
+        pump ([&] { return terr != "pending"; });
+        CHECK (terr.isEmpty() && got.title == "Plexi Crunch" && got.getGear() == Gear::AmpCab && got.creator == "tonemaker", "tone details");
+
+        juce::Array<t3k::Model> models; juce::String merr = "pending";
+        client.listModels (42, [&] (juce::Array<t3k::Model> m, juce::String er) { models = m; merr = er; });
+        pump ([&] { return merr != "pending"; });
+        CHECK (merr.isEmpty() && models.size() == 1 && models[0].name == "Crunch 5" && models[0].extension() == ".nam", "the tone's A2 models");
+
+        juce::File downloaded; juce::String derr = "pending";
+        client.download (got, models[0], [&] (juce::File f, juce::String er) { downloaded = f; derr = er; });
+        pump ([&] { return derr != "pending"; });
+        CHECK (derr.isEmpty() && downloaded.existsAsFile() && downloaded.getSize() == (juce::int64) mock.modelBytes.getSize(), "model downloaded with the sign-in");
+        CHECK (downloaded.isAChildOf (client.libraryFolder()) && downloaded.getParentDirectory().getParentDirectory().getFileName() == "Amp + Cab",
+               "saved in Documents/Rigsmith/TONE3000/Amp + Cab/<tone>");
+        CHECK (classifyFile (downloaded) == Gear::AmpCab, "and categorised as Amp + Cab in the library");
+        bool inPaths = false;
+        auto mp = e.getPaths ("modelPaths");
+        for (int i = 0; i < mp.getNumPaths(); ++i) inPaths |= juce::File (mp.getRawString (i)) == client.libraryFolder();
+        CHECK (inPaths, "the TONE3000 folder is added to the model folders");
+        NamBlock fromT3k;
+        CHECK (fromT3k.loadModel (downloaded, err) && fromT3k.getName() == "Plexi Crunch" && fromT3k.getDetail() == "by tonemaker",
+               "the block shows the tone's title and creator");
+
+        juce::Array<t3k::Tone> favs; juce::String ferr = "pending";
+        client.listTones ("favorited", 1, [&] (juce::Array<t3k::Tone> t, juce::String er) { favs = t; ferr = er; });
+        pump ([&] { return ferr != "pending"; });
+        CHECK (ferr.isEmpty() && favs.size() == 1 && client.isInLibrary (favs[0]), "favourites list (and it knows it's downloaded)");
+
+        client.signOut();
+        CHECK (! client.isConnected() && ! iniPath.getSiblingFile ("tone3000.dat").existsAsFile(), "sign out forgets the sign-in");
+        client.libraryFolder().getChildFile ("Amp + Cab").deleteRecursively();
     }
     testDir.deleteRecursively();
 

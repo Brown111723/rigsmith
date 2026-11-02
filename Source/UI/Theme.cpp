@@ -10,6 +10,8 @@ juce::Colour colourFor (const Node& n)
         const auto h = (juce::uint32) n.getName().hashCode();   // stable colour per plug-in name
         return juce::Colour::fromHSV ((float) (h % 360) / 360.0f, 0.45f, 0.95f, 1.0f);
     }
+    if (auto* nb = dynamic_cast<const NamBlock*> (&n); nb != nullptr && nb->getGear() != Gear::Unknown) return gearColour (nb->getGear());
+    if (auto* ir = dynamic_cast<const IrBlock*> (&n); ir != nullptr && ir->getGear() != Gear::Unknown) return gearColour (ir->getGear());
     return categoryColour (n.getCategory());
 }
 
@@ -23,8 +25,14 @@ juce::String kindLabel (const Node& n)
 {
     switch (n.getType())
     {
-        case NodeType::Nam:    return "NAM";
-        case NodeType::Ir:     return "CAB IR";
+        case NodeType::Nam:
+            if (auto* nb = dynamic_cast<const NamBlock*> (&n); nb != nullptr && nb->getGear() != Gear::Unknown)
+                return "NAM - " + gearShortName (nb->getGear());
+            return "NAM";
+        case NodeType::Ir:
+            if (auto* ir = dynamic_cast<const IrBlock*> (&n); ir != nullptr && ir->getGear() != Gear::Cab && ir->getGear() != Gear::Unknown)
+                return "IR - " + gearShortName (ir->getGear());
+            return "CAB IR";
         case NodeType::Split:  return "SPLIT";
         case NodeType::Chain:  return "CHAIN";
         case NodeType::Plugin:

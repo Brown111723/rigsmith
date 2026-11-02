@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.5.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -106,6 +106,8 @@ target_sources(Rigsmith PRIVATE
     Source/Engine/Fx.cpp
     Source/Engine/Randomiser.cpp
     Source/Engine/IniFile.cpp
+    Source/Engine/Gear.cpp
+    Source/T3K/Tone3000.cpp
     Source/UI/Theme.cpp
     Source/UI/Icons.cpp
     Source/UI/GraphView.cpp
@@ -114,7 +116,8 @@ target_sources(Rigsmith PRIVATE
     Source/UI/Library.cpp
     Source/UI/Header.cpp
     Source/UI/FxDisplay.cpp
-    Source/UI/Settings.cpp)
+    Source/UI/Settings.cpp
+    Source/UI/Tone3000Panel.cpp)
 
 target_include_directories(Rigsmith PRIVATE Source)
 
@@ -139,6 +142,13 @@ if(MSVC)
     target_compile_options(Rigsmith PRIVATE /bigobj /MP)
 endif()
 
+# TONE3000: the app's publishable key (t3k_pub_..., safe to ship). Create one at
+# tone3000.com -> Settings -> API Keys. Without it, users can paste their own key in Settings.
+set(RIGSMITH_T3K_KEY "" CACHE STRING "TONE3000 publishable key built into Rigsmith")
+if(RIGSMITH_T3K_KEY)
+    target_compile_definitions(Rigsmith PRIVATE RIGSMITH_T3K_KEY="${RIGSMITH_T3K_KEY}")
+endif()
+
 # Optional VST2 hosting. Steinberg no longer licenses the VST2 SDK, so it can't be
 # downloaded here; point this at a folder that contains pluginterfaces/vst2.x/aeffect.h
 # (found in VST3 SDK zips up to 3.6.x) and VST2 plug-ins become scannable.
@@ -160,6 +170,7 @@ target_link_libraries(Rigsmith
         juce::juce_audio_processors
         juce::juce_dsp
         juce::juce_gui_extra
+        juce::juce_cryptography
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -181,12 +192,14 @@ if(RIGSMITH_TESTS)
         Source/Engine/Tuner.cpp
         Source/Engine/Fx.cpp
         Source/Engine/Randomiser.cpp
-    Source/Engine/IniFile.cpp)
+    Source/Engine/IniFile.cpp
+    Source/Engine/Gear.cpp
+    Source/T3K/Tone3000.cpp)
     target_include_directories(RigsmithTests PRIVATE Source)
     target_compile_definitions(RigsmithTests PRIVATE
-        JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_XINPUT=0
+        JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_XINPUT=0 JUCE_MODAL_LOOPS_PERMITTED=1
         RIGSMITH_EXAMPLE_MODELS="${NAM_DIR}/example_models")
     target_link_libraries(RigsmithTests PRIVATE
-        "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" juce::juce_audio_utils juce::juce_audio_processors juce::juce_dsp juce::juce_gui_extra
+        "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" juce::juce_audio_utils juce::juce_audio_processors juce::juce_dsp juce::juce_gui_extra juce::juce_cryptography
         juce::juce_recommended_config_flags)
 endif()

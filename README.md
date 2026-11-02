@@ -2,6 +2,8 @@
 
 A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flexible routing system and a VST3 host — shipped as both **`Rigsmith.exe`** and **`Rigsmith.vst3`** from one codebase.
 
+![Amps grouped by type in the library, an Amp + Cab model with the cab IR switched off automatically](docs/screenshot-gear.png)
+
 ![The Dual Amp Rig starting point: gate, drive, two NAM + IR paths, then chorus, delay and reverb, with a + on every wire and randomise ticks in the library](docs/screenshot-dual.png)
 
 ![A delay selected: name, icon row and echo display on the left, every control on the right](docs/screenshot-v3.png)
@@ -30,6 +32,20 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - Per-path **level, pan, polarity flip, mute and solo**.
 - **Automatic latency alignment**: paths with different plug-in latency stay in time, so blends don't comb-filter.
 - Wire thickness shows how much signal each path carries.
+
+**TONE3000** (the free community library of NAM captures and IRs)
+- The **TONE3000** tab in the library: sign in with your free TONE3000 account, then **Browse TONE3000** opens their catalog in your browser. Pick a tone and it downloads and loads straight into the rig.
+- Your **Favorites**, **Downloaded**, **Created** and **Trending** tones are listed in Rigsmith; click one to load it. For packs with several captures you pick one, or download them all.
+- Also in the **+** menu and a block's **Replace** menu ("Browse TONE3000...").
+- Downloads go to `Documents\Rigsmith\TONE3000\<type>\<tone>`, with a `tone3000.json` beside them so the library knows the type and credits the creator. The cards show the tone's name, "by <creator>" and a T3K mark.
+- A2 captures are requested by default (TONE3000's recommendation); choose A1 in Settings if you prefer. Rigsmith plays both.
+- TONE3000 asks apps for a free publishable key. Builds made with one (the `T3K_PUBLISHABLE_KEY` repository secret) have it built in; otherwise paste yours in the TONE3000 tab or Settings (tone3000.com > Settings > API Keys).
+
+**Captures sorted by type**
+- Models and IRs are grouped and colour-coded: **Amp head**, **Amp + Cab** (gold and teal), **Pedal**, **Outboard**, **Cabinet**, **Space**, **Experimental**. Filter with **All types** next to the search box.
+- The type comes from TONE3000 (for downloads), the model's own metadata (`gear_type`, set when it was trained), or folder and file names ("Full Rigs", "Pedals", "Rooms"...).
+- **Amp + Cab** captures already include a cabinet, so a cab IR after one switches itself off (**Auto off** on its card) and comes back when you change to an amp head. Untick **Switch off after an Amp + Cab model** on the IR to keep it.
+- A pedal capture is a drive: it's coloured as one, double-clicking it puts it before the amp, and the dice can pick it for the drive slot. Space IRs can be the dice's reverb. The dice never put a cab after an Amp + Cab capture.
 
 **Built-in effects** (22 + tuner), each with a live FabFilter-style display of what its knobs are doing
 - Dynamics: noise gate, compressor (soft knee, auto makeup, blend), limiter, expander, transient shaper, auto swell
@@ -95,7 +111,7 @@ Every push builds on GitHub Actions. Open the **Actions** tab, pick the latest r
 To publish a GitHub Release, push a tag:
 
 ```
-git tag v0.5.0 && git push origin v0.5.0
+git tag v0.6.0 && git push origin v0.6.0
 ```
 
 ## Quick start
@@ -169,4 +185,4 @@ installer/  Inno Setup script used by CI
 
 Rigsmith is released under the **GNU AGPLv3** (see `LICENSE`), because it's built on the open-source edition of [JUCE](https://juce.com), which is AGPLv3. Distributing a closed-source build would require a commercial JUCE licence.
 
-NeuralAmpModelerCore is © Steven Atkinson, MIT licence. VST is a registered trademark of Steinberg Media Technologies GmbH.
+NeuralAmpModelerCore is © Steven Atkinson, MIT licence. The TONE3000 sign-in code is adapted from TONE3000's MIT-licensed API examples (github.com/tone-3000/api); TONE3000 is a trademark of its owners, and tones belong to their creators under the licence shown on each tone. VST is a registered trademark of Steinberg Media Technologies GmbH.

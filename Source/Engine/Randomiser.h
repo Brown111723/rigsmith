@@ -38,7 +38,8 @@ public:
 
 private:
     std::unique_ptr<Node> makeRandom (Category, const Node* avoid = nullptr);
-    std::unique_ptr<Node> makeBuiltIn (NodeType);
+    /** variant 1: a NAM pedal capture (Nam) or a space IR (Ir). */
+    std::unique_ptr<Node> makeBuiltIn (NodeType, int variant = 0);
     std::unique_ptr<Node> makePlugin (const juce::PluginDescription&);
     std::unique_ptr<Node> makeAmp();
     std::unique_ptr<Node> makeCab();
@@ -48,7 +49,8 @@ private:
 
     Engine& engine;
     juce::Random rng;
-    juce::Array<juce::File> models, irs;
+    juce::Array<juce::File> models, irs;            // amp captures / cab IRs
+    juce::Array<juce::File> pedalModels, spaceIrs;  // used for drive and reverb slots
     juce::uint32 lastScan = 0;
     int lastExclusions = -1;
 };

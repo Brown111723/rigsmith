@@ -273,7 +273,7 @@ void Node::prepare (double sr, int block)
 
 void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
 {
-    wetGain.setTargetValue (bypassed.load (std::memory_order_relaxed) ? 0.0f : 1.0f);
+    wetGain.setTargetValue (bypassed.load (std::memory_order_relaxed) || autoSkipped.load (std::memory_order_relaxed) ? 0.0f : 1.0f);
     auto* t = tap.load (std::memory_order_relaxed);
     if (t != nullptr) t->push (false, buffer, n);
 

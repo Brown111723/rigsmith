@@ -10,7 +10,8 @@ Library::Library (GraphHost& h) : host (h)
     {
         tabs[i].setClickingTogglesState (false);
         tabs[i].onClick = [this, i] { setTab ((Tab) i); };
-        addAndMakeVisible (tabs[i]);
+        if (i == Tone3000) addChildComponent (tabs[i]);   // shown once the editor connects a client
+        else addAndMakeVisible (tabs[i]);
     }
 
     folderButton.onClick = [this]
@@ -34,6 +35,10 @@ Library::Library (GraphHost& h) : host (h)
 
     list.setMultipleSelectionEnabled (true);
 
+    gearButton.setTooltip ("Show one kind: amp heads, amp + cab, pedals... (from TONE3000, the model's own details, or folder names)");
+    gearButton.onClick = [this] { showGearMenu(); };
+    addChildComponent (gearButton);
+
     diceButton.setTooltip ("Which of these the dice can pick: tick or untick everything shown (use Search to narrow it down first)");
     diceButton.onClick = [this] { showDiceMenu(); };
     addAndMakeVisible (diceButton);
@@ -50,15 +55,33 @@ void Library::setTab (Tab t)
     tab = t;
     for (int i = 0; i < numTabs; ++i)
         tabs[i].setToggleState (i == (int) t, juce::dontSendNotification);
+    const bool t3k = tab == Tone3000;
+    if (t3kPanel != nullptr) t3kPanel->setVisible (t3k);
+    for (auto* c : std::initializer_list<juce::Component*> { &search, &list, &footer, &diceButton })
+        c->setVisible (! t3k);
+    if (t3k) { folderButton.setVisible (false); gearButton.setVisible (false); resized(); return; }
     folderButton.setVisible (tab != Effects);
+    gearButton.setVisible (tab == Models || tab == Irs);
+    gearFilter = -1;
     resized();
     folderButton.setButtonText (tab == Plugins ? "Scan..." : "Folders...");
     folderButton.setTooltip (tab == Plugins ? "Scan for VST plug-ins" : "Choose which folders are searched - remembered between sessions");
     refresh();
 }
 
+void Library::setTone3000 (t3k::Client& client)
+{
+    t3kPanel = std::make_unique<Tone3000Panel> (host.getEngine(), client);
+    t3kPanel->onLibraryChanged = [this] { if (tab == Models || tab == Irs) refresh(); };
+    addChildComponent (*t3kPanel);
+    tabs[Tone3000].setVisible (true);
+    resized();
+}
+
 void Library::refresh()
 {
+    if (tab == Tone3000) return;
+    gears.clear();
     files.clear();
     plugins.clear();
     effects.clear();
@@ -95,11 +118,23 @@ void Library::refresh()
                 files.addIfNotAlreadyThere (entry.getFile());
                 if (files.size() >= 8000) break;
             }
-        std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
+        // grouped by what they are (amp heads, amp + cab, pedals... / cabinets, spaces...), then by name
+        gears.clear();
+        for (auto& f : files) gears.add ((int) classifyFile (f));
+        std::vector<int> order ((size_t) files.size());
+        for (int i = 0; i < files.size(); ++i) order[(size_t) i] = i;
+        std::sort (order.begin(), order.end(), [this] (int a, int b)
         {
-            return a.getFileName().compareNatural (b.getFileName()) < 0;
+            if (gears[a] != gears[b]) return gearRank ((Gear) gears[a]) < gearRank ((Gear) gears[b]);
+            return files[a].getFileName().compareNatural (files[b].getFileName()) < 0;
         });
+        juce::Array<juce::File> sortedFiles;
+        juce::Array<int> sortedGears;
+        for (int i : order) { sortedFiles.add (files[i]); sortedGears.add (gears[i]); }
+        files.swapWith (sortedFiles);
+        gears.swapWith (sortedGears);
     }
+    updateGearButton();
     applyFilter();
 }
 
@@ -129,7 +164,8 @@ void Library::applyFilter()
     else
     {
         for (int i = 0; i < files.size(); ++i)
-            if (matches (files[i].getFileName() + " " + files[i].getParentDirectory().getFileName()))
+            if ((gearFilter < 0 || gears[i] == gearFilter)
+                && matches (files[i].getFileName() + " " + files[i].getParentDirectory().getFileName() + " " + gearName ((Gear) gears[i])))
                 rows.add (i);
     }
 
@@ -167,7 +203,7 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
     }
 
     juce::String name, sub;
-    juce::Colour c = accent;
+    juce::Colour c = accent, secondColour;
     if (tab == Effects)
     {
         const auto t = effects[rows[row]];
@@ -188,9 +224,13 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
     else
     {
         const auto& f = files[rows[row]];
+        const auto gear = (Gear) gears[rows[row]];
         name = f.getFileNameWithoutExtension();
-        sub = f.getParentDirectory().getFileName();
-        c = tab == Models ? categoryColour (Category::Amp) : categoryColour (Category::Cab);
+        sub = gearName (gear) + " - " + f.getParentDirectory().getFileName();
+        if (auto tone = ToneInfo::forFile (f); tone.valid)
+            sub = gearName (gear) + " - " + tone.title + (tone.creator.isNotEmpty() ? " by " + tone.creator : juce::String());
+        c = gearColour (gear);
+        secondColour = gearIncludesCab (gear) ? gearColour (Gear::Cab) : juce::Colour();
     }
 
     const bool ticked = hasTick (row);
@@ -199,6 +239,11 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
 
     g.setColour (in ? c : c.withAlpha (0.35f));
     g.fillRoundedRectangle (12.0f, (float) h * 0.5f - 9.0f, 4.0f, 18.0f, 2.0f);
+    if (! secondColour.isTransparent())   // amp + cab: two-tone stripe
+    {
+        g.setColour (in ? secondColour : secondColour.withAlpha (0.35f));
+        g.fillRoundedRectangle (12.0f, (float) h * 0.5f + 1.0f, 4.0f, 8.0f, 2.0f);
+    }
     g.setColour (in ? text : text.withAlpha (0.55f));
     g.setFont (font (13.0f, true));
     g.drawText (name, 24, h / 2 - 17, w - 66, 18, juce::Justification::centredLeft, true);
@@ -346,6 +391,53 @@ void Library::showRowMenu (int row)
     });
 }
 
+int Library::gearRank (Gear g)
+{
+    switch (g)
+    {
+        case Gear::AmpHead: return 0;  case Gear::AmpCab: return 1;   case Gear::Pedal: return 2;
+        case Gear::Outboard: return 3; case Gear::Cab: return 4;      case Gear::Space: return 5;
+        case Gear::Experimental: return 6; case Gear::Unknown: break;
+    }
+    return 7;
+}
+
+void Library::updateGearButton()
+{
+    gearButton.setButtonText (gearFilter < 0 ? juce::String ("All types") : gearName ((Gear) gearFilter));
+    gearButton.setColour (juce::TextButton::textColourOffId, gearFilter < 0 ? text : gearColour ((Gear) gearFilter));
+}
+
+void Library::showGearMenu()
+{
+    std::map<int, int> counts;
+    for (int g : gears) ++counts[g];
+    juce::PopupMenu m;
+    m.addItem (1000, "All types  (" + juce::String (gears.size()) + ")", true, gearFilter < 0);
+    m.addSeparator();
+    std::vector<int> kinds;
+    for (auto& [g, n] : counts) kinds.push_back (g);
+    std::sort (kinds.begin(), kinds.end(), [] (int a, int b) { return gearRank ((Gear) a) < gearRank ((Gear) b); });
+    for (int g : kinds)
+    {
+        juce::PopupMenu::Item item (gearName ((Gear) g) + "  (" + juce::String (counts[g]) + ")");
+        item.itemID = 1 + g;
+        item.colour = gearColour ((Gear) g);
+        item.isTicked = gearFilter == g;
+        m.addItem (item);
+    }
+    m.addSeparator();
+    m.addItem (-1, tab == Models ? "Types come from TONE3000, the model's own details, or folder names"
+                                 : "Types come from TONE3000 or folder names (Cabs, Rooms, Halls...)", false);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&gearButton), [this] (int r)
+    {
+        if (r == 0) return;
+        gearFilter = r == 1000 ? -1 : r - 1;
+        updateGearButton();
+        applyFilter();
+    });
+}
+
 void Library::showDiceMenu()
 {
     const bool filtered = search.getText().trim().isNotEmpty();
@@ -410,13 +502,29 @@ void Library::resized()
     auto r = getLocalBounds().reduced (12, 0);
     r.removeFromTop (34);
     auto tabRow = r.removeFromTop (30);
-    const int tw = (tabRow.getWidth() - 4 * (numTabs - 1)) / numTabs;
-    for (int i = 0; i < numTabs; ++i) { tabs[i].setBounds (tabRow.removeFromLeft (tw)); tabRow.removeFromLeft (4); }
+    const int tw = (tabRow.getWidth() - 4 * 3) / 4;
+    for (int i = 0; i < 4; ++i) { tabs[i].setBounds (tabRow.removeFromLeft (tw)); tabRow.removeFromLeft (4); }
+    if (tabs[Tone3000].isVisible())
+    {
+        // TONE3000 gets its own full-width tab under the others
+        r.removeFromTop (4);
+        tabs[Tone3000].setBounds (r.removeFromTop (28));
+    }
     r.removeFromTop (8);
+    if (t3kPanel != nullptr && tab == Tone3000)
+    {
+        t3kPanel->setBounds (r.withTrimmedBottom (4));
+        return;
+    }
     auto searchRow = r.removeFromTop (34);
     if (folderButton.isVisible())
     {
         folderButton.setBounds (searchRow.removeFromRight (78));
+        searchRow.removeFromRight (6);
+    }
+    if (gearButton.isVisible())
+    {
+        gearButton.setBounds (searchRow.removeFromRight (86));
         searchRow.removeFromRight (6);
     }
     search.setBounds (searchRow);

@@ -87,13 +87,15 @@ NamBlock::~NamBlock() = default;
 juce::String NamBlock::getName() const
 {
     if (! info.loaded) return "NAM Amp";
+    if (tone.valid && tone.title.isNotEmpty()) return tone.title;
     return info.name.isNotEmpty() ? info.name : info.file.getFileNameWithoutExtension();
 }
 
 juce::String NamBlock::getDetail() const
 {
     if (! info.loaded) return "Double-click to load .nam";
-    juce::String s = info.gear.isNotEmpty() ? info.gear : info.architecture;
+    juce::String s = tone.valid && tone.creator.isNotEmpty() ? "by " + tone.creator
+                   : info.gear.isNotEmpty() ? info.gear : info.architecture;
     if (info.resampling) s << " - resampled";
     return s;
 }
@@ -164,6 +166,7 @@ bool NamBlock::loadModel (const juce::File& f, juce::String& error)
         const auto make = jsonString (cfg.metadata, "gear_make"), modelName = jsonString (cfg.metadata, "gear_model");
         ni.gear = (make + " " + modelName).trim();
         ni.toneType = jsonString (cfg.metadata, "tone_type");
+        ni.gearType = jsonString (cfg.metadata, "gear_type");
         ni.modelRate = m->rate;
         ni.resampling = m->resample;
         ni.hasLoudness = m->hasLoudness;
@@ -177,6 +180,8 @@ bool NamBlock::loadModel (const juce::File& f, juce::String& error)
         latency = newLatency;
         info = ni;
         modelFile = f;
+        tone = ToneInfo::forFile (f);
+        gearKind = (int) classifyFile (f, ni.gearType);
         touched();
         return true;  // old model (now in m) is freed here, off the audio thread
     }

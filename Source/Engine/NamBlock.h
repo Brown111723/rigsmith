@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Nodes.h"
+#include "Gear.h"
 
 namespace nam { class DSP; }
 
@@ -24,7 +24,7 @@ public:
     struct Info
     {
         bool loaded = false;
-        juce::String name, architecture, gear, toneType;
+        juce::String name, architecture, gear, toneType, gearType;
         double modelRate = 0;
         bool resampling = false, hasLoudness = false;
         float loudnessDb = 0;
@@ -43,6 +43,11 @@ public:
     /** Other .nam files next to the loaded one (for quick browsing). */
     juce::File getFile() const { return modelFile; }
 
+    /** What the loaded model is (amp head, amp + cab, pedal...). */
+    Gear getGear() const noexcept { return (Gear) gearKind.load(); }
+    Category getCategory() const override { return gearCategory (getGear(), false); }
+    ToneInfo getToneInfo() const { return tone; }
+
 protected:
     void prepareImpl (double sr, int block) override;
     void processImpl (juce::AudioBuffer<float>&, int) noexcept override;
@@ -57,6 +62,8 @@ private:
     juce::File modelFile;
     Info info;
     std::atomic<int> latency { 0 };
+    std::atomic<int> gearKind { (int) Gear::Unknown };
+    ToneInfo tone;
 
     std::vector<float> mono;
     Biquad bass, mid, treble, presence;
