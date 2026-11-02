@@ -18,8 +18,11 @@ struct GraphHost
     virtual void showAddMenu (Chain&, int index, juce::Component* anchor) = 0;
     virtual void showNodeMenu (Node&, juce::Component* anchor) = 0;
     virtual void showReplaceMenu (Node&, juce::Component* anchor) = 0;
-    /** Step to the previous/next .nam or IR file in the same folder. */
+    /** Step to the previous/next piece of gear in the library (or file in the folder). */
     virtual void browseFile (Node&, int delta) = 0;
+    /** Load another capture of the same gear into a NAM / IR block, keeping its settings
+        (the capture knobs: no rebuild of the panel, so it can follow a drag). */
+    virtual void switchCapture (Node&, const juce::File&) = 0;
     virtual void showBranchMenu (Split&, int branch, juce::Component* anchor) = 0;
     virtual bool loadFileInto (Node* target, Chain* chain, int index, const juce::File&) = 0;
     virtual bool insertPlugin (const juce::String& identifier, Chain& chain, int index) = 0;
@@ -61,6 +64,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     juce::String getTooltip() override;
 
     // Drop onto the middle of a card to replace it (or swap with a dragged block);
@@ -79,6 +83,13 @@ private:
     juce::Rectangle<float> footswitchArea() const;
     juce::Rectangle<float> diceArea() const;
     bool hasDice() const;
+    /** NAM / IR blocks whose gear has several captures get a little selector knob. */
+    CaptureGroupPtr captureGroup() const;
+    juce::Rectangle<float> knobArea() const;
+    void stepCapture (int delta);
+    void showCaptureMenu();
+    bool knobDragging = false;
+    int knobStart = 0, knobMoved = 0;
     ChainView* parentChain() const;
     GraphHost& host;
     Node& node;

@@ -60,6 +60,9 @@ private:
     void timerCallback() override;
     void buildBlock (Block&);
     void buildPluginParams (PluginBlock&);
+    void buildCaptureKnob (Block&);
+    void updateCaptureText();
+    void showCaptureMenu();
     void buildSplit (Split&);
     void clearControls();
     void layoutControls();
@@ -72,7 +75,8 @@ private:
 
     juce::Label title, subtitle, info;
     IconButton openButton { Icon::Open, "Open" },
-               prevFile { Icon::Prev, "Previous file in this folder" }, nextFile { Icon::Next, "Next file in this folder" },
+               prevFile { Icon::Prev, "Previous gear in the library (the Capture knob switches captures of this one)" },
+               nextFile { Icon::Next, "Next gear in the library (the Capture knob switches captures of this one)" },
                autoGainButton { Icon::AutoGain, "", theme::teal },
                diceButton { Icon::Dice, "Randomise this block's settings (R). Ctrl+Z undoes it" },
                presetButton { Icon::Preset, "Block presets: save, load, init" },
@@ -88,6 +92,11 @@ private:
     juce::OwnedArray<juce::ToggleButton> toggles;
     juce::OwnedArray<ChoiceControl> choices;
     std::vector<int> knobParam, toggleParam, choiceParam;
+
+    // NAM / IR: every capture of the loaded gear on one knob
+    std::unique_ptr<Knob> captureKnob;
+    CaptureGroupPtr captureGroup;
+    juce::Label captureName;
 
     // plug-in parameters
     juce::Label pluginHeader;

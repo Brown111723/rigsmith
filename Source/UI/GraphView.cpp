@@ -67,9 +67,79 @@ bool BlockCard::hasDice() const
     return dynamic_cast<Block*> (&node) != nullptr && node.getType() != NodeType::Tuner;
 }
 
+static juce::File loadedFile (const Node& n)
+{
+    if (auto* nb = dynamic_cast<const NamBlock*> (&n)) return nb->getFile();
+    if (auto* ir = dynamic_cast<const IrBlock*> (&n)) return ir->getFile();
+    return {};
+}
+
+CaptureGroupPtr BlockCard::captureGroup() const
+{
+    const auto f = loadedFile (node);
+    if (f == juce::File()) return nullptr;
+    auto g = host.getEngine().captures.groupFor (f);
+    return g != nullptr && g->size() > 1 ? g : nullptr;
+}
+
+juce::Rectangle<float> BlockCard::knobArea() const
+{
+    return { (float) getWidth() - 40.0f, 38.0f, 28.0f, 28.0f };
+}
+
+void BlockCard::stepCapture (int delta)
+{
+    auto g = captureGroup();
+    if (g == nullptr) return;
+    const int at = juce::jmax (0, g->indexOf (loadedFile (node)));
+    const int next = juce::jlimit (0, g->size() - 1, at + delta);
+    if (next != at) { host.switchCapture (node, g->files[next]); repaint(); }
+}
+
+void BlockCard::showCaptureMenu()
+{
+    auto g = captureGroup();
+    if (g == nullptr) return;
+    const auto current = loadedFile (node);
+    juce::PopupMenu m;
+    m.addSectionHeader (g->title + "  -  " + juce::String (g->size()) + " captures");
+    for (int i = 0; i < g->size(); ++i)
+    {
+        const auto tone = toneTypeName (g->fileToneTypes[i]);
+        m.addItem (i + 1, g->labels[i] + (tone.isNotEmpty() ? "   (" + tone + ")" : juce::String()), true, g->files[i] == current);
+    }
+    juce::Component::SafePointer<BlockCard> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe, g] (int r)
+    {
+        if (safe == nullptr || r <= 0 || r > g->size()) return;
+        safe->host.select (safe->node.id);
+        safe->host.switchCapture (safe->node, g->files[r - 1]);
+        safe->repaint();
+    });
+}
+
+void BlockCard::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    if (captureGroup() != nullptr && knobArea().expanded (4.0f).contains (e.position))
+    {
+        const float d = std::abs (w.deltaY) > std::abs (w.deltaX) ? w.deltaY : -w.deltaX;
+        if (d != 0.0f) stepCapture ((d > 0.0f) != w.isReversed ? -1 : 1);
+        return;
+    }
+    GraphItem::mouseWheelMove (e, w);
+}
+
 juce::String BlockCard::getTooltip()
 {
     const auto p = getMouseXYRelative().toFloat();
+    if (auto g = captureGroup(); g != nullptr && knobArea().expanded (4.0f).contains (p))
+    {
+        const int i = juce::jmax (0, g->indexOf (loadedFile (node)));
+        const auto tone = toneTypeName (g->fileToneTypes[i]);
+        return "Capture " + juce::String (i + 1) + " of " + juce::String (g->size()) + ": " + g->labels[i]
+             + (tone.isNotEmpty() ? " (" + tone + ")" : juce::String())
+             + "\nDrag up / down or scroll to switch, click for the list";
+    }
     if (hasDice() && diceArea().expanded (3.0f).contains (p))
         return "Random " + categoryName (Randomiser::categoryOf (node)).toLowerCase() + " block (Shift+R). Ctrl+Z undoes it";
     if (footswitchArea().expanded (6.0f).contains (p))
@@ -117,9 +187,51 @@ void BlockCard::paint (juce::Graphics& g)
     g.setFont (font (10.0f, true).withExtraKerningFactor (0.08f));
     g.drawFittedText (kindLabel (node), 12, 22, getWidth() - 24 - (node.autoGain.load() || node.getLatency() > 0 ? 58 : 0) - (node.locked.load() ? 20 : 0), 14, juce::Justification::centredLeft, 1, 0.8f);
 
+    const auto captures = captureGroup();
     g.setColour (text.withMultipliedAlpha (alpha));
     g.setFont (font (14.0f, true));
-    g.drawFittedText (node.getName(), 12, 37, getWidth() - 24, 36, juce::Justification::topLeft, 2, 0.9f);
+    g.drawFittedText (node.getName(), 12, 37, getWidth() - 24 - (captures != nullptr ? 34 : 0), 36, juce::Justification::topLeft, 2, 0.9f);
+
+    juce::String detail = node.getDetail();
+    if (captures != nullptr)
+    {
+        // the capture selector: a little pointer knob with "3/12" under it
+        const int at = juce::jmax (0, captures->indexOf (loadedFile (node)));
+        const int n = captures->size();
+        const auto k = knobArea();
+        const bool over = isMouseOver() && k.expanded (4.0f).contains (getMouseXYRelative().toFloat());
+        const auto kc = gearColour (captures->gear).withMultipliedAlpha (alpha);
+        const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
+        const float pos = a0 + (a1 - a0) * (float) at / (float) juce::jmax (1, n - 1);
+        const auto ctr = k.getCentre();
+        const float rad = k.getWidth() * 0.5f;
+
+        juce::Path track, value;
+        track.addCentredArc (ctr.x, ctr.y, rad - 1.5f, rad - 1.5f, 0.0f, a0, a1, true);
+        value.addCentredArc (ctr.x, ctr.y, rad - 1.5f, rad - 1.5f, 0.0f, a0, pos, true);
+        g.setColour (border.brighter (0.2f));
+        g.strokePath (track, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour (kc);
+        g.strokePath (value, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        const auto body = k.reduced (5.0f);
+        g.setColour (over || knobDragging ? cardHi.brighter (0.15f) : bg.brighter (0.06f));
+        g.fillEllipse (body);
+        g.setColour (border.brighter (0.3f));
+        g.drawEllipse (body, 1.0f);
+        g.setColour (over || knobDragging ? kc.brighter (0.3f) : text.withMultipliedAlpha (alpha));
+        const auto tip = ctr.getPointOnCircumference (rad - 7.0f, pos);
+        const auto from = ctr.getPointOnCircumference (2.0f, pos);
+        g.drawLine ({ from, tip }, 2.0f);
+
+        g.setColour (muted.withMultipliedAlpha (alpha));
+        g.setFont (mono (9.0f));
+        g.drawText (juce::String (at + 1) + "/" + juce::String (n), k.withY (k.getBottom()).withHeight (10.0f).expanded (6.0f, 0.0f),
+                    juce::Justification::centred);
+
+        detail = captures->shortLabels[at];
+        if (const auto tone = toneTypeName (captures->fileToneTypes[at]); tone.isNotEmpty())
+            detail << "  -  " << tone;
+    }
 
     auto detailColour = muted.withMultipliedAlpha (alpha);
     if (auto* tb = dynamic_cast<TunerBlock*> (&node))
@@ -129,7 +241,7 @@ void BlockCard::paint (juce::Graphics& g)
     }
     g.setColour (detailColour);
     g.setFont (font (11.0f, node.getType() == NodeType::Tuner));
-    g.drawFittedText (node.getDetail(), 12, 72, getWidth() - 24, 16, juce::Justification::topLeft, 1, 0.85f);
+    g.drawFittedText (detail, 12, 72, getWidth() - 24 - (captures != nullptr ? 26 : 0), 16, juce::Justification::topLeft, 1, 0.85f);
 
     // footswitch + LED glow
     const auto sw = footswitchArea();
@@ -199,6 +311,18 @@ void BlockCard::paint (juce::Graphics& g)
 void BlockCard::mouseDown (const juce::MouseEvent& e)
 {
     pressedSwitch = false;
+    knobDragging = false;
+    if (! e.mods.isPopupMenu())
+        if (auto g = captureGroup(); g != nullptr && knobArea().expanded (4.0f).contains (e.position))
+        {
+            pressedSwitch = true;   // not a block drag
+            knobDragging = true;
+            knobStart = juce::jmax (0, g->indexOf (loadedFile (node)));
+            knobMoved = 0;
+            host.select (node.id);
+            repaint();
+            return;
+        }
     if (e.mods.isPopupMenu())
     {
         host.select (node.id);
@@ -226,6 +350,18 @@ void BlockCard::mouseDown (const juce::MouseEvent& e)
 
 void BlockCard::mouseDrag (const juce::MouseEvent& e)
 {
+    if (knobDragging)
+    {
+        // up / right = next capture, about 12 px a step
+        auto g = captureGroup();
+        if (g == nullptr) return;
+        const int moved = (e.getDistanceFromDragStartX() - e.getDistanceFromDragStartY()) / 12;
+        knobMoved = juce::jmax (knobMoved, std::abs (e.getDistanceFromDragStartX()) + std::abs (e.getDistanceFromDragStartY()));
+        const int target = juce::jlimit (0, g->size() - 1, knobStart + moved);
+        if (g->files[target] != loadedFile (node)) host.switchCapture (node, g->files[target]);
+        repaint();
+        return;
+    }
     if (pressedSwitch || dragging || e.mods.isPopupMenu() || e.getDistanceFromDragStart() < 6)
         return;
     if (auto* dnd = juce::DragAndDropContainer::findParentDragContainerFor (this))
@@ -235,11 +371,18 @@ void BlockCard::mouseDrag (const juce::MouseEvent& e)
     }
 }
 
-void BlockCard::mouseUp (const juce::MouseEvent&) { dragging = false; pressedSwitch = false; }
+void BlockCard::mouseUp (const juce::MouseEvent&)
+{
+    const bool clickedKnob = knobDragging && knobMoved < 4;
+    dragging = false; pressedSwitch = false; knobDragging = false;
+    if (clickedKnob) showCaptureMenu();
+    repaint();
+}
 
 void BlockCard::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (! footswitchArea().expanded (6.0f).contains (e.position) && ! (hasDice() && diceArea().expanded (3.0f).contains (e.position)))
+    if (! footswitchArea().expanded (6.0f).contains (e.position) && ! (hasDice() && diceArea().expanded (3.0f).contains (e.position))
+        && ! (captureGroup() != nullptr && knobArea().expanded (4.0f).contains (e.position)))
         host.openNode (node);
 }
 

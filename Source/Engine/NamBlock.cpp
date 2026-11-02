@@ -87,6 +87,8 @@ NamBlock::~NamBlock() = default;
 juce::String NamBlock::getName() const
 {
     if (! info.loaded) return "NAM Amp";
+    // the gear itself ("Darkglass Alpha Omega Ultra"); the capture's own name is the detail
+    if (info.gear.isNotEmpty()) return info.gear;
     if (tone.valid && tone.title.isNotEmpty()) return tone.title;
     return info.name.isNotEmpty() ? info.name : info.file.getFileNameWithoutExtension();
 }
@@ -94,13 +96,20 @@ juce::String NamBlock::getName() const
 juce::String NamBlock::getDetail() const
 {
     if (! info.loaded) return "Double-click to load .nam";
-    juce::String s = tone.valid && tone.creator.isNotEmpty() ? "by " + tone.creator
-                   : info.gear.isNotEmpty() ? info.gear : info.architecture;
+    juce::String s = getCaptureName();
+    if (s == getName()) s = tone.valid && tone.creator.isNotEmpty() ? "by " + tone.creator
+                          : info.modeledBy.isNotEmpty() ? "by " + info.modeledBy : info.architecture;
     if (info.resampling) s << " - resampled";
     return s;
 }
 
 NamBlock::Info NamBlock::getInfo() const { return info; }
+
+juce::String NamBlock::getCaptureName() const
+{
+    if (! info.loaded) return {};
+    return info.name.isNotEmpty() ? info.name : info.file.getFileNameWithoutExtension();
+}
 
 void NamBlock::prepareModel (Model& m, double sr, int block)
 {
@@ -163,8 +172,11 @@ bool NamBlock::loadModel (const juce::File& f, juce::String& error)
         ni.file = f;
         ni.name = jsonString (cfg.metadata, "name");
         ni.architecture = juce::String (cfg.architecture);
-        const auto make = jsonString (cfg.metadata, "gear_make"), modelName = jsonString (cfg.metadata, "gear_model");
-        ni.gear = (make + " " + modelName).trim();
+        CaptureInfo ci;
+        ci.gearMake = jsonString (cfg.metadata, "gear_make");
+        ci.gearModel = jsonString (cfg.metadata, "gear_model");
+        ni.gear = ci.gearTitle();   // "Marshall JCM800", not "Marshall JCM800 Marshall JCM800"
+        ni.modeledBy = jsonString (cfg.metadata, "modeled_by");
         ni.toneType = jsonString (cfg.metadata, "tone_type");
         ni.gearType = jsonString (cfg.metadata, "gear_type");
         ni.modelRate = m->rate;

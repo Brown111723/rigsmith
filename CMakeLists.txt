@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.6.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.7.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -107,6 +107,7 @@ target_sources(Rigsmith PRIVATE
     Source/Engine/Randomiser.cpp
     Source/Engine/IniFile.cpp
     Source/Engine/Gear.cpp
+    Source/Engine/Captures.cpp
     Source/T3K/Tone3000.cpp
     Source/UI/Theme.cpp
     Source/UI/Icons.cpp
@@ -194,6 +195,7 @@ if(RIGSMITH_TESTS)
         Source/Engine/Randomiser.cpp
     Source/Engine/IniFile.cpp
     Source/Engine/Gear.cpp
+    Source/Engine/Captures.cpp
     Source/T3K/Tone3000.cpp)
     target_include_directories(RigsmithTests PRIVATE Source)
     target_compile_definitions(RigsmithTests PRIVATE

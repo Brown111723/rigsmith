@@ -39,6 +39,7 @@ public:
     void showBranchMenu (rig::Split&, int branch, juce::Component* anchor) override;
     void showReplaceMenu (rig::Node&, juce::Component* anchor) override;
     void browseFile (rig::Node&, int delta) override;
+    void switchCapture (rig::Node&, const juce::File&) override;
     bool loadFileInto (rig::Node* target, rig::Chain* chain, int index, const juce::File&) override;
     bool insertPlugin (const juce::String& identifier, rig::Chain& chain, int index) override;
     bool insertBuiltIn (rig::NodeType, rig::Chain& chain, int index) override;

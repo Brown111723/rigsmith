@@ -1,4 +1,5 @@
 #include "Gear.h"
+#include "Captures.h"
 
 namespace rig
 {
@@ -105,7 +106,7 @@ Gear gearFromNamMetadata (const juce::String& t)
     if (s == "amp_cab" || s == "amp_pedal_cab")          return Gear::AmpCab;
     if (s == "pedal")                                    return Gear::Pedal;
     if (s == "studio")                                   return Gear::Outboard;
-    return Gear::Unknown;
+    return gearFromTone3000 (s.replaceCharacter ('_', '-'));   // "outboard", "cab", "amp-cab"...
 }
 
 //==============================================================================
@@ -154,23 +155,6 @@ namespace
     struct Entry { juce::Time modified; Gear gear; };
     std::map<juce::String, Entry> fileCache;
     std::map<juce::String, std::pair<juce::Time, ToneInfo>> sidecarCache;
-
-    /** "gear_type" from the start of a .nam file (metadata sits near the top). */
-    juce::String peekNamGearType (const juce::File& f)
-    {
-        juce::FileInputStream in (f);
-        if (! in.openedOk()) return {};
-        juce::MemoryBlock head;
-        in.readIntoMemoryBlock (head, 16 * 1024);
-        const auto text = head.toString();
-        const int at = text.indexOf ("\"gear_type\"");
-        if (at < 0) return {};
-        auto rest = text.substring (at + 11).trimStart();
-        if (! rest.startsWithChar (':')) return {};
-        rest = rest.substring (1).trimStart();
-        if (! rest.startsWithChar ('"')) return {};   // null
-        return rest.substring (1).upToFirstOccurrenceOf ("\"", false, false);
-    }
 
     bool containsAny (const juce::String& s, std::initializer_list<const char*> words)
     {
@@ -237,8 +221,10 @@ Gear classifyFile (const juce::File& f, juce::String metadataGearType)
         g = gearFromTone3000 (tone.gear);
     if (g == Gear::Unknown && ! isIr)
     {
-        if (metadataGearType.isEmpty()) metadataGearType = peekNamGearType (f);
+        const auto info = readCaptureInfo (f);   // start or end of the file (A1 / A2)
+        if (metadataGearType.isEmpty()) metadataGearType = info.gearType;
         g = gearFromNamMetadata (metadataGearType);
+        if (g == Gear::Unknown) g = gearFromTone3000 (info.t3kGear);
     }
     if (g == Gear::Unknown)
         g = fromNames (f, isIr);

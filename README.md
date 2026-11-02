@@ -4,7 +4,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 ![Amps grouped by type in the library, an Amp + Cab model with the cab IR switched off automatically](docs/screenshot-gear.png)
 
-![The Dual Amp Rig starting point: gate, drive, two NAM + IR paths, then chorus, delay and reverb, with a + on every wire and randomise ticks in the library](docs/screenshot-dual.png)
+![The Dual Amp Rig starting point: gate, drive, two NAM + IR paths, then chorus, delay and reverb, with a + on every wire and dice icons in the library](docs/screenshot-dual.png)
 
 ![A delay selected: name, icon row and echo display on the left, every control on the right](docs/screenshot-v3.png)
 
@@ -41,8 +41,15 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - A2 captures are requested by default (TONE3000's recommendation); choose A1 in Settings if you prefer. Rigsmith plays both.
 - TONE3000 asks apps for a free publishable key. Builds made with one (the `T3K_PUBLISHABLE_KEY` repository secret) have it built in; otherwise paste yours in the TONE3000 tab or Settings (tone3000.com > Settings > API Keys).
 
+**Captures grouped by gear**
+- A piece of gear with many captures is **one row**: "Marshall JCM800 Zakk Wylde Signature - 12 captures", not twelve files. Rigsmith reads what each `.nam` says about itself (`gear_make`, `gear_model`, `gear_type`, `tone_type`, `name`, `modeled_by`, as written by the NAM trainer and TONE3000), wherever the file is. Click the arrow to see each capture.
+- Gear sits under a heading per type (click a heading to fold it). Filter by **type** (amp heads, pedals...) and **tone** (clean, crunch, hi-gain, metal, 2000s...). Search finds gear, makers, tone types, creators and individual captures.
+- On a NAM block the big **Capture** knob, first in the bottom panel, switches between every capture of that gear (drag, scroll or right-click for the list); the block keeps its settings. The card has a small knob for the same thing. The arrows step to the next piece of gear.
+- The metadata is read from the start or the end of the file, so A1 and A2 captures both work, and remembered in `Rigsmith.captures` next to the ini so big libraries open quickly.
+- The dice give every piece of gear the same chance, then pick any one of its captures.
+
 **Captures sorted by type**
-- Models and IRs are grouped and colour-coded: **Amp head**, **Amp + Cab** (gold and teal), **Pedal**, **Outboard**, **Cabinet**, **Space**, **Experimental**. Filter with **All types** next to the search box.
+- Models and IRs are grouped and colour-coded: **Amp head**, **Amp + Cab** (gold and teal), **Pedal**, **Outboard**, **Cabinet**, **Space**, **Experimental**.
 - The type comes from TONE3000 (for downloads), the model's own metadata (`gear_type`, set when it was trained), or folder and file names ("Full Rigs", "Pedals", "Rooms"...).
 - **Amp + Cab** captures already include a cabinet, so a cab IR after one switches itself off (**Auto off** on its card) and comes back when you change to an amp head. Untick **Switch off after an Amp + Cab model** on the IR to keep it.
 - A pedal capture is a drive: it's coloured as one, double-clicking it puts it before the amp, and the dice can pick it for the drive slot. Space IRs can be the dice's reverb. The dice never put a cab after an Amp + Cab capture.
@@ -66,7 +73,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 **Randomise** (dice icons)
 - **Whole rig** (dice, top bar; right-click for options): dynamics, drives, NAM amps picked from your model folders, cabs from your IR folders, modulation, delays and reverbs, sometimes as a 2- or 3-amp split. Musical ranges, levels never randomised.
 - **Lock** blocks you like (lock icon, or right-click) and they survive every roll.
-- **Ticks in the library** choose what the dice can pick: untick audio-repair plug-ins, test models, noisy IRs or built-in effects you never use, and they're never chosen. Shift/Ctrl-click to tick several at once, right-click for a whole folder or manufacturer, or search and use **"x / y in dice"** to change everything shown. Saved in `Rigsmith.ini`.
+- **The die on each library row** says what the dice can pick: click it to dim it, and that audio-repair plug-in, test model, noisy IR or built-in effect is never chosen. It only affects the dice; the item still loads and plays as normal. A gear row's die covers all its captures (half-lit when only some are in). Shift/Ctrl-click to change several at once, right-click for a whole folder, type or manufacturer, or search and use **"x / y in dice"** to change everything shown. Saved in `Rigsmith.ini`.
 - **Dice on each block** (bottom-right of its card): swaps it for a random block of the same kind (a delay becomes another delay or a delay plug-in, a NAM amp gets another model).
 - **Dice in the bottom panel**: randomises the selected block's settings.
 - More in the top dice's right-click menu: new blocks in the same layout, randomise every block's settings, include plug-ins, allow splits.
@@ -111,7 +118,7 @@ Every push builds on GitHub Actions. Open the **Actions** tab, pick the latest r
 To publish a GitHub Release, push a tag:
 
 ```
-git tag v0.6.0 && git push origin v0.6.0
+git tag v0.7.0 && git push origin v0.7.0
 ```
 
 ## Quick start

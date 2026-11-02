@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Gear.h"
+#include "Captures.h"
 
 namespace nam { class DSP; }
 
@@ -24,13 +24,15 @@ public:
     struct Info
     {
         bool loaded = false;
-        juce::String name, architecture, gear, toneType, gearType;
+        juce::String name, architecture, gear, toneType, gearType, modeledBy;
         double modelRate = 0;
         bool resampling = false, hasLoudness = false;
         float loudnessDb = 0;
         juce::File file;
     };
     Info getInfo() const;
+    /** This capture's own name ("Omega - Omega-BITE G3"), or the file name. */
+    juce::String getCaptureName() const;
 
     juce::ValueTree toState() const override;
     void fromState (const juce::ValueTree&) override;

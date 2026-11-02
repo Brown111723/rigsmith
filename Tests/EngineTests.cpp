@@ -923,6 +923,111 @@ int main (int argc, char** argv)
     }
     testDir.deleteRecursively();
 
+    //==========================================================================
+    std::printf ("--- v0.7: captures grouped by gear, capture knob, dice icons\n");
+    {
+        // what a .nam says about itself, at the start (A1) or after the weights (A2)
+        const auto dir = testDir.getChildFile ("Captures");
+        dir.createDirectory();
+        juce::String big;
+        for (int i = 0; i < 30000; ++i) big << "0.123456,";
+        const auto tailMeta = dir.getChildFile ("tail.nam");
+        tailMeta.replaceWithText (R"({"version":"0.7.0","architecture":"SlimmableContainer","config":{"submodels":[{"model":{"metadata":{"name":"inner"}}}]},"weights":[)"
+                                  + big + R"(0],"sample_rate":48000,"metadata":{"gear_make":"Darkglass Alpha Omega Ultra","gear_model":"Darkglass Alpha Omega Ultra","tone_type":"metal","gear_type":"pedal","t3k_id":413653,"name":"Omega - Omega-BITE G3","modeled_by":"leenykeany","t3k_gear":"pedal"}})");
+        const auto ci = readCaptureInfo (tailMeta);
+        CHECK (ci.name == "Omega - Omega-BITE G3" && ci.toneType == "metal" && ci.t3kId == 413653 && ci.modeledBy == "leenykeany",
+               "metadata after the weights is found (A2), not a sub-model's");
+        CHECK (ci.gearTitle() == "Darkglass Alpha Omega Ultra", "make and model the same: the name isn't said twice");
+        CHECK (classifyFile (tailMeta) == Gear::Pedal, "gear_type at the end of the file sets the type");
+        CHECK (readCaptureInfo (models.getChildFile ("wavenet.nam")).gearTitle() == "Darkglass Electronics Microtubes 900 v2",
+               "different make and model are joined");
+        CHECK (toneTypeName ("hi_gain") == "Hi-gain" && toneTypeName ("2000s") == "2000s" && toneTypeName ("metal") == "Metal", "tone type names");
+
+        // a small library: one amp with three captures (two folders), a pedal with two, one plain file
+        auto writeCapture = [&] (const juce::String& rel, const juce::String& make, const juce::String& type,
+                                 const juce::String& tone, const juce::String& name)
+        {
+            auto v = juce::JSON::parse (models.getChildFile ("wavenet.nam"));
+            auto* meta = v.getProperty ("metadata", {}).getDynamicObject();
+            meta->setProperty ("gear_make", make);
+            meta->setProperty ("gear_model", make);
+            meta->setProperty ("gear_type", type);
+            meta->setProperty ("tone_type", tone);
+            meta->setProperty ("name", name);
+            meta->setProperty ("modeled_by", "tester");
+            auto f = dir.getChildFile ("Lib").getChildFile (rel);
+            f.getParentDirectory().createDirectory();
+            f.replaceWithText (juce::JSON::toString (v, true));
+            return f;
+        };
+        const juce::String jcm ("Marshall JCM800 Zakk Wyle Signature");
+        const auto lead = writeCapture ("Pack A/jcm 3.nam", jcm, "amp", "2000s", "JCM - Lead");
+        const auto clean = writeCapture ("Pack A/jcm 1.nam", jcm, "amp", "clean", "JCM - Clean");
+        const auto crunch = writeCapture ("Pack B/zw crunch.nam", jcm, "amp", "2000s", "JCM - Crunch");
+        const auto g3 = writeCapture ("Pedals/omega g3.nam", "Darkglass Alpha Omega Ultra", "pedal", "metal", "Omega - Omega-BITE G3");
+        const auto g5 = writeCapture ("Pedals/omega g5.nam", "Darkglass Alpha Omega Ultra", "pedal", "metal", "Omega - Omega-BITE G5");
+        const auto plain = dir.getChildFile ("Lib/Amps/plain head.nam");
+        plain.getParentDirectory().createDirectory();
+        model.copyFileTo (plain);
+
+        Engine e;
+        e.prepare (48000.0, 256);
+        e.setPaths ("modelPaths", juce::FileSearchPath (dir.getChildFile ("Lib").getFullPathName()));
+        const auto& set = e.captures.get (false);
+        CHECK (set.files.size() == 6 && set.groups.size() == 3, "6 files, 3 pieces of gear");
+        auto amp = e.captures.groupFor (crunch);
+        CHECK (amp != nullptr && amp->title == jcm && amp->size() == 3 && amp->gear == Gear::AmpHead, "one amp head, three captures from two folders");
+        CHECK (amp != nullptr && amp->files[0] == clean && amp->files[1] == crunch && amp->files[2] == lead, "captures ordered by name");
+        CHECK (amp != nullptr && amp->shortLabels == juce::StringArray ({ "Clean", "Crunch", "Lead" }), "knob labels drop the shared part");
+        CHECK (amp != nullptr && amp->toneTypes.size() == 2 && amp->creatorText() == "tester", "tone types and creator collected");
+        auto pedal = e.captures.groupFor (g5);
+        CHECK (pedal != nullptr && pedal->size() == 2 && pedal->gear == Gear::Pedal
+               && pedal->shortLabels == juce::StringArray ({ "G3", "G5" }), "the pedal's captures, labelled G3 and G5");
+        CHECK (set.groups.front()->gear == Gear::AmpHead && set.groups.back()->gear == Gear::Pedal, "groups sorted by type: amps first");
+        auto single = e.captures.groupFor (plain);
+        CHECK (single != nullptr && single->size() == 1, "a file without metadata stands alone");
+        const auto outside = testDir.getChildFile ("Elsewhere/x.nam");
+        outside.getParentDirectory().createDirectory();
+        lead.copyFileTo (outside);
+        CHECK (e.captures.groupFor (outside) != nullptr, "a file outside the library still gets a group (its folder)");
+
+        // the block shows the gear, the capture is the detail
+        NamBlock nb;
+        juce::String err;
+        nb.prepare (48000.0, 256);
+        CHECK (nb.loadModel (crunch, err), "loads a grouped capture");
+        CHECK (nb.getName() == jcm && nb.getCaptureName() == "JCM - Crunch", "block name is the gear, detail the capture");
+        CHECK (nb.getInfo().toneType == "2000s" && nb.getInfo().modeledBy == "tester", "tone type and creator on the block");
+
+        // the cache survives a restart
+        saveCaptureCache();
+        CHECK (testDir.getChildFile ("Rigsmith.captures").existsAsFile(), "Rigsmith.captures written next to the ini");
+
+        // dice: every piece of gear gets a fair chance, excluded captures never come up
+        e.setRandomExcluded (juce::Array<juce::File> { lead }, true);
+        Randomiser rz (e);
+        rz.options.usePlugins = false;
+        auto* slot = e.insert (std::make_unique<NamBlock>(), e.getRoot(), 0);
+        auto id = slot->id;
+        int jcmPicks = 0, plainPicks = 0, leadPicks = 0, pedalPicks = 0;
+        for (int i = 0; i < 60; ++i)
+        {
+            auto* r = rz.randomiseType (id);
+            if (r == nullptr) continue;
+            id = r->id;
+            auto* n = dynamic_cast<NamBlock*> (r);
+            if (n == nullptr) continue;
+            const auto f = n->getFile();
+            if (amp->files.contains (f)) ++jcmPicks;
+            if (f == plain) ++plainPicks;
+            if (f == lead) ++leadPicks;
+            if (pedal->files.contains (f)) ++pedalPicks;
+        }
+        CHECK (leadPicks == 0, "a capture left out of the dice is never picked");
+        CHECK (jcmPicks > 8 && plainPicks > 8, "the amp with several captures and the single one both come up");
+        CHECK (pedalPicks == 0, "a pedal capture isn't rolled as the amp");
+    }
+
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;
 }

@@ -7,6 +7,7 @@
 #include "PluginBlock.h"
 #include "Tuner.h"
 #include "IniFile.h"
+#include "Captures.h"
 
 namespace rig
 {
@@ -192,6 +193,8 @@ public:
     /** True once any plug-in scan has run: after that, startup scans are opt-in. */
     bool hasScannedPlugins() const;
     void markPluginsScanned();
+    /** Every NAM capture and IR in the library folders, grouped by gear (see Captures.h). */
+    CaptureLibrary captures;
     bool shouldScanOnStartup() const { return ! hasScannedPlugins() || getSetting ("scanOnStartup", false); }
 
     //--- Randomise include / exclude (the ticks in the library) ---------------------

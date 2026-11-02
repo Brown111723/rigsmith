@@ -291,6 +291,8 @@ Inspector::~Inspector()
 void Inspector::clearControls()
 {
     display.reset();
+    captureKnob.reset();
+    captureGroup.reset();
     knobs.clear();
     toggles.clear();
     choices.clear();
@@ -303,7 +305,7 @@ void Inspector::clearControls()
     strips.clear();
     for (auto* c : std::initializer_list<juce::Component*> { &openButton, &bypassButton, &autoGainButton, &prevFile, &nextFile,
                                                               &diceButton, &presetButton, &lockButton,
-                                                              &autoGainSum, &addPathButton, &pluginHeader, &pluginScope })
+                                                              &autoGainSum, &addPathButton, &pluginHeader, &pluginScope, &captureName })
         c->setVisible (false);
 }
 
@@ -407,6 +409,8 @@ void Inspector::buildBlock (Block& b)
         knobParam.push_back (i);
     }
 
+    buildCaptureKnob (b);
+
     switch (b.getType())
     {
         case NodeType::Nam:
@@ -442,6 +446,90 @@ void Inspector::buildBlock (Block& b)
 
     if (auto* pb = dynamic_cast<PluginBlock*> (&b))
         buildPluginParams (*pb);
+}
+
+static juce::File loadedFile (const Node& n)
+{
+    if (auto* nb = dynamic_cast<const NamBlock*> (&n)) return nb->getFile();
+    if (auto* ir = dynamic_cast<const IrBlock*> (&n)) return ir->getFile();
+    return {};
+}
+
+void Inspector::buildCaptureKnob (Block& b)
+{
+    const auto file = loadedFile (b);
+    if (file == juce::File()) return;
+    captureGroup = host.getEngine().captures.groupFor (file);
+    if (captureGroup == nullptr || captureGroup->size() < 2) return;
+
+    // one big selector through every capture of this gear
+    auto group = captureGroup;
+    captureKnob = std::make_unique<Knob> ("Capture", gearColour (group->gear));
+    auto* k = captureKnob.get();
+    k->nameLabel.setFont (font (12.0f, true));
+    k->slider.setRange (0.0, (double) (group->size() - 1), 1.0);
+    k->slider.setMouseDragSensitivity (juce::jlimit (90, 400, group->size() * 14));
+    k->slider.setDoubleClickReturnValue (false, 0);
+    k->slider.setValue (juce::jmax (0, group->indexOf (file)), juce::dontSendNotification);
+    k->valueLabel.setFont (font (12.0f, true));
+    k->valueLabel.setColour (juce::Label::textColourId, text);
+    k->formatValue = [k, group]
+    {
+        const int i = juce::jlimit (0, group->size() - 1, (int) k->slider.getValue());
+        return group->shortLabels[i];
+    };
+    k->slider.onValueChange = [this, k, group]
+    {
+        k->refreshText();
+        const int i = juce::jlimit (0, group->size() - 1, (int) k->slider.getValue());
+        if (node != nullptr && loadedFile (*node) != group->files[i])
+            host.switchCapture (*node, group->files[i]);
+        updateCaptureText();
+    };
+    k->onRightClick = [this] { showCaptureMenu(); };
+    k->slider.setTooltip ("Every capture of " + group->title + " (" + juce::String (group->size())
+                          + "). Drag, scroll or use the arrow keys to switch; right-click for the list");
+    k->refreshText();
+    controls.addAndMakeVisible (k);
+
+    captureName.setFont (font (11.0f));
+    captureName.setColour (juce::Label::textColourId, muted);
+    captureName.setJustificationType (juce::Justification::centredTop);
+    captureName.setMinimumHorizontalScale (0.75f);
+    captureName.setInterceptsMouseClicks (false, false);
+    controls.addAndMakeVisible (captureName);
+    updateCaptureText();
+}
+
+void Inspector::updateCaptureText()
+{
+    if (captureKnob == nullptr || captureGroup == nullptr) return;
+    const int i = juce::jlimit (0, captureGroup->size() - 1, (int) captureKnob->slider.getValue());
+    captureKnob->nameLabel.setText ("CAPTURE  " + juce::String (i + 1) + " / " + juce::String (captureGroup->size()),
+                                    juce::dontSendNotification);
+    auto line = toneTypeName (captureGroup->fileToneTypes[i]);
+    if (captureGroup->labels[i] != captureGroup->shortLabels[i])
+        line = captureGroup->labels[i] + (line.isNotEmpty() ? "  -  " + line : juce::String());
+    captureName.setText (line, juce::dontSendNotification);
+}
+
+void Inspector::showCaptureMenu()
+{
+    if (captureGroup == nullptr || node == nullptr) return;
+    auto group = captureGroup;
+    const auto current = loadedFile (*node);
+    juce::PopupMenu m;
+    m.addSectionHeader (group->title);
+    for (int i = 0; i < group->size(); ++i)
+    {
+        auto tone = toneTypeName (group->fileToneTypes[i]);
+        m.addItem (i + 1, group->labels[i] + (tone.isNotEmpty() ? "   (" + tone + ")" : juce::String()), true, group->files[i] == current);
+    }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (captureKnob.get()), [this, group] (int r)
+    {
+        if (r <= 0 || node == nullptr || captureGroup != group || captureKnob == nullptr) return;
+        captureKnob->slider.setValue (r - 1, juce::sendNotificationSync);
+    });
 }
 
 void Inspector::buildPluginParams (PluginBlock& pb)
@@ -548,6 +636,28 @@ void Inspector::timerCallback()
     }
 
     title.setText (node->getName(), juce::dontSendNotification);
+    if (node->getType() == NodeType::Nam || node->getType() == NodeType::Ir)
+    {
+        // the capture changed somewhere else (the card's knob, the arrows, the dice...)
+        const auto file = loadedFile (*node);
+        const auto group = file == juce::File() ? nullptr : host.getEngine().captures.groupFor (file);
+        const bool wantsKnob = group != nullptr && group->size() > 1;
+        if (wantsKnob != (captureKnob != nullptr) || (wantsKnob && group != captureGroup))
+        {
+            needsRebuild = true;
+            return;
+        }
+        if (captureKnob != nullptr && ! captureKnob->slider.isMouseButtonDown())
+        {
+            const int i = captureGroup->indexOf (file);
+            if (i >= 0 && i != (int) captureKnob->slider.getValue())
+            {
+                captureKnob->slider.setValue (i, juce::dontSendNotification);
+                captureKnob->refreshText();
+                updateCaptureText();
+            }
+        }
+    }
     bypassButton.setToggleState (! node->bypassed.load(), juce::dontSendNotification);
     lockButton.setToggleState (node->locked.load(), juce::dontSendNotification);
     lockButton.setIcon (node->locked.load() ? Icon::Lock : Icon::Unlock);
@@ -587,7 +697,9 @@ void Inspector::timerCallback()
         if (i.loaded)
         {
             sub = "NAM - " + i.architecture.toUpperCase();
-            if (i.gear.isNotEmpty()) inf << i.gear << "\n";
+            if (nb->getCaptureName() != nb->getName()) inf << nb->getCaptureName() << "\n";
+            if (i.toneType.isNotEmpty()) inf << toneTypeName (i.toneType) << "\n";
+            if (i.modeledBy.isNotEmpty()) inf << "by " << i.modeledBy << "\n";
             inf << "Trained at " << juce::String (i.modelRate / 1000.0, 1) << " kHz";
             if (i.resampling) inf << " (resampling)";
             if (i.hasLoudness) inf << "\nLoudness " << juce::String (i.loudnessDb, 1) << " dB";
@@ -710,6 +822,15 @@ void Inspector::layoutControls()
         x += cw + 16;
     }
 
+    if (captureKnob != nullptr)
+    {
+        // the big one, first: which capture of this gear
+        const int cw = 132, ch = juce::jmin (h, 150);
+        captureKnob->setBounds (x, 0, cw, ch - 18);
+        captureName.setBounds (x - 10, ch - 18, cw + 20, 16);
+        x += cw + 22;
+    }
+
     x = placeGrid (knobs, x, 0, h);
 
     if (! toggles.isEmpty())
@@ -743,14 +864,15 @@ void Inspector::layoutIcons (juce::Rectangle<int> row)
         b.setBounds (row.removeFromLeft (w));
         row.removeFromLeft (gapAfter);
     };
-    place (openButton);
-    place (prevFile, 2);
-    place (nextFile, 10);
+    // On first, so it's in the same place on every block
     if (bypassButton.isVisible())
     {
         bypassButton.setBounds (row.removeFromLeft (juce::jmin (bypassButton.preferredWidth (h), row.getWidth())));
-        row.removeFromLeft (8);
+        row.removeFromLeft (10);
     }
+    place (openButton);
+    place (prevFile, 2);
+    place (nextFile, 10);
     place (autoGainButton, 10);
     place (diceButton, 10);
     place (presetButton);

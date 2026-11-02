@@ -115,6 +115,7 @@ bool Engine::moveSettingsTo (const juce::File& target)
     if (from == portableSettingsFile()) from.deleteFile();
     ini.setFile (target);
     loadExclusions();
+    setCaptureCacheFile (target.getSiblingFile ("Rigsmith.captures"));
     return true;
 }
 
@@ -134,6 +135,8 @@ Engine::Engine() : root (std::make_unique<Chain>())
             knownPlugins.recreateFromXml (*xml);
 
     openSettings();
+    setCaptureCacheFile (ini.getFile().getSiblingFile ("Rigsmith.captures"));
+    captures.getPaths = [this] (bool irs) { return getPaths (irs ? "irPaths" : "modelPaths"); };
     PluginBlock::autoCategorise = getSetting ("autoCategorise", true);
     knownPlugins.addChangeListener (this);
 
@@ -145,6 +148,7 @@ Engine::Engine() : root (std::make_unique<Chain>())
 Engine::~Engine()
 {
     stopTimer();
+    saveCaptureCache();
     knownPlugins.removeChangeListener (this);
 }
 
@@ -282,6 +286,7 @@ void Engine::setPaths (const juce::String& key, const juce::FileSearchPath& p)
     juce::StringArray list;
     for (int i = 0; i < p.getNumPaths(); ++i) list.add (p.getRawString (i));
     ini.setList (folderSection (key), "Folder", list);
+    captures.rescan();
 }
 
 juce::FileSearchPath Engine::getPluginPaths (juce::AudioPluginFormat& f) const

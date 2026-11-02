@@ -44,13 +44,23 @@ private:
     std::unique_ptr<Node> makeAmp();
     std::unique_ptr<Node> makeCab();
     void randomiseSplit (Split&, float amount);
+    /** Files the dice can pick, grouped by gear so an amp with 40 captures isn't 40 times as likely. */
+    struct Pool
+    {
+        juce::Array<juce::File> files;
+        std::vector<juce::Array<juce::File>> groups;
+        void add (const juce::File& f) { files.add (f); }
+        void clear() { files.clear(); groups.clear(); }
+        bool isEmpty() const noexcept { return files.isEmpty(); }
+        void finish();
+    };
     void collectFiles();
-    juce::File pick (const juce::Array<juce::File>&);
+    juce::File pick (const Pool&);
 
     Engine& engine;
     juce::Random rng;
-    juce::Array<juce::File> models, irs;            // amp captures / cab IRs
-    juce::Array<juce::File> pedalModels, spaceIrs;  // used for drive and reverb slots
+    Pool models, irs;            // amp captures / cab IRs
+    Pool pedalModels, spaceIrs;  // used for drive and reverb slots
     juce::uint32 lastScan = 0;
     int lastExclusions = -1;
 };

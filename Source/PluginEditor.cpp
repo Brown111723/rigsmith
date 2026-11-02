@@ -696,6 +696,23 @@ void RigsmithEditor::browseFile (Node& n, int delta)
     else if (auto* ir = dynamic_cast<IrBlock*> (&n)) current = ir->getFile();
     const bool isNam = n.getType() == NodeType::Nam;
 
+    // through the gear in the library, in the library's order (the capture knob picks within one)
+    const auto& groups = engine.captures.get (! isNam).groups;
+    if (! groups.empty())
+    {
+        int at = -1;
+        for (size_t i = 0; i < groups.size() && at < 0; ++i)
+            if (groups[i]->files.contains (current)) at = (int) i;
+        if (at >= 0 || ! current.existsAsFile())
+        {
+            const int count = (int) groups.size();
+            const int next = at < 0 ? (delta > 0 ? 0 : count - 1) : (at + delta + count) % count;
+            loadFileInto (&n, nullptr, -1, groups[(size_t) next]->files[0]);
+            return;
+        }
+    }
+
+    // a file from outside the library: its folder
     juce::Array<juce::File> files;
     const auto folder = current.existsAsFile() ? current.getParentDirectory()
                                                : juce::File (engine.getPaths (isNam ? "modelPaths" : "irPaths").getRawString (0));
@@ -705,6 +722,18 @@ void RigsmithEditor::browseFile (Node& n, int delta)
     int idx = files.indexOf (current);
     idx = idx < 0 ? 0 : (idx + delta + files.size()) % files.size();
     loadFileInto (&n, nullptr, -1, files[idx]);
+}
+
+void RigsmithEditor::switchCapture (Node& n, const juce::File& f)
+{
+    juce::String err;
+    bool ok = false;
+    if (auto* nb = dynamic_cast<NamBlock*> (&n)) ok = nb->getFile() == f || nb->loadModel (f, err);
+    else if (auto* ir = dynamic_cast<IrBlock*> (&n)) ok = ir->getFile() == f || ir->loadIr (f, err);
+    if (! ok) { showMessage (err); return; }
+    engine.updateAutoSkips();
+    engine.markDirty();
+    graph.repaint();
 }
 
 void RigsmithEditor::showAddMenu (Chain& chain, int index, juce::Component* anchor)

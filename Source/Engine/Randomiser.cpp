@@ -53,49 +53,62 @@ Category Randomiser::categoryOf (const Node& n)
     return n.getCategory();   // a NAM pedal capture is a drive, a space IR a reverb
 }
 
+void Randomiser::Pool::finish()
+{
+    std::map<juce::String, int> at;
+    groups.clear();
+    for (auto& f : files)
+    {
+        const auto key = captureGroupKey (f);
+        auto it = at.find (key);
+        if (it == at.end()) { it = at.emplace (key, (int) groups.size()).first; groups.emplace_back(); }
+        groups[(size_t) it->second].add (f);
+    }
+}
+
 void Randomiser::collectFiles()
 {
     const auto now = juce::Time::getMillisecondCounter();
     if (lastScan != 0 && now - lastScan < 10000 && lastExclusions == engine.exclusionsVersion) return;
     lastScan = now;
     lastExclusions = engine.exclusionsVersion;
-    auto scan = [this] (const juce::FileSearchPath& paths, const juce::String& pattern, juce::Array<juce::File>& out)
-    {
-        out.clear();
-        for (int p = 0; p < paths.getNumPaths() && out.size() < 4000; ++p)
-            for (const auto& entry : juce::RangedDirectoryIterator (paths.getRawString (p), true, pattern, juce::File::findFiles))
-            {
-                if (engine.isRandomExcluded (entry.getFile())) continue;   // unticked in the library
-                out.add (entry.getFile());
-                if (out.size() >= 4000) break;
-            }
-    };
-    juce::Array<juce::File> allModels, allIrs;
-    scan (engine.getPaths ("modelPaths"), "*.nam", allModels);
-    scan (engine.getPaths ("irPaths"), "*.wav;*.aif;*.aiff;*.flac", allIrs);
 
-    // sort by what they are: amps for the amp slot, pedal captures for drives,
-    // cabinets for the cab slot, rooms and halls for the reverb slot
+    // the library's scan (grouped by gear), looked at again if it's older than half a minute
+    auto& lib = engine.captures;
     models.clear(); pedalModels.clear(); irs.clear(); spaceIrs.clear();
-    for (auto& f : allModels)
-        switch (classifyFile (f))
+    for (auto& g : lib.get (false, 30000).groups)
+        for (auto& f : g->files)
         {
-            case Gear::Pedal:                                     pedalModels.add (f); break;
-            case Gear::Outboard: case Gear::Experimental:         break;   // not a sound to roll by chance
-            default:                                              models.add (f); break;
+            if (engine.isRandomExcluded (f)) continue;   // switched off in the library
+            switch (g->gear)
+            {
+                // amps for the amp slot, pedal captures for drives
+                case Gear::Pedal:                             pedalModels.add (f); break;
+                case Gear::Outboard: case Gear::Experimental: break;   // not a sound to roll by chance
+                default:                                      models.add (f); break;
+            }
         }
-    for (auto& f : allIrs)
-        switch (classifyFile (f))
+    for (auto& g : lib.get (true, 30000).groups)
+        for (auto& f : g->files)
         {
-            case Gear::Space:                                     spaceIrs.add (f); break;
-            case Gear::Pedal: case Gear::Experimental:            break;
-            default:                                              irs.add (f); break;
+            if (engine.isRandomExcluded (f)) continue;
+            switch (g->gear)
+            {
+                // cabinets for the cab slot, rooms and halls for the reverb slot
+                case Gear::Space:                             spaceIrs.add (f); break;
+                case Gear::Pedal: case Gear::Experimental:    break;
+                default:                                      irs.add (f); break;
+            }
         }
+    for (auto* p : { &models, &pedalModels, &irs, &spaceIrs }) p->finish();
 }
 
-juce::File Randomiser::pick (const juce::Array<juce::File>& files)
+juce::File Randomiser::pick (const Pool& pool)
 {
-    return files.isEmpty() ? juce::File() : files[rng.nextInt (files.size())];
+    // every piece of gear gets the same chance, however many captures it has; then any one of them
+    if (pool.groups.empty()) return {};
+    const auto& g = pool.groups[(size_t) rng.nextInt ((int) pool.groups.size())];
+    return g[rng.nextInt (g.size())];
 }
 
 std::unique_ptr<Node> Randomiser::makeBuiltIn (NodeType t, int variant)
