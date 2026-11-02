@@ -96,8 +96,9 @@ juce::String NamBlock::getName() const
 juce::String NamBlock::getDetail() const
 {
     if (! info.loaded) return "Double-click to load .nam";
-    juce::String s = getCaptureName();
-    if (s == getName()) s = tone.valid && tone.creator.isNotEmpty() ? "by " + tone.creator
+    // the capture's own name, or (TONE3000 downloads without one) who made it
+    juce::String s = info.name.isNotEmpty() || ! tone.valid ? getCaptureName() : juce::String();
+    if (s.isEmpty() || s == getName()) s = tone.valid && tone.creator.isNotEmpty() ? "by " + tone.creator
                           : info.modeledBy.isNotEmpty() ? "by " + info.modeledBy : info.architecture;
     if (info.resampling) s << " - resampled";
     return s;

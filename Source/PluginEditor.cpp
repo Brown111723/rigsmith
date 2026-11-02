@@ -464,7 +464,8 @@ bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const 
 
         if (! ok) { showMessage (err); return false; }
         engine.markDirty();
-        showMessage ("Loaded " + f.getFileNameWithoutExtension());
+        if (auto* nb = dynamic_cast<NamBlock*> (target)) showMessage ("Loaded " + nb->getName() + (nb->getCaptureName() != nb->getName() ? " - " + nb->getCaptureName() : juce::String()));
+        else showMessage ("Loaded " + f.getFileNameWithoutExtension());
         select (target->id);
         inspector.setNode (target);
         graph.repaint();

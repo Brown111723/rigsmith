@@ -50,7 +50,26 @@ void Knob::resized()
     nameLabel.setBounds (r.removeFromTop (18));
     valueLabel.setBounds (r.removeFromBottom (18));
     const int s = juce::jmin (r.getWidth(), r.getHeight());
-    slider.setBounds (r.withSizeKeepingCentre (s, s));
+    slider.setBounds (r.withSizeKeepingCentre (s, s).reduced (detents > 1 ? 9 : 0));
+}
+
+void Knob::paint (juce::Graphics& g)
+{
+    if (detents < 2) return;
+    // a dot for every position, the current one lit
+    const auto b = slider.getBounds().toFloat();
+    const auto c = b.getCentre();
+    const float rad = b.getWidth() * 0.5f + 6.0f;
+    const int at = juce::roundToInt (slider.getValue() - slider.getMinimum());
+    const float a0 = juce::degreesToRadians (225.0f), a1 = juce::degreesToRadians (495.0f);
+    const float dot = detents > 24 ? 2.0f : 3.0f;
+    for (int i = 0; i < detents; ++i)
+    {
+        const auto p = c.getPointOnCircumference (rad, a0 + (a1 - a0) * (float) i / (float) (detents - 1));
+        g.setColour (i == at ? detentColour : theme::dim.withAlpha (0.8f));
+        const float d = i == at ? dot + 2.0f : dot;
+        g.fillEllipse (p.x - d * 0.5f, p.y - d * 0.5f, d, d);
+    }
 }
 
 //==============================================================================
@@ -471,6 +490,8 @@ void Inspector::buildCaptureKnob (Block& b)
     k->slider.setMouseDragSensitivity (juce::jlimit (90, 400, group->size() * 14));
     k->slider.setDoubleClickReturnValue (false, 0);
     k->slider.setValue (juce::jmax (0, group->indexOf (file)), juce::dontSendNotification);
+    k->detents = group->size() <= 48 ? group->size() : 0;
+    k->detentColour = gearColour (group->gear);
     k->valueLabel.setFont (font (12.0f, true));
     k->valueLabel.setColour (juce::Label::textColourId, text);
     k->formatValue = [k, group]
@@ -481,6 +502,7 @@ void Inspector::buildCaptureKnob (Block& b)
     k->slider.onValueChange = [this, k, group]
     {
         k->refreshText();
+        k->repaint();
         const int i = juce::jlimit (0, group->size() - 1, (int) k->slider.getValue());
         if (node != nullptr && loadedFile (*node) != group->files[i])
             host.switchCapture (*node, group->files[i]);
@@ -507,10 +529,8 @@ void Inspector::updateCaptureText()
     const int i = juce::jlimit (0, captureGroup->size() - 1, (int) captureKnob->slider.getValue());
     captureKnob->nameLabel.setText ("CAPTURE  " + juce::String (i + 1) + " / " + juce::String (captureGroup->size()),
                                     juce::dontSendNotification);
-    auto line = toneTypeName (captureGroup->fileToneTypes[i]);
-    if (captureGroup->labels[i] != captureGroup->shortLabels[i])
-        line = captureGroup->labels[i] + (line.isNotEmpty() ? "  -  " + line : juce::String());
-    captureName.setText (line, juce::dontSendNotification);
+    captureName.setText (toneTypeName (captureGroup->fileToneTypes[i]), juce::dontSendNotification);
+    captureKnob->repaint();
 }
 
 void Inspector::showCaptureMenu()
@@ -825,7 +845,7 @@ void Inspector::layoutControls()
     if (captureKnob != nullptr)
     {
         // the big one, first: which capture of this gear
-        const int cw = 132, ch = juce::jmin (h, 150);
+        const int cw = 150, ch = juce::jmin (h, 176);
         captureKnob->setBounds (x, 0, cw, ch - 18);
         captureName.setBounds (x - 10, ch - 18, cw + 20, 16);
         x += cw + 22;

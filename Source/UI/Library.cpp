@@ -468,12 +468,13 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
     }
 
     // the name is never dimmed: the die only says whether the dice may pick it
+    const int right = diceState (row) == Dice::Some ? 70 : 42;   // room for "3/12" by the die
     g.setColour (text);
     g.setFont (font (childRow ? 12.5f : 13.0f, ! childRow));
-    g.drawText (name, textX, h / 2 - 17, w - textX - 42, 18, juce::Justification::centredLeft, true);
+    g.drawText (name, textX, h / 2 - 17, w - textX - right, 18, juce::Justification::centredLeft, true);
     g.setColour (muted);
     g.setFont (font (11.0f));
-    g.drawText (sub, textX, h / 2 + 2, w - textX - 42, 15, juce::Justification::centredLeft, true);
+    g.drawText (sub, textX, h / 2 + 2, w - textX - right, 15, juce::Justification::centredLeft, true);
 
     if (hasDice (row))
     {

@@ -16,6 +16,10 @@ public:
     std::function<juce::String()> formatValue;
     std::function<void()> onRightClick;
     std::function<void (bool)> onHover;
+    /** A stepped selector: a dot round the knob for each position (the capture knob). */
+    int detents = 0;
+    juce::Colour detentColour;
+    void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseEnter (const juce::MouseEvent&) override { if (onHover) onHover (true); }

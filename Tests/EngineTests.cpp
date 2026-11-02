@@ -910,7 +910,7 @@ int main (int argc, char** argv)
         CHECK (inPaths, "the TONE3000 folder is added to the model folders");
         NamBlock fromT3k;
         CHECK (fromT3k.loadModel (downloaded, err) && fromT3k.getName() == "Plexi Crunch" && fromT3k.getDetail() == "by tonemaker",
-               "the block shows the tone's title and creator");
+               "the block shows the tone's title and creator (the capture names no gear)");
 
         juce::Array<t3k::Tone> favs; juce::String ferr = "pending";
         client.listTones ("favorited", 1, [&] (juce::Array<t3k::Tone> t, juce::String er) { favs = t; ferr = er; });

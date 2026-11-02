@@ -2,6 +2,8 @@
 
 A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flexible routing system and a VST3 host — shipped as both **`Rigsmith.exe`** and **`Rigsmith.vst3`** from one codebase.
 
+![A Marshall JCM800 with five captures as one row in the library, opened up; the Capture knob in the bottom panel and the small knob on the card switch between them](docs/screenshot-captures.png)
+
 ![Amps grouped by type in the library, an Amp + Cab model with the cab IR switched off automatically](docs/screenshot-gear.png)
 
 ![The Dual Amp Rig starting point: gate, drive, two NAM + IR paths, then chorus, delay and reverb, with a + on every wire and dice icons in the library](docs/screenshot-dual.png)
