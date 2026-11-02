@@ -4,7 +4,7 @@ namespace rig
 {
 using namespace theme;
 
-SettingsPanel::SettingsPanel (Engine& e) : engine (e)
+SettingsPanel::SettingsPanel (Engine& e, bool isStandalone) : engine (e)
 {
     setupSection (models, "NAM model folders", "Searched (with sub-folders) for .nam files");
     models.list.setPath (engine.getPaths ("modelPaths"));
@@ -41,14 +41,30 @@ SettingsPanel::SettingsPanel (Engine& e) : engine (e)
     scanNow.onClick = [this] { if (onScanNow) onScanNow(); };
     addAndMakeVisible (scanNow);
 
-    const auto ini = engine.ini.getFile();
     iniNote.setFont (font (12.0f));
     iniNote.setColour (juce::Label::textColourId, muted);
-    iniNote.setText ("Saved in " + ini.getFullPathName() + " - folders, preferences and the randomise ticks. "
-                     "Put a copy next to Rigsmith.exe to make a portable install.", juce::dontSendNotification);
     addAndMakeVisible (iniNote);
-    showIni.onClick = [ini] { if (ini.existsAsFile()) ini.revealToUser(); else ini.getParentDirectory().startAsProcess(); };
+    showIni.onClick = [this]
+    {
+        const auto ini = engine.ini.getFile();
+        if (ini.existsAsFile()) ini.revealToUser(); else ini.getParentDirectory().startAsProcess();
+    };
+    portable.setVisible (isStandalone);
+    portable.onClick = [this]
+    {
+        const bool isPortable = engine.ini.getFile() == Engine::portableSettingsFile();
+        const auto target = isPortable ? Engine::appDataSettingsFile() : Engine::portableSettingsFile();
+        if (! engine.moveSettingsTo (target))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't save settings there",
+                "Rigsmith can't write to " + target.getParentDirectory().getFullPathName()
+                + ".\n\nFor a portable copy, unzip Rigsmith somewhere you can write to (a USB stick, Documents...) "
+                  "rather than Program Files.");
+        updateIniNote();
+    };
+    updateIniNote();
     addAndMakeVisible (showIni);
+    addChildComponent (portable);
+    portable.setVisible (isStandalone);
 
     setSize (720, 720 + pluginSections.size() * 150);
 }
@@ -64,6 +80,18 @@ SettingsPanel::~SettingsPanel()
     engine.setSetting ("fullScreen", startFullScreen.getToggleState());
     PluginBlock::autoCategorise = autoCategorise.getToggleState();
     if (onChanged) onChanged();
+}
+
+void SettingsPanel::updateIniNote()
+{
+    const auto ini = engine.ini.getFile();
+    const bool isPortable = ini == Engine::portableSettingsFile();
+    iniNote.setText ("Settings file: " + ini.getFullPathName() + "\n"
+                     + (isPortable ? "Portable: this copy keeps its settings next to Rigsmith.exe."
+                                   : "Rigsmith looks next to Rigsmith.exe first, then here."), juce::dontSendNotification);
+    portable.setButtonText (isPortable ? "Keep settings in AppData instead" : "Make this copy portable");
+    portable.setTooltip (isPortable ? "Moves Rigsmith.ini back to " + Engine::appDataSettingsFile().getFullPathName()
+                                    : "Saves Rigsmith.ini next to Rigsmith.exe, so this folder (e.g. on a USB stick) carries its own settings");
 }
 
 void SettingsPanel::setupSection (Section& s, const juce::String& title, const juce::String& hint)
@@ -102,7 +130,9 @@ void SettingsPanel::resized()
     auto buttons = r.removeFromTop (32);
     scanNow.setBounds (buttons.removeFromLeft (180));
     buttons.removeFromLeft (10);
-    showIni.setBounds (buttons.removeFromLeft (180));
+    showIni.setBounds (buttons.removeFromLeft (170));
+    buttons.removeFromLeft (10);
+    portable.setBounds (buttons.removeFromLeft (230));
     r.removeFromTop (10);
     iniNote.setBounds (r.removeFromTop (40));
 }

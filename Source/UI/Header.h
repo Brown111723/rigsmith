@@ -9,12 +9,13 @@ class SceneButton : public juce::TextButton
 {
 public:
     using juce::TextButton::TextButton;
-    std::function<void()> onRightClick;
+    std::function<void()> onRightClick, onDoubleClick;
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (e.mods.isPopupMenu()) { if (onRightClick) onRightClick(); return; }
         juce::TextButton::mouseDown (e);
     }
+    void mouseDoubleClick (const juce::MouseEvent&) override { if (onDoubleClick) onDoubleClick(); }
 };
 
 /** Top bar: logo, presets, undo/redo, scenes A-D, then icon buttons for randomise,
@@ -43,14 +44,22 @@ public:
                fullScreen { Icon::FullScreen, "Full screen (F11)", theme::teal },
                menu { Icon::Menu, "Menu" };
     SceneButton scenes[kNumScenes];
+    /** Double-click a scene: type a new name in place (Enter keeps it, Esc cancels). */
+    void renameScene (int index);
 
 private:
     Engine& engine;
-    juce::Rectangle<int> logoArea;
+    juce::Rectangle<int> logoArea, statusArea;
+    std::unique_ptr<juce::TextEditor> sceneEditor;
+    void drawStatus (juce::Graphics&);
 public:
     bool showFullScreenButton = true;
     Tuner::Reading reading;
     juce::String status;
+    float cpu = 0;
+    double sampleRate = 0;
+    int blockSize = 0, latency = 0;
+    void setStatus (double sr, int block, int latencySamples, float cpuLoad);
 };
 
 /** Full-screen tuner shown over the rig. */

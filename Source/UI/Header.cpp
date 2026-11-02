@@ -30,9 +30,10 @@ Header::Header (Engine& e) : engine (e)
     for (int i = 0; i < kNumScenes; ++i)
     {
         scenes[i].setButtonText (engine.sceneNames[i]);
-        scenes[i].setTooltip ("Scene " + engine.sceneNames[i] + " (key " + juce::String (i + 1) + ", right-click for options)");
+        scenes[i].setTooltip ("Scene " + engine.sceneNames[i] + " (key " + juce::String (i + 1) + ") - double-click to rename, right-click for options");
         scenes[i].onClick = [this, i] { engine.setScene (i); };
         scenes[i].onRightClick = [this, i] { if (onSceneRightClick) onSceneRightClick (i); };
+        scenes[i].onDoubleClick = [this, i] { renameScene (i); };
         addAndMakeVisible (scenes[i]);
     }
 }
@@ -51,13 +52,92 @@ void Header::refresh (const Tuner::Reading& r, const juce::String& s)
         if (scenes[i].getButtonText() != engine.sceneNames[i])
         {
             scenes[i].setButtonText (engine.sceneNames[i]);
-            scenes[i].setTooltip ("Scene " + engine.sceneNames[i] + " (key " + juce::String (i + 1) + ", right-click for options)");
+            scenes[i].setTooltip ("Scene " + engine.sceneNames[i] + " (key " + juce::String (i + 1) + ") - double-click to rename, right-click for options");
             resized();   // named scenes ("Crunch") get wider buttons
         }
     }
     undo.setEnabled (engine.canUndo());
     redo.setEnabled (engine.canRedo());
     tunerButton.setToggleState (engine.tunerActive.load(), juce::dontSendNotification);
+}
+
+void Header::renameScene (int index)
+{
+    if (! juce::isPositiveAndBelow (index, kNumScenes)) return;
+    engine.setScene (index);
+    auto ed = std::make_unique<juce::TextEditor>();
+    ed->setFont (font (13.0f, true));
+    ed->setJustification (juce::Justification::centred);
+    ed->setInputRestrictions (12);
+    ed->setColour (juce::TextEditor::backgroundColourId, bg);
+    ed->setColour (juce::TextEditor::outlineColourId, accent);
+    ed->setColour (juce::TextEditor::focusedOutlineColourId, accent);
+    ed->setColour (juce::TextEditor::textColourId, text);
+    ed->setText (engine.sceneNames[index], false);
+    ed->setBounds (scenes[index].getBounds().withWidth (juce::jmax (scenes[index].getWidth(), 96)).withSizeKeepingCentre (juce::jmax (scenes[index].getWidth(), 96), 26));
+    ed->setIndents (4, 0);
+
+    auto finish = [this, index] (bool keep)
+    {
+        if (sceneEditor == nullptr) return;
+        if (keep)
+        {
+            auto name = sceneEditor->getText().trim();
+            if (name.isEmpty()) name = juce::String::charToString ((juce::juce_wchar) ('A' + index));
+            if (name != engine.sceneNames[index]) { engine.sceneNames[index] = name; engine.markDirty(); }
+        }
+        // delete after this callback returns
+        juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<Header> (this)]
+        {
+            if (sp != nullptr) { sp->sceneEditor.reset(); sp->resized(); }
+        });
+    };
+    ed->onReturnKey = [finish] { finish (true); };
+    ed->onFocusLost = [finish] { finish (true); };
+    ed->onEscapeKey = [finish] { finish (false); };
+    sceneEditor = std::move (ed);
+    addAndMakeVisible (*sceneEditor);
+    sceneEditor->grabKeyboardFocus();
+    sceneEditor->selectAll();
+}
+
+void Header::setStatus (double sr, int block, int lat, float load)
+{
+    const bool changed = std::abs (sr - sampleRate) > 1 || block != blockSize || lat != latency || std::abs (load - cpu) > 0.004f;
+    sampleRate = sr; blockSize = block; latency = lat; cpu = load;
+    if (changed) repaint (statusArea);
+}
+
+void Header::drawStatus (juce::Graphics& g)
+{
+    if (statusArea.getWidth() < 96 || sampleRate <= 0) return;
+    auto r = statusArea.toFloat().reduced (0.0f, 4.0f);
+    const float lineH = r.getHeight() / 2.0f;
+    const auto top = r.removeFromTop (lineH), bottom = r;
+
+    // line 1: sample rate, buffer, round-trip-ish latency
+    const double ms = (blockSize + latency) / sampleRate * 1000.0;
+    g.setFont (mono (11.0f));
+    g.setColour (muted);
+    g.drawText (juce::String (sampleRate / 1000.0, 1) + " kHz  " + juce::String (blockSize) + " smp  "
+                    + juce::String (ms, 1) + " ms", top, juce::Justification::centredRight, false);
+
+    // line 2: a little CPU bar that turns amber then red, plus plug-in delay compensation
+    const int pct = juce::roundToInt (cpu * 100.0f);
+    const auto c = pct >= 85 ? juce::Colour (0xffef5350) : pct >= 60 ? accent : teal;
+    juce::String right = "CPU " + juce::String (pct) + "%";
+    if (latency > 0) right = "PDC " + juce::String (latency) + "   " + right;
+    const float textW = (float) juce::GlyphArrangement::getStringWidthInt (mono (11.0f), right) + 4.0f;
+    g.setColour (pct >= 60 ? c : muted);
+    g.drawText (right, bottom, juce::Justification::centredRight, false);
+    auto bar = bottom.withTrimmedRight (textW + 6.0f).removeFromRight (40.0f).withSizeKeepingCentre (40.0f, 4.0f);
+    if (bar.getX() > statusArea.getX())
+    {
+        g.setColour (border);
+        g.fillRoundedRectangle (bar, 2.0f);
+        g.setColour (c);
+        g.fillRoundedRectangle (bar.withWidth (juce::jmax (2.0f, bar.getWidth() * juce::jlimit (0.0f, 1.0f, cpu))), 2.0f);
+    }
 }
 
 void Header::paint (juce::Graphics& g)
@@ -83,6 +163,7 @@ void Header::paint (juce::Graphics& g)
         g.setFont (logoFont());
         g.drawText (logoText, l.withTrimmedLeft (8.0f), juce::Justification::centredLeft, false);
     }
+    drawStatus (g);
 }
 
 void Header::resized()
@@ -110,7 +191,8 @@ void Header::resized()
         sceneWidths[i] = juce::jlimit (44, 96, juce::GlyphArrangement::getStringWidthInt (font (13.0f, true), scenes[i].getButtonText()) + 22);
         sceneW += sceneWidths[i] + 5;
     }
-    const int fixed = bh + 4 + 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + sceneW;
+    const int statusW = 190;   // audio / CPU readout between the scenes and the dice
+    const int fixed = bh + 4 + 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + sceneW + statusW;
     const bool showName = r.getWidth() - (30 + textW + 10) - fixed >= 150;
     logoArea = r.removeFromLeft (showName ? 30 + textW : 30);
     r.removeFromLeft (10);
@@ -130,6 +212,8 @@ void Header::resized()
     r.removeFromLeft (14);
 
     for (int i = 0; i < kNumScenes; ++i) { scenes[i].setBounds (r.removeFromLeft (sceneWidths[i])); r.removeFromLeft (5); }
+    r.removeFromLeft (10);
+    statusArea = r.removeFromRight (juce::jmin (r.getWidth(), 230));
 }
 
 void Header::mouseUp (const juce::MouseEvent&) {}

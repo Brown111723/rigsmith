@@ -6,7 +6,7 @@ using namespace theme;
 
 Library::Library (GraphHost& h) : host (h)
 {
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < numTabs; ++i)
     {
         tabs[i].setClickingTogglesState (false);
         tabs[i].onClick = [this, i] { setTab ((Tab) i); };
@@ -48,8 +48,10 @@ Library::Library (GraphHost& h) : host (h)
 void Library::setTab (Tab t)
 {
     tab = t;
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < numTabs; ++i)
         tabs[i].setToggleState (i == (int) t, juce::dontSendNotification);
+    folderButton.setVisible (tab != Effects);
+    resized();
     folderButton.setButtonText (tab == Plugins ? "Scan..." : "Folders...");
     folderButton.setTooltip (tab == Plugins ? "Scan for VST plug-ins" : "Choose which folders are searched - remembered between sessions");
     refresh();
@@ -59,8 +61,14 @@ void Library::refresh()
 {
     files.clear();
     plugins.clear();
+    effects.clear();
 
-    if (tab == Plugins)
+    if (tab == Effects)
+    {
+        for (auto& [group, types] : builtInGroups())
+            for (auto t : types) effects.add (t);
+    }
+    else if (tab == Plugins)
     {
         for (auto& d : host.getEngine().knownPlugins.getTypes())
             if (! d.isInstrument)
@@ -106,7 +114,13 @@ void Library::applyFilter()
         return true;
     };
 
-    if (tab == Plugins)
+    if (tab == Effects)
+    {
+        for (int i = 0; i < effects.size(); ++i)
+            if (matches (builtInMenuName (effects[i]) + " " + builtInBlurb (effects[i]) + " " + categoryName (categoryForBuiltIn (effects[i]))))
+                rows.add (i);
+    }
+    else if (tab == Plugins)
     {
         for (int i = 0; i < plugins.size(); ++i)
             if (matches (plugins[i].name + " " + plugins[i].manufacturerName + " " + plugins[i].category))
@@ -123,7 +137,9 @@ void Library::applyFilter()
     list.repaint();
 
     juce::String f;
-    if (tab == Plugins)
+    if (tab == Effects)
+        f = juce::String (rows.size()) + " built-in effects";
+    else if (tab == Plugins)
         f = plugins.isEmpty() ? "No VST3s yet - click Scan" : juce::String (rows.size()) + " effects - drag onto the rig";
     else
     {
@@ -132,10 +148,11 @@ void Library::applyFilter()
     }
     footer.setText (f, juce::dontSendNotification);
 
-    int included = 0;
-    for (int i = 0; i < rows.size(); ++i) included += isIncluded (i) ? 1 : 0;
-    diceButton.setButtonText (juce::String (included) + " / " + juce::String (rows.size()) + " in dice");
-    diceButton.setColour (juce::TextButton::textColourOffId, included < rows.size() ? accent : muted);
+    int included = 0, tickable = 0;
+    for (int i = 0; i < rows.size(); ++i)
+        if (hasTick (i)) { ++tickable; included += isIncluded (i) ? 1 : 0; }
+    diceButton.setButtonText (juce::String (included) + " / " + juce::String (tickable) + " in dice");
+    diceButton.setColour (juce::TextButton::textColourOffId, included < tickable ? accent : muted);
 }
 
 int Library::getNumRows() { return rows.size(); }
@@ -151,7 +168,14 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
 
     juce::String name, sub;
     juce::Colour c = accent;
-    if (tab == Plugins)
+    if (tab == Effects)
+    {
+        const auto t = effects[rows[row]];
+        name = builtInShortName (t);
+        sub = categoryName (categoryForBuiltIn (t)) + " - " + builtInBlurb (t);
+        c = categoryColour (categoryForBuiltIn (t));
+    }
+    else if (tab == Plugins)
     {
         const auto& d = plugins[rows[row]];
         name = d.name;
@@ -169,7 +193,8 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
         c = tab == Models ? categoryColour (Category::Amp) : categoryColour (Category::Cab);
     }
 
-    const bool in = isIncluded (row);
+    const bool ticked = hasTick (row);
+    const bool in = ! ticked || isIncluded (row);
     if (! in) sub = "Not in dice - " + sub;
 
     g.setColour (in ? c : c.withAlpha (0.35f));
@@ -183,7 +208,8 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
 
     // the randomise tick: a little die face when included, an empty box when not
     const auto t = tickArea (w, h).toFloat();
-    if (in)
+    if (! ticked) {}
+    else if (in)
     {
         g.setColour (accent.withAlpha (0.18f));
         g.fillRoundedRectangle (t, 5.0f);
@@ -212,14 +238,20 @@ void Library::listBoxItemClicked (int row, const juce::MouseEvent& e)
 {
     if (! juce::isPositiveAndBelow (row, rows.size())) return;
     if (e.mods.isPopupMenu()) { showRowMenu (row); return; }
-    if (tickArea (list.getVisibleRowWidth(), list.getRowHeight()).expanded (6).contains (e.getPosition()))
+    if (hasTick (row) && tickArea (list.getVisibleRowWidth(), list.getRowHeight()).expanded (6).contains (e.getPosition()))
         setIncluded (rowsFor (row), ! isIncluded (row));
+}
+
+bool Library::hasTick (int row) const
+{
+    return ! (tab == Effects && juce::isPositiveAndBelow (row, rows.size()) && effects[rows[row]] == NodeType::Tuner);
 }
 
 bool Library::isIncluded (int row) const
 {
     if (! juce::isPositiveAndBelow (row, rows.size())) return true;
     auto& engine = host.getEngine();
+    if (tab == Effects) return ! engine.isRandomExcluded (effects[rows[row]]);
     return tab == Plugins ? ! engine.isRandomExcluded (plugins[rows[row]])
                           : ! engine.isRandomExcluded (files[rows[row]]);
 }
@@ -237,7 +269,13 @@ juce::Array<int> Library::rowsFor (int clicked) const
 void Library::setIncluded (const juce::Array<int>& which, bool include)
 {
     auto& engine = host.getEngine();
-    if (tab == Plugins)
+    if (tab == Effects)
+    {
+        juce::Array<NodeType> t;
+        for (int r : which) if (juce::isPositiveAndBelow (r, rows.size())) t.add (effects[rows[r]]);
+        engine.setRandomExcluded (t, ! include);
+    }
+    else if (tab == Plugins)
     {
         juce::Array<juce::PluginDescription> d;
         for (int r : which) if (juce::isPositiveAndBelow (r, rows.size())) d.add (plugins[rows[r]]);
@@ -259,9 +297,18 @@ void Library::showRowMenu (int row)
     const auto what = which.size() > 1 ? juce::String (which.size()) + " selected" : juce::String ("this");
 
     juce::PopupMenu m;
-    m.addItem (1, in ? "Leave " + what + " out of the dice" : "Let the dice pick " + what);
+    if (hasTick (row))
+        m.addItem (1, in ? "Leave " + what + " out of the dice" : "Let the dice pick " + what);
     juce::String folderName, maker;
-    if (tab == Plugins)
+    if (tab == Effects)
+    {
+        const auto cat = categoryName (categoryForBuiltIn (effects[rows[row]]));
+        m.addItem (2, "Leave every " + cat + " effect out of the dice");
+        m.addItem (3, "Let the dice pick every " + cat + " effect");
+        m.addSeparator();
+        m.addItem (5, "Add to the rig");
+    }
+    else if (tab == Plugins)
     {
         maker = plugins[rows[row]].manufacturerName;
         if (maker.isNotEmpty())
@@ -287,13 +334,15 @@ void Library::showRowMenu (int row)
             juce::Array<int> same;
             for (int i = 0; i < rows.size(); ++i)
             {
-                const bool match = tab == Plugins ? plugins[rows[i]].manufacturerName == plugins[rows[row]].manufacturerName
+                const bool match = tab == Effects ? categoryForBuiltIn (effects[rows[i]]) == categoryForBuiltIn (effects[rows[row]])
+                                 : tab == Plugins ? plugins[rows[i]].manufacturerName == plugins[rows[row]].manufacturerName
                                                   : files[rows[i]].getParentDirectory() == files[rows[row]].getParentDirectory();
                 if (match) same.add (i);
             }
             setIncluded (same, r == 3);
         }
         else if (r == 4) files[rows[row]].revealToUser();
+        else if (r == 5) activate (row);
     });
 }
 
@@ -319,7 +368,8 @@ void Library::showDiceMenu()
 void Library::activate (int row)
 {
     if (! juce::isPositiveAndBelow (row, rows.size())) return;
-    if (tab == Plugins) { if (onActivatePlugin) onActivatePlugin (plugins[rows[row]].createIdentifierString()); }
+    if (tab == Effects) { if (onActivateBuiltIn) onActivateBuiltIn (effects[rows[row]]); }
+    else if (tab == Plugins) { if (onActivatePlugin) onActivatePlugin (plugins[rows[row]].createIdentifierString()); }
     else if (onActivateFile) onActivateFile (files[rows[row]]);
 }
 
@@ -328,6 +378,7 @@ juce::var Library::getDragSourceDescription (const juce::SparseSet<int>& selecte
     if (selected.isEmpty()) return {};
     const int row = selected[0];
     if (! juce::isPositiveAndBelow (row, rows.size())) return {};
+    if (tab == Effects) return "builtin:" + nodeTypeToString (effects[rows[row]]);
     if (tab == Plugins) return "plugin:" + plugins[rows[row]].createIdentifierString();
     return "file:" + files[rows[row]].getFullPathName();
 }
@@ -335,6 +386,9 @@ juce::var Library::getDragSourceDescription (const juce::SparseSet<int>& selecte
 juce::String Library::getTooltipForRow (int row)
 {
     if (! juce::isPositiveAndBelow (row, rows.size())) return {};
+    if (tab == Effects)
+        return builtInMenuName (effects[rows[row]]) + "\nDrag onto the rig, or double-click to add it after the selected block"
+             + (! hasTick (row) ? juce::String() : isIncluded (row) ? "\nTicked: the dice can pick this" : "\nNot ticked: the dice never pick this");
     const auto tip = isIncluded (row) ? "\nTicked: the dice can pick this (click the tick to leave it out)"
                                       : "\nNot ticked: the dice never pick this";
     if (tab == Plugins) return plugins[rows[row]].descriptiveName + tip;
@@ -356,12 +410,15 @@ void Library::resized()
     auto r = getLocalBounds().reduced (12, 0);
     r.removeFromTop (34);
     auto tabRow = r.removeFromTop (30);
-    const int tw = (tabRow.getWidth() - 8) / 3;
-    for (int i = 0; i < 3; ++i) { tabs[i].setBounds (tabRow.removeFromLeft (tw)); tabRow.removeFromLeft (4); }
+    const int tw = (tabRow.getWidth() - 4 * (numTabs - 1)) / numTabs;
+    for (int i = 0; i < numTabs; ++i) { tabs[i].setBounds (tabRow.removeFromLeft (tw)); tabRow.removeFromLeft (4); }
     r.removeFromTop (8);
     auto searchRow = r.removeFromTop (34);
-    folderButton.setBounds (searchRow.removeFromRight (78));
-    searchRow.removeFromRight (6);
+    if (folderButton.isVisible())
+    {
+        folderButton.setBounds (searchRow.removeFromRight (78));
+        searchRow.removeFromRight (6);
+    }
     search.setBounds (searchRow);
     r.removeFromTop (8);
     auto foot = r.removeFromBottom (32);

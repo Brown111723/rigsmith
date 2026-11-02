@@ -237,7 +237,7 @@ bool BlockCard::isInterestedInDragSource (const SourceDetails& d)
     const auto s = d.description.toString();
     if (s.startsWith ("file:"))
         return juce::File (s.fromFirstOccurrenceOf ("file:", false, false)).hasFileExtension ("nam;wav;aif;aiff;flac");
-    return s.startsWith ("plugin:") || s.startsWith ("node:");
+    return s.startsWith ("plugin:") || s.startsWith ("node:") || s.startsWith ("builtin:");
 }
 
 void BlockCard::itemDragMove (const SourceDetails& d)
@@ -438,7 +438,7 @@ bool ChainView::isInterestedInDragSource (const SourceDetails& d)
     const auto s = d.description.toString();
     if (s.startsWith ("node:"))
         return host.getEngine().canDropInto (s.fromFirstOccurrenceOf ("node:", false, false), chain);
-    return s.startsWith ("file:") || s.startsWith ("plugin:");
+    return s.startsWith ("file:") || s.startsWith ("plugin:") || s.startsWith ("builtin:");
 }
 
 void ChainView::itemDragMove (const SourceDetails& d)
@@ -469,6 +469,8 @@ void ChainView::dropAt (const juce::String& s, int idx)
         host.loadFileInto (nullptr, &chain, idx, juce::File (s.fromFirstOccurrenceOf ("file:", false, false)));
     else if (s.startsWith ("plugin:"))
         host.insertPlugin (s.fromFirstOccurrenceOf ("plugin:", false, false), chain, idx);
+    else if (s.startsWith ("builtin:"))
+        host.insertBuiltIn (nodeTypeFromString (s.fromFirstOccurrenceOf ("builtin:", false, false)), chain, idx);
 }
 
 //==============================================================================

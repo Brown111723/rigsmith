@@ -50,7 +50,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 **Randomise** (dice icons)
 - **Whole rig** (dice, top bar; right-click for options): dynamics, drives, NAM amps picked from your model folders, cabs from your IR folders, modulation, delays and reverbs, sometimes as a 2- or 3-amp split. Musical ranges, levels never randomised.
 - **Lock** blocks you like (lock icon, or right-click) and they survive every roll.
-- **Ticks in the library** choose what the dice can pick: untick audio-repair plug-ins, test models or noisy IRs and they're never chosen. Shift/Ctrl-click to tick several at once, right-click for a whole folder or manufacturer, or search and use **"x / y in dice"** to change everything shown. Saved in `Rigsmith.ini`.
+- **Ticks in the library** choose what the dice can pick: untick audio-repair plug-ins, test models, noisy IRs or built-in effects you never use, and they're never chosen. Shift/Ctrl-click to tick several at once, right-click for a whole folder or manufacturer, or search and use **"x / y in dice"** to change everything shown. Saved in `Rigsmith.ini`.
 - **Dice on each block** (bottom-right of its card): swaps it for a random block of the same kind (a delay becomes another delay or a delay plug-in, a NAM amp gets another model).
 - **Dice in the bottom panel**: randomises the selected block's settings.
 - More in the top dice's right-click menu: new blocks in the same layout, randomise every block's settings, include plug-ins, allow splits.
@@ -64,9 +64,12 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - Step through models and IRs in a folder with the `<` `>` buttons.
 - **Plug-in parameters in the panel**: every automatable parameter appears as a knob; right-click to pin your favourites.
 - **Auto-categorised, colour-coded plug-ins** (Dynamics, Drive, Amp, Cab, EQ, Filter, Modulation, Delay, Reverb, Pitch).
+- **Built-in tab** in the library lists every built-in effect by category: drag one onto the rig (or onto a block to replace it), or double-click to add it after the selected block.
+- **Rename scenes** by double-clicking them (Enter keeps it, Esc cancels).
+- **Audio status** in the top bar: sample rate, buffer, latency, plug-in delay compensation and a CPU meter.
 - **Add anywhere**: a small **+** sits on the wire before every block, as well as the big one at the end of each chain.
 - **Remembered folders**: several NAM, IR and plug-in folders, set once in **Menu → Settings & folders**.
-- **`Rigsmith.ini`** holds your folders, preferences and randomise ticks, and is read every time Rigsmith starts. It's created on first run in `%APPDATA%\Rigsmith\` (the settings window has a **Show Rigsmith.ini** button). It's plain text, so it's safe to edit or back up, and a `Rigsmith.ini` next to `Rigsmith.exe` makes a **portable** copy. Older settings are brought across automatically.
+- **`Rigsmith.ini`** holds your folders, preferences and randomise ticks, and is read every time Rigsmith starts. Rigsmith looks for it next to `Rigsmith.exe` first (a **portable** copy), then in `%APPDATA%\Rigsmith\`, and creates it there if neither exists. Settings has **Show Rigsmith.ini** and **Make this copy portable** buttons. It's plain text, so it's safe to edit or back up. Older settings are brought across automatically.
 - **Plug-in scanning**: the first run scans for plug-ins. After that, Rigsmith opens straight away with the remembered list, unless you tick **Look for new plug-ins every time Rigsmith opens** (or click **Scan**).
 - Every dB readout is shown to one decimal place.
 - **More room**: drag the bar above the bottom panel to make it taller (double-click toggles), hide the library (`L`), and go **full screen** (`F11`, or open full screen every time in Settings).

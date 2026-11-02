@@ -4,7 +4,8 @@
 
 namespace rig
 {
-/** Right-hand browser: NAM models, cab IRs and scanned VST3s. Drag onto the rig or double-click.
+/** Right-hand browser: NAM models, cab IRs, scanned VST3s and the built-in effects.
+    Drag onto the rig or double-click.
     The tick on each row says whether the dice may pick it (saved in Rigsmith.ini). */
 class Library : public juce::Component,
                 private juce::ListBoxModel
@@ -18,11 +19,13 @@ public:
 
     std::function<void (const juce::File&)> onActivateFile;
     std::function<void (const juce::String& pluginIdentifier)> onActivatePlugin;
+    std::function<void (NodeType)> onActivateBuiltIn;
     std::function<void()> onScanPlugins;
     std::function<void()> onManageFolders;
 
 private:
-    enum Tab { Models = 0, Irs, Plugins };
+    enum Tab { Models = 0, Irs, Plugins, Effects };
+    static constexpr int numTabs = 4;
 
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
@@ -47,7 +50,7 @@ private:
 
     GraphHost& host;
     Tab tab = Models;
-    juce::TextButton tabs[3] { juce::TextButton ("Models"), juce::TextButton ("IRs"), juce::TextButton ("VST3") };
+    juce::TextButton tabs[numTabs] { juce::TextButton ("Models"), juce::TextButton ("IRs"), juce::TextButton ("VST3"), juce::TextButton ("Built-in") };
     juce::TextButton folderButton;
     juce::TextEditor search;
     juce::ListBox list;
@@ -56,6 +59,8 @@ private:
 
     juce::Array<juce::File> files;
     juce::Array<juce::PluginDescription> plugins;
+    juce::Array<NodeType> effects;
+    bool hasTick (int row) const;   // the tuner has none: it's never randomised
     juce::Array<int> rows;   // indices into files/plugins after filtering
 };
 

@@ -173,6 +173,10 @@ public:
         first run if it isn't there, and read every time Rigsmith starts. */
     IniFile ini;
     static juce::File findSettingsFile();
+    static juce::File portableSettingsFile();   // Rigsmith.ini next to the running exe
+    static juce::File appDataSettingsFile();    // %APPDATA%\Rigsmith\Rigsmith.ini
+    /** Saves the settings to another place and uses that from now on (portable <-> AppData). */
+    bool moveSettingsTo (const juce::File&);
     juce::File getFolder (const juce::String& key) const;
     void setFolder (const juce::String& key, const juce::File&);
     /** Library folders ("modelPaths", "irPaths"): several folders each, remembered between runs. */
@@ -195,7 +199,9 @@ public:
     bool isRandomExcluded (const juce::PluginDescription&) const;
     void setRandomExcluded (const juce::Array<juce::File>&, bool excluded);
     void setRandomExcluded (const juce::Array<juce::PluginDescription>&, bool excluded);
-    int numRandomExcluded (int kind) const;   // 0 models, 1 IRs, 2 plug-ins
+    bool isRandomExcluded (NodeType) const;   // built-in effects
+    void setRandomExcluded (const juce::Array<NodeType>&, bool excluded);
+    int numRandomExcluded (int kind) const;   // 0 models, 1 IRs, 2 plug-ins, 3 built-ins
     int exclusionsVersion = 0;                // bumped on every change
 
     //--- Analyzer ---------------------------------------------------------------
@@ -235,6 +241,7 @@ private:
     void saveExclusions();
     std::map<juce::String, juce::String> excludedFiles;        // lower-case path -> path as written
     std::set<juce::String> excludedPlugins;                     // identifier strings
+    std::set<juce::String> excludedBuiltIns;                    // type strings ("chorus")
     std::map<juce::String, juce::String> excludedPluginNames;   // identifier -> "Name (Maker)" for the ini
     void handleMidi (int type, int channel, int number, int value);
     void applyMapping (const MidiMapping&, int value);

@@ -41,6 +41,9 @@ public:
     void browseFile (rig::Node&, int delta) override;
     bool loadFileInto (rig::Node* target, rig::Chain* chain, int index, const juce::File&) override;
     bool insertPlugin (const juce::String& identifier, rig::Chain& chain, int index) override;
+    bool insertBuiltIn (rig::NodeType, rig::Chain& chain, int index) override;
+    /** Where a double-clicked library item goes: after the selected block, else the end of the rig. */
+    std::pair<rig::Chain*, int> insertionPoint();
     void randomise (rig::Node&, RandomWhat) override;
     void showRandomMenu (rig::Node&, juce::Component* anchor) override;
     void showBlockPresetMenu (rig::Node&, juce::Component* anchor) override;

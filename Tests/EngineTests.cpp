@@ -584,6 +584,37 @@ int main (int argc, char** argv)
             e.setRandomExcluded (juce::Array<juce::File> { excludedAmp }, true);
         }
 
+        // built-in effects can be left out of the dice too
+        {
+            e.setRandomExcluded (juce::Array<NodeType> { NodeType::Reverb, NodeType::Chorus, NodeType::Gate }, true);
+            CHECK (e.isRandomExcluded (NodeType::Reverb) && ! e.isRandomExcluded (NodeType::Delay), "built-in effect exclusions");
+            CHECK (iniPath.loadFileAsString().contains ("[Randomise - excluded built-in effects]")
+                   && iniPath.loadFileAsString().contains ("=reverb"), "built-in exclusions are written to the ini");
+            Randomiser rz (e);
+            rz.options.usePlugins = false;
+            bool found = false;
+            for (int i = 0; i < 25; ++i)
+            {
+                rz.randomiseRig();
+                visitNodes (e.getRoot(), [&] (Node& n)
+                {
+                    const auto t = n.getType();
+                    found |= t == NodeType::Reverb || t == NodeType::Chorus || t == NodeType::Gate;
+                });
+            }
+            CHECK (! found, "randomise never adds unticked built-in effects");
+            e.setRandomExcluded (juce::Array<NodeType> { NodeType::Reverb, NodeType::Chorus, NodeType::Gate }, false);
+            CHECK (e.numRandomExcluded (3) == 0, "ticking them again");
+        }
+
+        // portable: settings move next to the exe and back
+        {
+            const auto elsewhere = testDir.getChildFile ("portable/Rigsmith.ini");
+            CHECK (e.moveSettingsTo (elsewhere) && elsewhere.existsAsFile()
+                   && e.isRandomExcluded (excludedAmp) && e.ini.getFile() == elsewhere, "settings move to a new file and keep everything");
+            CHECK (e.moveSettingsTo (iniPath) && e.ini.getFile() == iniPath, "and back");
+        }
+
         // starting points
         e.loadFactory (0);
         e.loadFactory (1);

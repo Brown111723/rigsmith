@@ -23,6 +23,7 @@ struct GraphHost
     virtual void showBranchMenu (Split&, int branch, juce::Component* anchor) = 0;
     virtual bool loadFileInto (Node* target, Chain* chain, int index, const juce::File&) = 0;
     virtual bool insertPlugin (const juce::String& identifier, Chain& chain, int index) = 0;
+    virtual bool insertBuiltIn (NodeType, Chain& chain, int index) = 0;
 
     enum RandomWhat { RandomSettings = 0, RandomMutate, RandomType };
     virtual void randomise (Node&, RandomWhat) = 0;

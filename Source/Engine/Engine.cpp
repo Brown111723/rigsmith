@@ -73,6 +73,7 @@ namespace
     constexpr const char* exModels = "Randomise - excluded NAM models";
     constexpr const char* exIrs = "Randomise - excluded IRs";
     constexpr const char* exPlugins = "Randomise - excluded plug-ins";
+    constexpr const char* exBuiltIns = "Randomise - excluded built-in effects";
 
     juce::String fileKey (const juce::File& f) { return f.getFullPathName().toLowerCase(); }
 }
@@ -83,13 +84,38 @@ juce::File Engine::findSettingsFile()
     const auto env = juce::SystemStats::getEnvironmentVariable ("RIGSMITH_INI", {});
     if (env.isNotEmpty()) return juce::File (env);
 
-    // portable copy: an ini next to Rigsmith.exe wins
-    const auto beside = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getSiblingFile ("Rigsmith.ini");
-    if (beside.existsAsFile()) return beside;
+    // 1. portable copy: an ini next to Rigsmith.exe wins
+    if (portableSettingsFile().existsAsFile()) return portableSettingsFile();
 
-    // %APPDATA%\Rigsmith\Rigsmith.ini (not %TEMP%: Windows clears that out)
+    // 2. %APPDATA%\Rigsmith\Rigsmith.ini, created there if it doesn't exist yet
+    //    (not %TEMP%: Windows clears that out)
+    return appDataSettingsFile();
+}
+
+juce::File Engine::portableSettingsFile()
+{
+    return juce::File::getSpecialLocation (juce::File::currentExecutableFile).getSiblingFile ("Rigsmith.ini");
+}
+
+juce::File Engine::appDataSettingsFile()
+{
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
         .getChildFile ("Rigsmith").getChildFile ("Rigsmith.ini");
+}
+
+bool Engine::moveSettingsTo (const juce::File& target)
+{
+    if (target == ini.getFile()) return true;
+    const auto from = ini.getFile();
+    ini.reloadIfChanged();
+    const auto text = ini.toString();
+    target.getParentDirectory().createDirectory();
+    if (! target.replaceWithText (text, false, false, nullptr)) return false;
+    // leaving portable mode: remove the copy beside the exe so it doesn't take over next time
+    if (from == portableSettingsFile()) from.deleteFile();
+    ini.setFile (target);
+    loadExclusions();
+    return true;
 }
 
 Engine::Engine() : root (std::make_unique<Chain>())
@@ -196,8 +222,9 @@ void Engine::openSettings()
         if (ini.getList (folderSection (key)).isEmpty())
             ini.setList (folderSection (key), "Folder", { getFolder (juce::String (key) == "modelPaths" ? "modelFolder" : "irFolder").getFullPathName() });
 
-    for (auto* sec : { exModels, exIrs, exPlugins })
-        if (ini.getList (sec).isEmpty()) ini.setList (sec, juce::String (sec) == exPlugins ? "Plugin" : "File", {});
+    for (auto* sec : { exBuiltIns, exModels, exIrs, exPlugins })
+        if (ini.getList (sec).isEmpty())
+            ini.setList (sec, juce::String (sec) == exPlugins ? "Plugin" : juce::String (sec) == exBuiltIns ? "Effect" : "File", {});
 
     loadExclusions();
 }
@@ -316,6 +343,9 @@ void Engine::loadExclusions()
     excludedFiles.clear();
     excludedPlugins.clear();
     excludedPluginNames.clear();
+    excludedBuiltIns.clear();
+    for (auto& v : ini.getList (exBuiltIns))
+        excludedBuiltIns.insert (v.trim().toLowerCase());
     for (auto* sec : { exModels, exIrs })
         for (auto& v : ini.getList (sec))
             excludedFiles[v.trim().toLowerCase()] = v.trim();
@@ -339,8 +369,11 @@ void Engine::saveExclusions()
         plugins.add (name.isNotEmpty() ? name + " | " + id : id);
     }
     models.sortNatural(); irs.sortNatural(); plugins.sortNatural();
+    juce::StringArray builtIns;
+    for (auto& t : excludedBuiltIns) builtIns.add (t);
     ++exclusionsVersion;
     IniFile::Batch b (ini);
+    ini.setList (exBuiltIns, "Effect", builtIns);
     ini.setList (exModels, "File", models);
     ini.setList (exIrs, "File", irs);
     ini.setList (exPlugins, "Plugin", plugins);
@@ -385,9 +418,28 @@ void Engine::setRandomExcluded (const juce::Array<juce::PluginDescription>& desc
     saveExclusions();
 }
 
+bool Engine::isRandomExcluded (NodeType t) const
+{
+    return excludedBuiltIns.count (nodeTypeToString (t)) > 0;
+}
+
+void Engine::setRandomExcluded (const juce::Array<NodeType>& types, bool excluded)
+{
+    ini.reloadIfChanged();
+    loadExclusions();
+    for (auto t : types)
+    {
+        if (t == NodeType::Nam || t == NodeType::Ir || t == NodeType::Tuner) continue;   // models / IRs have their own ticks
+        if (excluded) excludedBuiltIns.insert (nodeTypeToString (t));
+        else excludedBuiltIns.erase (nodeTypeToString (t));
+    }
+    saveExclusions();
+}
+
 int Engine::numRandomExcluded (int kind) const
 {
     if (kind == 2) return (int) excludedPlugins.size();
+    if (kind == 3) return (int) excludedBuiltIns.size();
     int n = 0;
     for (auto& kv : excludedFiles)
         if (kv.first.endsWithIgnoreCase (".nam") == (kind == 0)) ++n;

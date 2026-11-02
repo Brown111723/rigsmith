@@ -17,6 +17,11 @@ enum class NodeType
 };
 
 juce::String nodeTypeToString (NodeType);
+/** The built-in effects, grouped as in the + menu and the library. */
+const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups();
+juce::String builtInMenuName (NodeType);    // "Delay (digital / tape / ping-pong / dual)"
+juce::String builtInShortName (NodeType);   // "Delay"
+juce::String builtInBlurb (NodeType);       // one line on what it does
 NodeType nodeTypeFromString (const juce::String&);
 
 /** Families used for colour coding, library grouping and the add menu. */

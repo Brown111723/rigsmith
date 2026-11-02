@@ -14,6 +14,87 @@ static const std::pair<NodeType, const char*> typeNames[] = {
     { NodeType::Tuner, "tuner" }
 };
 
+const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups()
+{
+    static const std::vector<std::pair<juce::String, std::vector<NodeType>>> groups {
+        { "Dynamics",       { NodeType::Gate, NodeType::Comp, NodeType::Limiter, NodeType::Expander, NodeType::Transient, NodeType::Swell } },
+        { "Drive",          { NodeType::Overdrive, NodeType::Fuzz, NodeType::Boost, NodeType::Crusher } },
+        { "EQ & Filter",    { NodeType::Eq, NodeType::Wah } },
+        { "Modulation",     { NodeType::Chorus, NodeType::Flanger, NodeType::Phaser, NodeType::Tremolo, NodeType::Vibe, NodeType::Rotary } },
+        { "Delay & Reverb", { NodeType::Delay, NodeType::Reverb } },
+        { "Pitch",          { NodeType::Pitch } },
+        { "Utility",        { NodeType::Tuner, NodeType::Gain } } };
+    return groups;
+}
+
+juce::String builtInMenuName (NodeType t)
+{
+    switch (t)
+    {
+        case NodeType::Gate:      return "Noise Gate";
+        case NodeType::Comp:      return "Compressor";
+        case NodeType::Limiter:   return "Limiter";
+        case NodeType::Expander:  return "Expander";
+        case NodeType::Transient: return "Transient Shaper";
+        case NodeType::Swell:     return "Auto Swell (violin swells)";
+        case NodeType::Overdrive: return "Overdrive";
+        case NodeType::Fuzz:      return "Fuzz";
+        case NodeType::Boost:     return "Clean Boost";
+        case NodeType::Crusher:   return "Bit Crusher";
+        case NodeType::Eq:        return "Studio EQ";
+        case NodeType::Wah:       return "Wah / Auto-Wah";
+        case NodeType::Chorus:    return "Chorus";
+        case NodeType::Flanger:   return "Flanger";
+        case NodeType::Phaser:    return "Phaser";
+        case NodeType::Tremolo:   return "Tremolo";
+        case NodeType::Vibe:      return "Uni-Vibe";
+        case NodeType::Rotary:    return "Rotary Speaker";
+        case NodeType::Delay:     return "Delay (digital / tape / ping-pong / dual)";
+        case NodeType::Reverb:    return "Reverb (room / hall / plate / spring / shimmer)";
+        case NodeType::Pitch:     return "Pitch / Octave / Doubler";
+        case NodeType::Gain:      return "Volume / Pan";
+        case NodeType::Tuner:     return "Tuner (strobe + needle)";
+        default:                  return "Block";
+    }
+}
+
+juce::String builtInShortName (NodeType t)
+{
+    const auto full = builtInMenuName (t);
+    return full.upToFirstOccurrenceOf (" (", false, false);
+}
+
+juce::String builtInBlurb (NodeType t)
+{
+    switch (t)
+    {
+        case NodeType::Gate:      return "Cuts hiss and hum between notes";
+        case NodeType::Comp:      return "Evens out your picking, adds sustain";
+        case NodeType::Limiter:   return "Hard ceiling on peaks";
+        case NodeType::Expander:  return "Gentle downward expansion";
+        case NodeType::Transient: return "More or less pick attack";
+        case NodeType::Swell:     return "Violin-style volume swells";
+        case NodeType::Overdrive: return "Mid-hump tube-style drive";
+        case NodeType::Fuzz:      return "Thick fuzz, optional octave";
+        case NodeType::Boost:     return "Clean level and tone boost";
+        case NodeType::Crusher:   return "Lo-fi bits and sample rate";
+        case NodeType::Eq:        return "Draggable parametric bands";
+        case NodeType::Wah:       return "Pedal, envelope or LFO wah";
+        case NodeType::Chorus:    return "Classic shimmering chorus";
+        case NodeType::Flanger:   return "Jet sweeps with feedback";
+        case NodeType::Phaser:    return "Swirling phase stages";
+        case NodeType::Tremolo:   return "Volume or harmonic tremolo";
+        case NodeType::Vibe:      return "Throbbing Uni-Vibe swirl";
+        case NodeType::Rotary:    return "Leslie horn and drum";
+        case NodeType::Delay:     return "Digital, tape, ping-pong, dual";
+        case NodeType::Reverb:    return "Room, hall, plate, spring, shimmer";
+        case NodeType::Pitch:     return "Octaves, pitch shift, doubler";
+        case NodeType::Gain:      return "Volume and pan";
+        case NodeType::Tuner:     return "Strobe tuner - never in dice";
+        default:                  return {};
+    }
+}
+
 juce::String nodeTypeToString (NodeType t)
 {
     for (auto& [type, name] : typeNames)

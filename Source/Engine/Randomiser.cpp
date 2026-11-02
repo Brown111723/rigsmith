@@ -81,6 +81,7 @@ juce::File Randomiser::pick (const juce::Array<juce::File>& files)
 
 std::unique_ptr<Node> Randomiser::makeBuiltIn (NodeType t)
 {
+    if (engine.isRandomExcluded (t)) return nullptr;   // unticked in the library: that slot stays empty
     auto n = engine.createNode (t);
     auto* b = dynamic_cast<Block*> (n.get());
     if (b == nullptr) return n;
@@ -133,7 +134,8 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
         cands.push_back ({ NodeType::Ir, nullptr, irs.isEmpty() ? 0.01f : 4.0f });
     else
         for (auto t : builtInsFor (cat))
-            cands.push_back ({ t, nullptr, t == NodeType::Comp ? 2.5f : (t == NodeType::Gate || t == NodeType::Limiter ? 0.6f : 1.0f) });
+            if (! engine.isRandomExcluded (t))
+                cands.push_back ({ t, nullptr, t == NodeType::Comp ? 2.5f : (t == NodeType::Gate || t == NodeType::Limiter ? 0.6f : 1.0f) });
 
     const auto types = engine.knownPlugins.getTypes();
     if (options.usePlugins)

@@ -68,7 +68,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     statusLabel.setColour (juce::Label::textColourId, dim);
     statusLabel.setInterceptsMouseClicks (false, false);
     statusLabel.setJustificationType (juce::Justification::bottomLeft);
-    addAndMakeVisible (statusLabel);
+    statusLabel.setVisible (false);   // the audio / CPU readout lives in the top bar now
     addChildComponent (tunerOverlay);
 
     divider.onStart = [this] { dragStartHeight = inspectorHeight; };
@@ -123,7 +123,8 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
                                           || (sel->getType() == NodeType::Ir && ! f.hasFileExtension ("nam"))) ? sel : nullptr;
         loadFileInto (target, target == nullptr ? &engine.getRoot() : nullptr, -1, f);
     };
-    library.onActivatePlugin = [this] (const juce::String& ident) { insertPlugin (ident, engine.getRoot(), -1); };
+    library.onActivatePlugin = [this] (const juce::String& ident) { auto [c, i] = insertionPoint(); insertPlugin (ident, *c, i); };
+    library.onActivateBuiltIn = [this] (NodeType t) { auto [c, i] = insertionPoint(); insertBuiltIn (t, *c, i); };
     library.onScanPlugins = [this] { showPluginScanner(); };
     library.onManageFolders = [this] { showSettings(); };
 
@@ -271,7 +272,7 @@ void RigsmithEditor::timerCallback()
            << "CPU " << juce::roundToInt (processor.getCpuLoad() * 100.0) << "%";
     if (lat > 0) status << "  PDC " << lat;
     header.refresh (reading, status);
-    if (tick % 10 == 0) statusLabel.setText (status, juce::dontSendNotification);
+    if (tick % 10 == 0) header.setStatus (sr, engine.getBlockSize(), lat, (float) processor.getCpuLoad());
 
     if (tick % 2 == 0)
         graph.repaint();
@@ -450,6 +451,22 @@ bool RigsmithEditor::insertPlugin (const juce::String& identifier, Chain& chain,
     return true;
 }
 
+bool RigsmithEditor::insertBuiltIn (NodeType t, Chain& chain, int index)
+{
+    auto* added = engine.insert (engine.createNode (t), chain, index);
+    if (added == nullptr) return false;
+    selectedId = added->id;
+    select (added->id);
+    return true;
+}
+
+std::pair<Chain*, int> RigsmithEditor::insertionPoint()
+{
+    const auto where = engine.locate (selectedId);
+    if (where.chain != nullptr) return { where.chain, where.index + 1 };
+    return { &engine.getRoot(), -1 };
+}
+
 //==============================================================================
 enum AddIds
 {
@@ -458,50 +475,6 @@ enum AddIds
     addPluginBase = 1000,
     insertOffset = 50000, replaceOffset = 70000
 };
-
-static const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups()
-{
-    static const std::vector<std::pair<juce::String, std::vector<NodeType>>> groups {
-        { "Dynamics",       { NodeType::Gate, NodeType::Comp, NodeType::Limiter, NodeType::Expander, NodeType::Transient, NodeType::Swell } },
-        { "Drive",          { NodeType::Overdrive, NodeType::Fuzz, NodeType::Boost, NodeType::Crusher } },
-        { "EQ & Filter",    { NodeType::Eq, NodeType::Wah } },
-        { "Modulation",     { NodeType::Chorus, NodeType::Flanger, NodeType::Phaser, NodeType::Tremolo, NodeType::Vibe, NodeType::Rotary } },
-        { "Delay & Reverb", { NodeType::Delay, NodeType::Reverb } },
-        { "Pitch",          { NodeType::Pitch } },
-        { "Utility",        { NodeType::Tuner, NodeType::Gain } } };
-    return groups;
-}
-
-static juce::String builtInMenuName (NodeType t)
-{
-    switch (t)
-    {
-        case NodeType::Gate:      return "Noise Gate";
-        case NodeType::Comp:      return "Compressor";
-        case NodeType::Limiter:   return "Limiter";
-        case NodeType::Expander:  return "Expander";
-        case NodeType::Transient: return "Transient Shaper";
-        case NodeType::Swell:     return "Auto Swell (violin swells)";
-        case NodeType::Overdrive: return "Overdrive";
-        case NodeType::Fuzz:      return "Fuzz";
-        case NodeType::Boost:     return "Clean Boost";
-        case NodeType::Crusher:   return "Bit Crusher";
-        case NodeType::Eq:        return "Studio EQ";
-        case NodeType::Wah:       return "Wah / Auto-Wah";
-        case NodeType::Chorus:    return "Chorus";
-        case NodeType::Flanger:   return "Flanger";
-        case NodeType::Phaser:    return "Phaser";
-        case NodeType::Tremolo:   return "Tremolo";
-        case NodeType::Vibe:      return "Uni-Vibe";
-        case NodeType::Rotary:    return "Rotary Speaker";
-        case NodeType::Delay:     return "Delay (digital / tape / ping-pong / dual)";
-        case NodeType::Reverb:    return "Reverb (room / hall / plate / spring / shimmer)";
-        case NodeType::Pitch:     return "Pitch / Octave / Doubler";
-        case NodeType::Gain:      return "Volume / Pan";
-        case NodeType::Tuner:     return "Tuner (strobe + needle)";
-        default:                  return "Block";
-    }
-}
 
 void RigsmithEditor::populateAddMenu (juce::PopupMenu& m, int o, bool includeRouting)
 {
@@ -880,7 +853,7 @@ void RigsmithEditor::showSceneMenu (int scene)
 {
     juce::PopupMenu m;
     m.addSectionHeader ("Scene " + engine.sceneNames[scene]);
-    m.addItem (1, "Rename...");
+    m.addItem (1, "Rename (or double-click it)");
     m.addItem (2, "MIDI learn: select this scene");
     m.addItem (3, "Copy current sound to this scene", scene != engine.getScene());
 
@@ -888,19 +861,7 @@ void RigsmithEditor::showSceneMenu (int scene)
     {
         if (r == 1)
         {
-            auto* w = new juce::AlertWindow ("Rename scene", {}, juce::MessageBoxIconType::NoIcon, this);
-            w->addTextEditor ("name", engine.sceneNames[scene]);
-            w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-            w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-            w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, scene] (int res)
-            {
-                if (res == 1)
-                {
-                    engine.sceneNames[scene] = w->getTextEditorContents ("name").substring (0, 8).trim();
-                    if (engine.sceneNames[scene].isEmpty()) engine.sceneNames[scene] = juce::String::charToString ((juce::juce_wchar) ('A' + scene));
-                    engine.markDirty();
-                }
-            }), true);
+            header.renameScene (scene);
         }
         else if (r == 2)
         {
@@ -1028,7 +989,7 @@ juce::PluginListComponent* RigsmithEditor::showPluginScanner()
 void RigsmithEditor::showSettings()
 {
     juce::DialogWindow::LaunchOptions o;
-    auto* s = new SettingsPanel (engine);
+    auto* s = new SettingsPanel (engine, processor.isStandalone());
     s->onChanged = [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
     {
         if (sp == nullptr) return;
@@ -1319,6 +1280,8 @@ void RigsmithEditor::replaceWith (Node& target, const juce::String& d)
         fresh = engine.createPlugin (*desc, err);
         if (fresh == nullptr) { showMessage ("Couldn't load " + desc->name + ": " + err); return; }
     }
+    else if (d.startsWith ("builtin:"))
+        fresh = engine.createNode (nodeTypeFromString (d.fromFirstOccurrenceOf ("builtin:", false, false)));
     else if (d.startsWith ("file:"))
     {
         const juce::File f (d.fromFirstOccurrenceOf ("file:", false, false));
