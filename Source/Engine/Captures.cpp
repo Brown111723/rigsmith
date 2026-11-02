@@ -144,7 +144,7 @@ namespace
         juce::int64 bestPos = -1;
 
         juce::MemoryBlock head;
-        in.readIntoMemoryBlock (head, (juce::ssize_t) juce::jmin (size, chunk));
+        in.readIntoMemoryBlock (head, (juce::pointer_sized_int) juce::jmin (size, chunk));
         findMetadata ({ static_cast<const char*> (head.getData()), head.getSize() }, 0, best, bestScore, bestPos);
 
         if (size > chunk)
@@ -152,7 +152,7 @@ namespace
             juce::MemoryBlock tail;
             const auto from = juce::jmax (chunk, size - chunk);
             in.setPosition (from);
-            in.readIntoMemoryBlock (tail, (juce::ssize_t) (size - from));
+            in.readIntoMemoryBlock (tail, (juce::pointer_sized_int) (size - from));
             findMetadata ({ static_cast<const char*> (tail.getData()), tail.getSize() }, from, best, bestScore, bestPos);
         }
         return best;
