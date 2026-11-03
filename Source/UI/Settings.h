@@ -38,6 +38,22 @@ private:
     juce::TextEditor t3kKey;
     juce::ComboBox t3kArch;
 
+    // where things are saved: rig presets, block presets, TONE3000 downloads
+    struct FolderRow
+    {
+        juce::Label title, path;
+        juce::TextButton choose { "Choose..." }, reset;
+    };
+    juce::Label savedTitle;
+    FolderRow presetRow, blockRow, t3kRow;
+    juce::TextButton withModels { "Keep presets with my NAM models" };
+    std::unique_ptr<juce::FileChooser> chooser;
+    void setupRow (FolderRow&, const juce::String& title, const juce::String& resetText, const juce::String& key);
+    void chooseFolder (const juce::String& key);
+    void setFolderAndMove (const juce::String& key, const juce::File& to);
+    void updateRows();
+    juce::File currentFolder (const juce::String& key) const;
+
     void updateIniNote();
     void setupSection (Section&, const juce::String& title, const juce::String& hint);
 };

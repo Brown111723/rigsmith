@@ -39,7 +39,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - The **TONE3000** tab in the library: sign in with your free TONE3000 account, then **Browse TONE3000** opens their catalog in your browser. Pick a tone and it downloads and loads straight into the rig.
 - Your **Favorites**, **Downloaded**, **Created** and **Trending** tones are listed in Rigsmith; click one to load it. For packs with several captures you pick one, or download them all.
 - Also in the **+** menu and a block's **Replace** menu ("Browse TONE3000...").
-- Downloads go to `Documents\Rigsmith\TONE3000\<type>\<tone>`, with a `tone3000.json` beside them so the library knows the type and credits the creator. The cards show the tone's name, "by <creator>" and a T3K mark.
+- Downloads go to a `TONE3000\<type>\<tone>` folder inside your first NAM folder (IRs: inside your first IR folder), or anywhere you choose in Settings, with a `tone3000.json` beside them so the library knows the type and credits the creator. The cards show the tone's name, "by <creator>" and a T3K mark.
 - A2 captures are requested by default (TONE3000's recommendation); choose A1 in Settings if you prefer. Rigsmith plays both.
 - TONE3000 asks apps for a free publishable key. Builds made with one (the `T3K_PUBLISHABLE_KEY` repository secret) have it built in; otherwise paste yours in the TONE3000 tab or Settings (tone3000.com > Settings > API Keys).
 
@@ -74,7 +74,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 **Randomise** (dice icons)
 - **Whole rig** (dice, top bar; right-click for options): dynamics, drives, NAM amps picked from your model folders, cabs from your IR folders, modulation, delays and reverbs, sometimes as a 2- or 3-amp split. Musical ranges, levels never randomised.
-- **Lock** blocks you like (lock icon, or right-click) and they survive every roll.
+- **Lock** blocks you like and they survive every roll: every card has a padlock next to its dice, dim when unlocked and lit when locked (or right-click the block).
 - **The die on each library row** says what the dice can pick: click it to dim it, and that audio-repair plug-in, test model, noisy IR or built-in effect is never chosen. It only affects the dice; the item still loads and plays as normal. A gear row's die covers all its captures (half-lit when only some are in). Shift/Ctrl-click to change several at once, right-click for a whole folder, type or manufacturer, or search and use **"x / y in dice"** to change everything shown. Saved in `Rigsmith.ini`.
 - **Dice on each block** (bottom-right of its card): swaps it for a random block of the same kind (a delay becomes another delay or a delay plug-in, a NAM amp gets another model).
 - **Dice in the bottom panel**: randomises the selected block's settings.
@@ -83,7 +83,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 **Workflow**
 - **Gain compensation** on any block: like normalising, it measures loudness in vs out while you play, then holds one fixed level match (no pumping). It measures again when you change the block's settings; right-click the button to measure now. The match is saved with the preset.
-- **Block presets**: save, load and init any block's settings (bookmark icon). Stored in `Documents\Rigsmith\Block Presets`.
+- **Block presets**: save, load and init any block's settings (bookmark icon). Stored in `Documents\Rigsmith\Block Presets`, or wherever you choose in Settings.
 - **Drag to replace**: drop a block, model, IR or plug-in onto the middle of another block to replace it (two blocks swap places); drop near its edge to insert instead.
 - **Replace** from the right-click menu too, keeping scenes and footswitch mappings.
 - Step through models and IRs in a folder with the `<` `>` buttons.
@@ -105,7 +105,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **Scenes A–D**: per-scene bypass, path levels and mutes, with click-free crossfades.
 - **MIDI learn** for footswitches and expression pedals: scenes, bypass, path levels, an A/B amp blend, any knob, next/previous preset, tuner and master volume. Program Change selects presets.
 - **Tuner**: the tuning fork in the top bar opens a full-screen tuner (`T`), and **Tuner** is also a block you can put anywhere in the rig, with a strobe, a cents needle, a steadiness history, mute and a 430–450 Hz reference.
-- Presets are `.rig` files in `Documents\Rigsmith\Presets`; sub-folders show up as banks.
+- Presets are `.rig` files in `Documents\Rigsmith\Presets` (sub-folders show up as banks). **Settings > Where Rigsmith saves things** moves rig presets, block presets and TONE3000 downloads wherever you like; **Keep presets with my NAM models** puts them all in your NAM folder, and your existing presets can move with them.
 - **Click IN or OUT** for the input / output panel: stereo peak + RMS meters with peak hold and clip counters, and a level history.
   - Input: gain, balance, source (input 1, input 2, summed or stereo) and polarity flip.
   - Output: master, balance, stereo width (down to mono), and a zero-latency **brickwall limiter** with ceiling and release controls, a gain-reduction meter and a limiting history.
@@ -120,7 +120,7 @@ Every push builds on GitHub Actions. Open the **Actions** tab, pick the latest r
 To publish a GitHub Release, push a tag:
 
 ```
-git tag v0.7.0 && git push origin v0.7.0
+git tag v0.8.0 && git push origin v0.8.0
 ```
 
 ## Quick start

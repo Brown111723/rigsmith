@@ -82,6 +82,7 @@ public:
 private:
     juce::Rectangle<float> footswitchArea() const;
     juce::Rectangle<float> diceArea() const;
+    juce::Rectangle<float> lockArea() const;
     bool hasDice() const;
     /** NAM / IR blocks whose gear has several captures get a little selector knob. */
     CaptureGroupPtr captureGroup() const;

@@ -134,14 +134,16 @@ public:
     void getTone (int id, std::function<void (Tone, juce::String error)> done);
     /** The tone's models, preferring the chosen architecture and falling back to the other. */
     void listModels (int toneId, std::function<void (juce::Array<Model>, juce::String error)> done);
-    /** Downloads one model / IR into the library (Documents\Rigsmith\TONE3000\<gear>\<tone>\)
+    /** Downloads one model / IR into the library (<NAM or IR folder>\TONE3000\<gear>\<tone>\)
         with a tone3000.json beside it, so it's categorised and credited. */
     void download (const Tone&, const Model&, std::function<void (juce::File, juce::String error)> done);
     /** Tone images and avatars (cached). */
     void fetchImage (const juce::String& url, std::function<void (juce::Image)> done);
 
-    juce::File libraryFolder() const;
-    /** The folder a tone's files go in. */
+    /** Where downloads go (Settings: inside your first NAM / IR folder by default). format "nam" / "ir". */
+    juce::File libraryFolder (const juce::String& format = "nam") const;
+    static juce::File legacyLibraryFolder();   // before v0.8: Documents\Rigsmith\TONE3000
+    /** The folder a tone's files go in (or were downloaded to before). */
     juce::File folderFor (const Tone&) const;
     /** Already downloaded? */
     bool isInLibrary (const Tone& t) const { return folderFor (t).getChildFile (ToneInfo::sidecarName).existsAsFile(); }

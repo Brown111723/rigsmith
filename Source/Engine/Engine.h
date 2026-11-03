@@ -180,6 +180,12 @@ public:
     bool moveSettingsTo (const juce::File&);
     juce::File getFolder (const juce::String& key) const;
     void setFolder (const juce::String& key, const juce::File&);
+    /** Where block presets live (Settings; default Documents\Rigsmith\Block Presets). */
+    juce::File getBlockPresetRoot() const;
+    /** Where TONE3000 downloads go: a folder chosen in Settings, or a "TONE3000" folder inside
+        the first NAM folder (models) / first IR folder (IRs). */
+    juce::File getDownloadFolder (bool irs) const;
+    bool hasCustomDownloadFolder() const;
     /** Library folders ("modelPaths", "irPaths"): several folders each, remembered between runs. */
     juce::FileSearchPath getPaths (const juce::String& key) const;
     void setPaths (const juce::String& key, const juce::FileSearchPath&);

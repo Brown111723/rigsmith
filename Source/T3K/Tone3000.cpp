@@ -601,18 +601,33 @@ void Client::listModels (int toneId, std::function<void (juce::Array<Model>, juc
     });
 }
 
-juce::File Client::libraryFolder() const
+juce::File Client::libraryFolder (const juce::String& format) const
+{
+    return engine.getDownloadFolder (format == "ir");
+}
+
+juce::File Client::legacyLibraryFolder()
 {
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rigsmith").getChildFile ("TONE3000");
 }
 
-juce::File Client::folderFor (const Tone& t) const
+static juce::String toneFolderName (const Tone& t)
 {
     auto name = t.title.isNotEmpty() ? t.title : "Tone " + juce::String (t.id);
     if (t.creator.isNotEmpty()) name << " - " << t.creator;
     name << " [" << t.id << "]";
-    return libraryFolder().getChildFile (juce::File::createLegalFileName (gearName (t.getGear())))
-                          .getChildFile (juce::File::createLegalFileName (name.substring (0, 120)));
+    return juce::File::createLegalFileName (name.substring (0, 120));
+}
+
+juce::File Client::folderFor (const Tone& t) const
+{
+    const auto gear = juce::File::createLegalFileName (gearName (t.getGear()));
+    const auto here = libraryFolder (t.format).getChildFile (gear).getChildFile (toneFolderName (t));
+    // downloaded before v0.8 went to Documents\Rigsmith\TONE3000: still found there
+    const auto old = legacyLibraryFolder().getChildFile (gear).getChildFile (toneFolderName (t));
+    if (! here.getChildFile (ToneInfo::sidecarName).existsAsFile() && old.getChildFile (ToneInfo::sidecarName).existsAsFile())
+        return old;
+    return here;
 }
 
 void Client::download (const Tone& tone, const Model& model, std::function<void (juce::File, juce::String)> done)
@@ -622,14 +637,15 @@ void Client::download (const Tone& tone, const Model& model, std::function<void 
     const auto folder = folderFor (tone);
     const auto target = folder.getChildFile (juce::File::createLegalFileName (model.name.isNotEmpty() ? model.name : "model " + juce::String (model.id)) + ext);
 
-    // make sure the library looks in Documents\Rigsmith\TONE3000
-    for (auto key : { "modelPaths", "irPaths" })
+    // make sure the library looks where it goes (already true for the default: inside your NAM / IR folder)
     {
+        const auto key = tone.format == "ir" ? "irPaths" : "modelPaths";
+        const auto where = libraryFolder (tone.format);
         auto paths = engine.getPaths (key);
         bool covered = false;
         for (int i = 0; i < paths.getNumPaths(); ++i)
-            covered |= libraryFolder() == juce::File (paths.getRawString (i)) || libraryFolder().isAChildOf (paths.getRawString (i));
-        if (! covered) { paths.add (libraryFolder()); engine.setPaths (key, paths); }
+            covered |= where == juce::File (paths.getRawString (i)) || where.isAChildOf (paths.getRawString (i));
+        if (! covered) { paths.add (where); engine.setPaths (key, paths); }
     }
 
     if (target.existsAsFile() && target.getSize() > 0)

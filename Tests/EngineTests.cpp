@@ -901,13 +901,16 @@ int main (int argc, char** argv)
         client.download (got, models[0], [&] (juce::File f, juce::String er) { downloaded = f; derr = er; });
         pump ([&] { return derr != "pending"; });
         CHECK (derr.isEmpty() && downloaded.existsAsFile() && downloaded.getSize() == (juce::int64) mock.modelBytes.getSize(), "model downloaded with the sign-in");
+        CHECK (client.libraryFolder() == juce::File (e.getPaths ("modelPaths").getRawString (0)).getChildFile ("TONE3000"),
+               "downloads go to a TONE3000 folder inside the first NAM folder");
         CHECK (downloaded.isAChildOf (client.libraryFolder()) && downloaded.getParentDirectory().getParentDirectory().getFileName() == "Amp + Cab",
-               "saved in Documents/Rigsmith/TONE3000/Amp + Cab/<tone>");
+               "saved in <NAM folder>/TONE3000/Amp + Cab/<tone>");
         CHECK (classifyFile (downloaded) == Gear::AmpCab, "and categorised as Amp + Cab in the library");
         bool inPaths = false;
         auto mp = e.getPaths ("modelPaths");
-        for (int i = 0; i < mp.getNumPaths(); ++i) inPaths |= juce::File (mp.getRawString (i)) == client.libraryFolder();
-        CHECK (inPaths, "the TONE3000 folder is added to the model folders");
+        for (int i = 0; i < mp.getNumPaths(); ++i)
+            inPaths |= client.libraryFolder().isAChildOf (mp.getRawString (i)) || juce::File (mp.getRawString (i)) == client.libraryFolder();
+        CHECK (inPaths && mp.getNumPaths() == 1, "already inside the model folders: nothing added");
         NamBlock fromT3k;
         CHECK (fromT3k.loadModel (downloaded, err) && fromT3k.getName() == "Plexi Crunch" && fromT3k.getDetail() == "by tonemaker",
                "the block shows the tone's title and creator (the capture names no gear)");
@@ -1026,6 +1029,42 @@ int main (int argc, char** argv)
         CHECK (leadPicks == 0, "a capture left out of the dice is never picked");
         CHECK (jcmPicks > 8 && plainPicks > 8, "the amp with several captures and the single one both come up");
         CHECK (pedalPicks == 0, "a pedal capture isn't rolled as the amp");
+    }
+
+    //==========================================================================
+    std::printf ("--- v0.8: where things are saved\n");
+    {
+        Engine e;
+        const auto nam = testDir.getChildFile ("Where/NAM"), irs = testDir.getChildFile ("Where/IRs");
+        nam.createDirectory(); irs.createDirectory();
+        e.setPaths ("modelPaths", juce::FileSearchPath (nam.getFullPathName()));
+        e.setPaths ("irPaths", juce::FileSearchPath (irs.getFullPathName()));
+        CHECK (! e.hasCustomDownloadFolder() && e.getDownloadFolder (false) == nam.getChildFile ("TONE3000")
+               && e.getDownloadFolder (true) == irs.getChildFile ("TONE3000"), "TONE3000 downloads go inside the NAM / IR folders");
+        e.setFolder ("downloadFolder", testDir.getChildFile ("Where/Downloads"));
+        CHECK (e.hasCustomDownloadFolder() && e.getDownloadFolder (true) == testDir.getChildFile ("Where/Downloads"), "or a folder of your choosing");
+        e.setFolder ("downloadFolder", {});
+        CHECK (! e.hasCustomDownloadFolder(), "and back to the NAM / IR folders");
+
+        e.setFolder ("presetFolder", nam.getChildFile ("Presets"));
+        e.setFolder ("blockPresetFolder", nam.getChildFile ("Block Presets"));
+        CHECK (e.getPresetFolder() == nam.getChildFile ("Presets"), "rig presets can live with the NAM models");
+        auto* comp = e.insert (e.createNode (NodeType::Comp), e.getRoot(), 0);
+        CHECK (e.saveBlockPreset (*comp, "Squash") && nam.getChildFile ("Block Presets").findChildFiles (juce::File::findFiles, true, "*.rbp").size() == 1,
+               "block presets are saved in the chosen folder");
+        Engine e2;
+        CHECK (e2.getBlockPresetRoot() == nam.getChildFile ("Block Presets") && e2.getPresetFolder() == nam.getChildFile ("Presets"),
+               "preset folders come back on startup (Rigsmith.ini)");
+
+        // an older download in Documents\Rigsmith\TONE3000 is still recognised
+        t3k::Client client (e);
+        t3k::Tone t; t.id = 777; t.title = "Old Tone"; t.creator = "x"; t.gear = "amp"; t.format = "nam";
+        const auto oldFolder = t3k::Client::legacyLibraryFolder().getChildFile ("Amp head").getChildFile ("Old Tone - x [777]");
+        ToneInfo ti; ti.valid = true; ti.id = 777; ti.title = "Old Tone"; ti.gear = "amp"; ti.format = "nam";
+        ti.write (oldFolder);
+        CHECK (client.isInLibrary (t) && client.folderFor (t) == oldFolder, "tones downloaded to the old place still count as downloaded");
+        oldFolder.deleteRecursively();
+        CHECK (client.folderFor (t).isAChildOf (nam.getChildFile ("TONE3000")), "new downloads go to the NAM folder");
     }
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);

@@ -58,6 +58,24 @@ SettingsPanel::SettingsPanel (Engine& e, bool isStandalone) : engine (e)
     for (auto* c : std::initializer_list<juce::Component*> { &t3kTitle, &t3kHint, &t3kKey, &t3kArch })
         addAndMakeVisible (c);
 
+    savedTitle.setText ("Where Rigsmith saves things", juce::dontSendNotification);
+    savedTitle.setFont (font (14.0f, true));
+    addAndMakeVisible (savedTitle);
+    setupRow (presetRow, "Rig presets (.rig)", "Default", "presetFolder");
+    setupRow (blockRow, "Block presets (.rbp)", "Default", "blockPresetFolder");
+    setupRow (t3kRow, "TONE3000 downloads", "Use my NAM / IR folders", "downloadFolder");
+    withModels.setTooltip ("Rig presets go to <your first NAM folder>\\Presets and block presets to <your first NAM folder>\\Block Presets, "
+                           "so everything lives together (and your existing presets move with them)");
+    withModels.onClick = [this]
+    {
+        const juce::File nam (models.list.getPath().getRawString (0));
+        if (! nam.isDirectory()) return;
+        setFolderAndMove ("presetFolder", nam.getChildFile ("Presets"));
+        setFolderAndMove ("blockPresetFolder", nam.getChildFile ("Block Presets"));
+    };
+    addAndMakeVisible (withModels);
+    updateRows();
+
     iniNote.setFont (font (12.0f));
     iniNote.setColour (juce::Label::textColourId, muted);
     addAndMakeVisible (iniNote);
@@ -83,7 +101,7 @@ SettingsPanel::SettingsPanel (Engine& e, bool isStandalone) : engine (e)
     addChildComponent (portable);
     portable.setVisible (isStandalone);
 
-    setSize (720, 840 + pluginSections.size() * 150);
+    setSize (720, 1040 + pluginSections.size() * 150);
 }
 
 SettingsPanel::~SettingsPanel()
@@ -113,6 +131,117 @@ void SettingsPanel::updateIniNote()
                                     : "Saves Rigsmith.ini next to Rigsmith.exe, so this folder (e.g. on a USB stick) carries its own settings");
 }
 
+void SettingsPanel::setupRow (FolderRow& row, const juce::String& title, const juce::String& resetText, const juce::String& key)
+{
+    row.title.setText (title, juce::dontSendNotification);
+    row.title.setFont (font (13.0f, true));
+    row.path.setFont (font (12.0f));
+    row.path.setColour (juce::Label::textColourId, muted);
+    row.path.setMinimumHorizontalScale (0.7f);
+    row.reset.setButtonText (resetText);
+    row.choose.onClick = [this, key] { chooseFolder (key); };
+    row.reset.onClick = [this, key]
+    {
+        if (key == "downloadFolder") { engine.setFolder (key, {}); updateRows(); return; }
+        const auto def = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rigsmith")
+                            .getChildFile (key == "presetFolder" ? "Presets" : "Block Presets");
+        setFolderAndMove (key, def);
+    };
+    for (auto* c : std::initializer_list<juce::Component*> { &row.title, &row.path, &row.choose, &row.reset })
+        addAndMakeVisible (c);
+}
+
+juce::File SettingsPanel::currentFolder (const juce::String& key) const
+{
+    if (key == "presetFolder") return engine.getPresetFolder();
+    if (key == "blockPresetFolder") return engine.getBlockPresetRoot();
+    return engine.getDownloadFolder (false);
+}
+
+void SettingsPanel::updateRows()
+{
+    presetRow.path.setText (engine.getPresetFolder().getFullPathName(), juce::dontSendNotification);
+    blockRow.path.setText (engine.getBlockPresetRoot().getFullPathName(), juce::dontSendNotification);
+    if (engine.hasCustomDownloadFolder())
+        t3kRow.path.setText (engine.getDownloadFolder (false).getFullPathName(), juce::dontSendNotification);
+    else
+        t3kRow.path.setText (engine.getDownloadFolder (false).getFullPathName() + "  (and the same in your IR folder)",
+                             juce::dontSendNotification);
+    t3kRow.reset.setEnabled (engine.hasCustomDownloadFolder());
+    for (auto* r : { &presetRow, &blockRow, &t3kRow }) r->path.setTooltip (r->path.getText());
+    if (! engine.hasCustomDownloadFolder())
+        t3kRow.path.setTooltip ("Models: " + engine.getDownloadFolder (false).getFullPathName()
+                                + "\nIRs: " + engine.getDownloadFolder (true).getFullPathName());
+}
+
+void SettingsPanel::chooseFolder (const juce::String& key)
+{
+    // start next to the NAM folders: that's where most people want everything
+    auto start = currentFolder (key);
+    if (! start.isDirectory()) start = juce::File (models.list.getPath().getRawString (0));
+    chooser = std::make_unique<juce::FileChooser> ("Choose a folder", start);
+    juce::Component::SafePointer<SettingsPanel> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                          [safe, key] (const juce::FileChooser& fc)
+    {
+        if (safe == nullptr) return;
+        const auto f = fc.getResult();
+        if (f == juce::File()) return;
+        if (key == "downloadFolder")
+        {
+            // earlier downloads stay where they are (and are still found); new ones go here
+            safe->engine.setFolder (key, f);
+            auto paths = safe->models.list.getPath();
+            bool covered = false;
+            for (int i = 0; i < paths.getNumPaths(); ++i)
+                covered |= f == juce::File (paths.getRawString (i)) || f.isAChildOf (paths.getRawString (i));
+            if (! covered) { paths.add (f); safe->models.list.setPath (paths); }
+            auto irPaths = safe->irs.list.getPath();
+            covered = false;
+            for (int i = 0; i < irPaths.getNumPaths(); ++i)
+                covered |= f == juce::File (irPaths.getRawString (i)) || f.isAChildOf (irPaths.getRawString (i));
+            if (! covered) { irPaths.add (f); safe->irs.list.setPath (irPaths); }
+            safe->updateRows();
+            return;
+        }
+        safe->setFolderAndMove (key, f);
+    });
+}
+
+void SettingsPanel::setFolderAndMove (const juce::String& key, const juce::File& to)
+{
+    const auto from = currentFolder (key);
+    if (to == from) { updateRows(); return; }
+    to.createDirectory();
+    engine.setFolder (key, to);
+    updateRows();
+
+    // bring the presets that are already saved along, if the person wants that
+    const auto pattern = key == "presetFolder" ? "*.rig" : "*.rbp";
+    auto existing = from.isDirectory() ? from.findChildFiles (juce::File::findFiles, true, pattern) : juce::Array<juce::File>();
+    if (existing.isEmpty()) return;
+    const auto what = key == "presetFolder" ? juce::String ("rig preset") : juce::String ("block preset");
+    juce::Component::SafePointer<SettingsPanel> safe (this);
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Move your presets?",
+        juce::String (existing.size()) + " " + what + (existing.size() == 1 ? " is" : "s are") + " saved in\n" + from.getFullPathName()
+            + "\n\nMove them to\n" + to.getFullPathName() + "?",
+        "Move them", "Leave them", nullptr,
+        juce::ModalCallbackFunction::create ([safe, existing, from, to] (int r)
+        {
+            if (r == 0 || safe == nullptr) return;
+            int failed = 0;
+            for (auto& f : existing)
+            {
+                const auto target = to.getChildFile (f.getRelativePathFrom (from));
+                target.getParentDirectory().createDirectory();
+                if (target.existsAsFile() || ! f.moveFileTo (target)) ++failed;
+            }
+            if (failed > 0)
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Some presets stayed put",
+                    juce::String (failed) + " couldn't be moved (a file with the same name is already there, or the folder is read-only).");
+        }));
+}
+
 void SettingsPanel::setupSection (Section& s, const juce::String& title, const juce::String& hint)
 {
     s.title.setText (title, juce::dontSendNotification);
@@ -139,6 +268,21 @@ void SettingsPanel::resized()
     };
     place (models, 120);
     place (irs, 120);
+    // presets and downloads, next to the NAM / IR folders
+    savedTitle.setBounds (r.removeFromTop (24));
+    for (auto* row : { &presetRow, &blockRow, &t3kRow })
+    {
+        auto line = r.removeFromTop (28);
+        row->title.setBounds (line.removeFromLeft (150));
+        row->reset.setBounds (line.removeFromRight (row == &t3kRow ? 170 : 80).reduced (0, 1));
+        line.removeFromRight (6);
+        row->choose.setBounds (line.removeFromRight (90).reduced (0, 1));
+        line.removeFromRight (8);
+        row->path.setBounds (line);
+        r.removeFromTop (6);
+    }
+    withModels.setBounds (r.removeFromTop (28).removeFromLeft (260));
+    r.removeFromTop (20);
     for (auto* s : pluginSections) place (*s, 110);
     vst2Note.setBounds (r.removeFromTop (36));
     t3kTitle.setBounds (r.removeFromTop (22));
@@ -146,8 +290,7 @@ void SettingsPanel::resized()
     t3kKey.setBounds (r.removeFromTop (32).removeFromLeft (440));
     r.removeFromTop (6);
     t3kArch.setBounds (r.removeFromTop (28).removeFromLeft (360));
-    r.removeFromTop (14);
-    r.removeFromTop (6);
+    r.removeFromTop (20);
     autoCategorise.setBounds (r.removeFromTop (28));
     scanOnStartup.setBounds (r.removeFromTop (28));
     startFullScreen.setBounds (r.removeFromTop (28));

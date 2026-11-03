@@ -59,7 +59,13 @@ juce::Rectangle<float> BlockCard::footswitchArea() const
 
 juce::Rectangle<float> BlockCard::diceArea() const
 {
-    return { (float) getWidth() - 34.0f, (float) getHeight() - 35.0f, 22.0f, 22.0f };
+    return { (float) getWidth() - 58.0f, (float) getHeight() - 35.0f, 22.0f, 22.0f };
+}
+
+juce::Rectangle<float> BlockCard::lockArea() const
+{
+    // always there, right of the dice: dim when unlocked, lit when locked
+    return { (float) getWidth() - 31.0f, (float) getHeight() - 34.0f, 20.0f, 20.0f };
 }
 
 bool BlockCard::hasDice() const
@@ -140,6 +146,9 @@ juce::String BlockCard::getTooltip()
              + (tone.isNotEmpty() ? " (" + tone + ")" : juce::String())
              + "\nDrag up / down or scroll to switch, click for the list";
     }
+    if (hasDice() && lockArea().expanded (3.0f).contains (p))
+        return node.locked.load() ? "Locked: the dice leave this block alone. Click to unlock"
+                                  : "Lock this block so the dice leave it alone";
     if (hasDice() && diceArea().expanded (3.0f).contains (p))
         return "Random " + categoryName (Randomiser::categoryOf (node)).toLowerCase() + " block (Shift+R). Ctrl+Z undoes it";
     if (footswitchArea().expanded (6.0f).contains (p))
@@ -185,7 +194,7 @@ void BlockCard::paint (juce::Graphics& g)
 
     g.setColour (muted.withMultipliedAlpha (alpha));
     g.setFont (font (10.0f, true).withExtraKerningFactor (0.08f));
-    g.drawFittedText (kindLabel (node), 12, 22, getWidth() - 24 - (node.autoGain.load() || node.getLatency() > 0 ? 58 : 0) - (node.locked.load() ? 20 : 0), 14, juce::Justification::centredLeft, 1, 0.8f);
+    g.drawFittedText (kindLabel (node), 12, 22, getWidth() - 24 - (node.autoGain.load() || node.getLatency() > 0 ? 58 : 0), 14, juce::Justification::centredLeft, 1, 0.8f);
 
     const auto captures = captureGroup();
     g.setColour (text.withMultipliedAlpha (alpha));
@@ -241,7 +250,13 @@ void BlockCard::paint (juce::Graphics& g)
     }
     g.setColour (detailColour);
     g.setFont (font (11.0f, node.getType() == NodeType::Tuner));
-    g.drawFittedText (detail, 12, 72, getWidth() - 24 - (captures != nullptr ? 26 : 0), 16, juce::Justification::topLeft, 1, 0.85f);
+    const bool hasBadge = [this]
+    {
+        if (auto* nb = dynamic_cast<NamBlock*> (&node)) return nb->getToneInfo().valid;
+        if (auto* ir = dynamic_cast<IrBlock*> (&node)) return ir->getToneInfo().valid;
+        return false;
+    }();
+    g.drawFittedText (detail, 12, 72, getWidth() - 24 - (captures != nullptr || hasBadge ? 34 : 0), 16, juce::Justification::topLeft, 1, 0.85f);
 
     // footswitch + LED glow
     const auto sw = footswitchArea();
@@ -256,7 +271,7 @@ void BlockCard::paint (juce::Graphics& g)
     else if (auto* ir = dynamic_cast<IrBlock*> (&node)) tone = ir->getToneInfo();
     if (tone.valid)
     {
-        const juce::Rectangle<float> badge ((float) getWidth() - 70.0f, sw.getCentreY() - 8.0f, 30.0f, 16.0f);
+        const juce::Rectangle<float> badge ((float) getWidth() - 42.0f, 75.0f, 30.0f, 14.0f);
         g.setColour (text.withAlpha (0.12f * alpha + 0.05f));
         g.fillRoundedRectangle (badge, 4.0f);
         g.setColour (text.withMultipliedAlpha (0.8f * alpha));
@@ -265,7 +280,7 @@ void BlockCard::paint (juce::Graphics& g)
     }
 
     // latency or gain-compensation readout, top right
-    const int readoutRight = getWidth() - (node.locked.load() ? 32 : 12);
+    const int readoutRight = getWidth() - 12;
     if (auto lat = node.getLatency(); lat > 0)
     {
         g.setColour (dim);
@@ -294,8 +309,19 @@ void BlockCard::paint (juce::Graphics& g)
         drawIcon (g, Icon::Dice, d, over ? c : (isMouseOver() || selected ? muted : dim.withAlpha (0.8f)));
     }
 
-    if (node.locked.load())
-        drawIcon (g, Icon::Lock, { (float) getWidth() - 28.0f, 20.0f, 16.0f, 16.0f }, accent.withMultipliedAlpha (alpha));
+    if (hasDice())
+    {
+        const auto l = lockArea();
+        const bool locked = node.locked.load();
+        const bool over = isMouseOver() && l.expanded (3.0f).contains (getMouseXYRelative().toFloat());
+        if (over)
+        {
+            g.setColour (accent.withAlpha (0.16f));
+            g.fillRoundedRectangle (l.expanded (3.0f), 6.0f);
+        }
+        drawIcon (g, locked ? Icon::Lock : Icon::Unlock, l.reduced (1.0f),
+                  locked ? accent : over ? accent.withAlpha (0.8f) : dim.withAlpha (isMouseOver() || selected ? 0.8f : 0.5f));
+    }
 
     if (dropLabel.isNotEmpty())
     {
@@ -327,6 +353,13 @@ void BlockCard::mouseDown (const juce::MouseEvent& e)
     {
         host.select (node.id);
         host.showNodeMenu (node, this);
+        return;
+    }
+    if (hasDice() && lockArea().expanded (3.0f).contains (e.position))
+    {
+        pressedSwitch = true;   // not a drag
+        host.toggleLock (node);
+        repaint();
         return;
     }
     if (hasDice() && diceArea().expanded (3.0f).contains (e.position))
@@ -382,6 +415,7 @@ void BlockCard::mouseUp (const juce::MouseEvent&)
 void BlockCard::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (! footswitchArea().expanded (6.0f).contains (e.position) && ! (hasDice() && diceArea().expanded (3.0f).contains (e.position))
+        && ! (hasDice() && lockArea().expanded (3.0f).contains (e.position))
         && ! (captureGroup() != nullptr && knobArea().expanded (4.0f).contains (e.position)))
         host.openNode (node);
 }

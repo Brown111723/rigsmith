@@ -267,8 +267,33 @@ juce::File Engine::getFolder (const juce::String& key) const
 
 void Engine::setFolder (const juce::String& key, const juce::File& f)
 {
-    const auto name = key == "modelFolder" ? "Models" : key == "irFolder" ? "IRs" : key == "presetFolder" ? "Presets" : key.toRawUTF8();
-    ini.set ("Folders", name, f.getFullPathName());
+    const auto name = key == "modelFolder" ? "Models" : key == "irFolder" ? "IRs" : key == "presetFolder" ? "Presets"
+                    : key == "blockPresetFolder" ? "BlockPresets" : key == "downloadFolder" ? "TONE3000" : key.toRawUTF8();
+    if (f != juce::File()) f.createDirectory();
+    ini.set ("Folders", name, f.getFullPathName());   // an empty File clears it (back to the default)
+}
+
+juce::File Engine::getBlockPresetRoot() const
+{
+    const auto set = ini.get ("Folders", "BlockPresets").trim();
+    if (set.isNotEmpty() && juce::File::isAbsolutePath (set)) return juce::File (set);
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rigsmith").getChildFile ("Block Presets");
+}
+
+bool Engine::hasCustomDownloadFolder() const
+{
+    const auto set = ini.get ("Folders", "TONE3000").trim();
+    return set.isNotEmpty() && juce::File::isAbsolutePath (set);
+}
+
+juce::File Engine::getDownloadFolder (bool irs) const
+{
+    // a folder of your choosing, or a TONE3000 folder inside your first NAM / IR folder,
+    // so downloads sit with the rest of your captures
+    if (hasCustomDownloadFolder()) return juce::File (ini.get ("Folders", "TONE3000").trim());
+    const auto paths = getPaths (irs ? "irPaths" : "modelPaths");
+    const juce::File first (paths.getRawString (0));
+    return (first.isDirectory() ? first : getFolder (irs ? "irFolder" : "modelFolder")).getChildFile ("TONE3000");
 }
 
 juce::FileSearchPath Engine::getPaths (const juce::String& key) const
@@ -1815,8 +1840,7 @@ juce::File Engine::getBlockPresetFolder (const Node& n) const
     else if (n.getType() == NodeType::Nam) key = "NAM Amp";
     else if (n.getType() == NodeType::Ir) key = "Cab IR";
     else key = n.getName();
-    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rigsmith")
-        .getChildFile ("Block Presets").getChildFile (juce::File::createLegalFileName (key));
+    return getBlockPresetRoot().getChildFile (juce::File::createLegalFileName (key));
 }
 
 juce::Array<juce::File> Engine::getBlockPresets (const Node& n) const
