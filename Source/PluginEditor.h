@@ -41,6 +41,8 @@ public:
     void browseFile (rig::Node&, int delta) override;
     void switchCapture (rig::Node&, const juce::File&) override;
     bool loadFileInto (rig::Node* target, rig::Chain* chain, int index, const juce::File&) override;
+    void dropCaptures (rig::Node* target, rig::Chain* chain, int index, const rig::CaptureDrop&, DropMode) override;
+    void placeFiles (const juce::Array<juce::File>&);
     bool insertPlugin (const juce::String& identifier, rig::Chain& chain, int index) override;
     bool insertBuiltIn (rig::NodeType, rig::Chain& chain, int index) override;
     /** Where a double-clicked library item goes: after the selected block, else the end of the rig. */
@@ -136,7 +138,7 @@ private:
     Divider divider;
     juce::Label statusLabel;
     bool libraryVisible = true;
-    int inspectorHeight = 330, dragStartHeight = 330;
+    int inspectorHeight = 370, dragStartHeight = 370;
     std::unique_ptr<juce::TooltipWindow> tooltips;   // off by default; the speech-bubble button turns them on
     void setTooltipsEnabled (bool);
 
@@ -148,6 +150,57 @@ private:
         void mouseUp (const juce::MouseEvent& e) override { if (contains (e.getPosition()) && onClick) onClick(); }
     } learnClose;
     juce::Rectangle<int> toastBounds() const;
+
+    /** "Replace or add?" when captures are dropped on a block that already has some. */
+    struct DropPrompt : public juce::Component
+    {
+        DropPrompt (const juce::String& title, const juce::String& replaceText, const juce::String& addText)
+            : heading (title)
+        {
+            replace.setButtonText (replaceText);
+            add.setButtonText (addText);
+            add.setColour (juce::TextButton::buttonColourId, rig::theme::accent);
+            add.setColour (juce::TextButton::textColourOffId, rig::theme::bg);
+            replace.onClick = [this] { if (onChoice) onChoice (1); };
+            add.onClick = [this] { if (onChoice) onChoice (2); };
+            close.onClick = [this] { if (onChoice) onChoice (0); };
+            for (auto* b : { &replace, &add }) addAndMakeVisible (b);
+            addAndMakeVisible (close);
+        }
+        std::function<void (int)> onChoice;   // 0 cancel, 1 replace, 2 add
+        juce::Point<int> getPreferredSize() const
+        {
+            const int w = juce::jmax (juce::GlyphArrangement::getStringWidthInt (rig::theme::font (13.0f, true), heading) + 64,
+                                      juce::GlyphArrangement::getStringWidthInt (rig::theme::font (13.0f, true), replace.getButtonText() + add.getButtonText()) + 90);
+            return { juce::jlimit (300, 560, w), 92 };
+        }
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat().reduced (1.0f);
+            g.setColour (juce::Colours::black.withAlpha (0.35f));
+            g.fillRoundedRectangle (r.translated (0, 3), 10.0f);
+            g.setColour (rig::theme::card);
+            g.fillRoundedRectangle (r, 10.0f);
+            g.setColour (rig::theme::accent);
+            g.drawRoundedRectangle (r, 10.0f, 1.5f);
+            g.setColour (rig::theme::text);
+            g.setFont (rig::theme::font (13.0f, true));
+            g.drawText (heading, 16, 10, getWidth() - 56, 22, juce::Justification::centredLeft, true);
+        }
+        void resized() override
+        {
+            close.setBounds (getWidth() - 36, 8, 26, 26);
+            auto row = getLocalBounds().reduced (14, 0).withTrimmedTop (44).withHeight (34);
+            const int w = (row.getWidth() - 8) / 2;
+            replace.setBounds (row.removeFromLeft (w));
+            row.removeFromLeft (8);
+            add.setBounds (row);
+        }
+        juce::String heading;
+        juce::TextButton replace, add;
+        rig::IconButton close { rig::Icon::Close, "Cancel (Esc)" };
+    };
+    std::unique_ptr<DropPrompt> dropPrompt;
     void hideStandaloneOptionsButton();
     bool optionsHidden = false;
 

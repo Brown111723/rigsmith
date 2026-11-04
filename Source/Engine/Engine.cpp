@@ -279,7 +279,30 @@ void Engine::setFolder (const juce::String& key, const juce::File& f)
     ini.set ("Folders", name, f.getFullPathName());   // an empty File clears it (back to the default)
 }
 
-bool Engine::loadGear (NamBlock& nb, const juce::File& f, juce::String& error, bool diceOnly)
+bool Engine::addCaptures (Sweepable& sw, const juce::Array<juce::File>& more, juce::String& error)
+{
+    auto files = sw.getCaptureFiles();
+    const auto current = files.isEmpty() ? juce::File() : files[sw.getNearestCapture()];
+    const float pos = sw.getCapturePosition();
+    for (auto& f : more)
+        if (sw.takesFile (f) && ! files.contains (f) && files.size() < maxSweep) files.add (f);
+    if (files == sw.getCaptureFiles()) return true;
+    const int at = files.indexOf (current);
+    return sw.loadCaptures (files, at >= 0 && std::abs (pos - std::round (pos)) < 0.001f ? (float) at : pos, error);
+}
+
+juce::Array<juce::File> Engine::capturesInFolder (const juce::File& folder, bool irs)
+{
+    auto found = folder.findChildFiles (juce::File::findFiles, true, irs ? "*.wav;*.aif;*.aiff;*.flac" : "*.nam");
+    std::sort (found.begin(), found.end(), [] (const juce::File& a, const juce::File& b)
+    {
+        return a.getFullPathName().compareNatural (b.getFullPathName()) < 0;
+    });
+    if (found.size() > maxSweep) found.removeRange (maxSweep, found.size());
+    return found;
+}
+
+bool Engine::loadGear (Sweepable& nb, const juce::File& f, juce::String& error, bool diceOnly)
 {
     juce::Array<juce::File> files;
     if (auto g = captures.groupFor (f); g != nullptr && g->size() > 1)
@@ -1625,7 +1648,7 @@ std::unique_ptr<Chain> Engine::buildFactory (int index, juce::StringArray& scene
         if (! models.isEmpty()) loadGear (*nam, models[juce::jmin (which, models.size() - 1)], err);
         c.nodes.push_back (std::move (nam));
         auto cab = std::make_unique<IrBlock>();
-        if (! irFiles.isEmpty()) cab->loadIr (irFiles[juce::jmin (which, irFiles.size() - 1)], err);
+        if (! irFiles.isEmpty()) loadGear (*cab, irFiles[juce::jmin (which, irFiles.size() - 1)], err);
         c.nodes.push_back (std::move (cab));
     };
 

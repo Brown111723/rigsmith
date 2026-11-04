@@ -23,6 +23,8 @@ public:
     void resized() override;
 
     std::function<void (const juce::File&)> onActivateFile;
+    /** Double-clicked: a gear row (all its captures) or a capture. Exactly these get loaded. */
+    std::function<void (const juce::Array<juce::File>&)> onActivateFiles;
     std::function<void (const juce::String& pluginIdentifier)> onActivatePlugin;
     std::function<void (NodeType)> onActivateBuiltIn;
     std::function<void()> onScanPlugins;
@@ -74,7 +76,12 @@ private:
                                     juce::TextButton ("TONE3000  -  amps, pedals & IRs from the community") };
     juce::TextButton folderButton;
     juce::TextEditor search;
-    juce::ListBox list;
+    /** The list, with a compact "3 captures" tag as its drag image. */
+    struct List : public juce::ListBox
+    {
+        std::function<juce::String (const juce::SparseSet<int>&)> describeDrag;
+        juce::ScaledImage createSnapshotOfRows (const juce::SparseSet<int>& rows, int& x, int& y) override;
+    } list;
     juce::Label footer;
     juce::TextButton diceButton;
 

@@ -81,14 +81,15 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     };
     divider.onDoubleClick = [this]
     {
-        inspectorHeight = inspectorHeight < 420 ? juce::jmax (330, (getHeight() - 64) * 6 / 10) : 330;
+        inspectorHeight = inspectorHeight < 460 ? juce::jmax (370, (getHeight() - 64) * 6 / 10) : 370;
         resized();
         setIntSetting ("inspectorHeight", inspectorHeight);
     };
     divider.setTooltip ("Drag to resize the panel. Double-click to make it tall / normal");
 
     libraryVisible = engine.getSetting ("libraryVisible", true);
-    inspectorHeight = getIntSetting ("inspectorHeight", 330);
+    inspectorHeight = getIntSetting ("inspectorHeight", 370);
+    if (inspectorHeight == 330) inspectorHeight = 370;   // the old default: a little taller now
     randomiser.options.usePlugins = engine.getSetting ("randomUsePlugins", true);
     randomiser.options.allowSplits = engine.getSetting ("randomSplits", true);
 
@@ -123,6 +124,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     };
 
     library.onActivateFile = [this] (const juce::File& f) { placeFile (f); };
+    library.onActivateFiles = [this] (const juce::Array<juce::File>& f) { placeFiles (f); };
     tone3000 = std::make_unique<rig::t3k::Client> (engine);
     library.setTone3000 (*tone3000);
     library.getTone3000Panel()->onFileReady = [this] (const juce::File& f) { placeFile (f); };
@@ -250,12 +252,18 @@ void RigsmithEditor::resized()
 void RigsmithEditor::layoutGraph (juce::Rectangle<int> r)
 {
     // a long (or tall) rig gets the mini map at the bottom instead of a horizontal scrollbar
+    // a small map floating at the bottom centre, over the graph
     const auto need = graph.contentSize();
     const bool map = need.x > r.getWidth() || need.y > r.getHeight();
     rigMap.setVisible (map);
-    if (map) rigMap.setBounds (r.removeFromBottom (54));
     viewport.setScrollBarsShown (true, false);
     viewport.setBounds (r);
+    if (map)
+    {
+        const int w = juce::jlimit (220, 380, r.getWidth() / 4);
+        rigMap.setBounds (r.getCentreX() - w / 2, r.getBottom() - 30 - 12, w, 30);
+        rigMap.toFront (false);
+    }
     graph.fitTo (viewport.getLocalBounds().withTrimmedRight (graph.contentSize().y > r.getHeight() ? viewport.getScrollBarThickness() : 0));
 }
 
@@ -438,16 +446,19 @@ void RigsmithEditor::chooseFileFor (Node& n)
 {
     const bool isNam = n.getType() == NodeType::Nam;
     const auto id = n.id;
-    chooser = std::make_unique<juce::FileChooser> (isNam ? "Load a NAM model" : "Load a cab IR",
+    chooser = std::make_unique<juce::FileChooser> (isNam ? "Load NAM captures (pick several to sweep between them)" : "Load IRs (pick several to sweep between them)",
                                                    juce::File (engine.getPaths (isNam ? "modelPaths" : "irPaths").getRawString (0)),
                                                    isNam ? "*.nam" : "*.wav;*.aif;*.aiff;*.flac");
-    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+    // pick one capture, or several (Ctrl / Shift-click) to sweep between: exactly those are loaded
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::canSelectMultipleItems,
                           [this, id] (const juce::FileChooser& fc)
     {
-        const auto f = fc.getResult();
-        if (f.existsAsFile())
-            if (auto* node = engine.findNode (id))
-                loadFileInto (node, nullptr, -1, f);
+        juce::StringArray paths;
+        for (auto& f : fc.getResults()) if (f.existsAsFile()) paths.add (f.getFullPathName());
+        if (paths.isEmpty()) return;
+        if (auto* node = engine.findNode (id))
+            dropCaptures (node, nullptr, -1, CaptureDrop::fromPaths (paths), DropMode::Replace);
     });
 }
 
@@ -461,8 +472,17 @@ void RigsmithEditor::browseTone3000 (const juce::String& format, std::function<v
     panel->browse (format, std::move (into));
 }
 
-void RigsmithEditor::placeFile (const juce::File& f)
+void RigsmithEditor::placeFile (const juce::File& f) { placeFiles ({ f }); }
+
+void RigsmithEditor::placeFiles (const juce::Array<juce::File>& files)
 {
+    if (files.isEmpty()) return;
+    const auto f = files[0];
+    CaptureDrop drop;
+    for (auto& x : files) (Sweepable::isNamFile (x) ? drop.nams : drop.irs).addIfNotAlreadyThere (x);
+    // exactly these captures (one, or a few picked in the library)
+    auto put = [this, &drop] (Node* target, Chain* chain, int index) { dropCaptures (target, chain, index, drop, DropMode::Replace); };
+
     // Where a double-clicked (or downloaded) model / IR goes:
     //  1. into the selected block, if it's the same kind (amp for amp, pedal for pedal, IR for IR)
     //  2. into an empty block of that kind in the main chain
@@ -483,11 +503,11 @@ void RigsmithEditor::placeFile (const juce::File& f)
     {
         if (role (*sel) == want || (want != 2 && sel->getType() == NodeType::Nam && dynamic_cast<NamBlock*> (sel)->getFile() == juce::File()))
         {
-            loadFileInto (sel, nullptr, -1, f);
+            put (sel, nullptr, -1);
             return;
         }
         auto [c, i] = insertionPoint();
-        loadFileInto (nullptr, c, i, f);
+        put (nullptr, c, i);
         return;
     }
 
@@ -498,7 +518,7 @@ void RigsmithEditor::placeFile (const juce::File& f)
                         || (n->getType() == NodeType::Ir && dynamic_cast<IrBlock*> (n.get())->getFile() == juce::File());
         if (empty && ((isNam && n->getType() == NodeType::Nam) || (! isNam && n->getType() == NodeType::Ir)))
         {
-            loadFileInto (n.get(), nullptr, -1, f);
+            put (n.get(), nullptr, -1);
             return;
         }
     }
@@ -510,7 +530,7 @@ void RigsmithEditor::placeFile (const juce::File& f)
         if (want == 0 && r == 2) { at = i; break; }       // amp: before the cab
         if (want == 2 && r == 0) at = i + 1;              // IR: after the (last) amp
     }
-    loadFileInto (nullptr, &root, at, f);
+    put (nullptr, &root, at);
 }
 
 bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const juce::File& f)
@@ -531,7 +551,7 @@ bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const 
     {
         bool ok = false;
         if (auto* nb = dynamic_cast<NamBlock*> (target); nb != nullptr && isNam) ok = engine.loadGear (*nb, f, err);
-        else if (auto* ir = dynamic_cast<IrBlock*> (target); ir != nullptr && isIr) ok = ir->loadIr (f, err);
+        else if (auto* ir = dynamic_cast<IrBlock*> (target); ir != nullptr && isIr) ok = engine.loadGear (*ir, f, err);
         else err = "That file doesn't fit this block";
 
         if (! ok) { showMessage (err); return false; }
@@ -555,7 +575,7 @@ bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const 
     else
     {
         auto ir = std::make_unique<IrBlock>();
-        if (! ir->loadIr (f, err)) { showMessage (err); return false; }
+        if (! engine.loadGear (*ir, f, err)) { showMessage (err); return false; }
         n = std::move (ir);
     }
     if (auto* added = engine.insert (std::move (n), *chain, index))
@@ -564,6 +584,106 @@ bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const 
         showMessage ("Added " + f.getFileNameWithoutExtension());
     }
     return true;
+}
+
+static std::unique_ptr<Node> blockWithCaptures (const juce::Array<juce::File>& files, bool nam, juce::String& err)
+{
+    std::unique_ptr<Node> n;
+    if (nam) n = std::make_unique<NamBlock>();
+    else     n = std::make_unique<IrBlock>();
+    if (! dynamic_cast<Sweepable*> (n.get())->loadCaptures (files, 0.0f, err)) return nullptr;
+    return n;
+}
+
+void RigsmithEditor::dropCaptures (Node* target, Chain* chain, int index, const CaptureDrop& drop, DropMode mode)
+{
+    if (drop.isEmpty()) return;
+    juce::String err;
+    const bool irs = drop.nams.isEmpty() || (target != nullptr && target->getType() == NodeType::Ir);
+    auto count = [irs] (int n) { return juce::String (n) + (irs ? (n == 1 ? " IR" : " IRs") : (n == 1 ? " capture" : " captures")); };
+
+    if (target != nullptr)
+    {
+        auto* sw = dynamic_cast<Sweepable*> (target);
+        const auto files = drop.forBlock (*target);
+        if (sw != nullptr && ! files.isEmpty())
+        {
+            // a whole folder, or an empty block, just loads; otherwise ask: replace, or add to the sweep?
+            if (mode == DropMode::Ask && (drop.folder || sw->getNumCaptures() == 0)) mode = DropMode::Replace;
+            if (mode == DropMode::Ask)
+            {
+                // ask in a little card where it was dropped: replace the sweep, or add to it
+                const auto id = target->id;
+                const int total = juce::jmin (Engine::maxSweep, sw->getNumCaptures() + files.size());
+                dropPrompt = std::make_unique<DropPrompt> (count (files.size()) + " onto " + target->getName(),
+                                                           files.size() == 1 ? juce::String ("Replace") : juce::String ("Replace with these"),
+                                                           "Add to the sweep (" + juce::String (total) + ")");
+                dropPrompt->onChoice = [sp = juce::Component::SafePointer<RigsmithEditor> (this), id, drop] (int choice)
+                {
+                    if (sp == nullptr) return;
+                    juce::MessageManager::callAsync ([sp] { if (sp != nullptr) sp->dropPrompt.reset(); });
+                    if (choice == 0) return;
+                    if (auto* n = sp->engine.findNode (id))
+                        sp->dropCaptures (n, nullptr, -1, drop, choice == 1 ? DropMode::Replace : DropMode::Add);
+                };
+                addAndMakeVisible (*dropPrompt);
+                const auto mouse = getMouseXYRelative();
+                const auto size = dropPrompt->getPreferredSize();
+                dropPrompt->setBounds (juce::jlimit (8, getWidth() - size.x - 8, mouse.x - size.x / 2),
+                                       juce::jlimit (72, getHeight() - size.y - 8, mouse.y + 14), size.x, size.y);
+                dropPrompt->toFront (true);
+                return;
+            }
+
+            const int before = sw->getNumCaptures();
+            const bool ok = mode == DropMode::Add ? engine.addCaptures (*sw, files, err) : sw->loadCaptures (files, 0.0f, err);
+            if (! ok) { showMessage (err); return; }
+            engine.updateAutoSkips();
+            engine.markDirty();
+            select (target->id);
+            inspector.setNode (target);
+            graph.repaint();
+            if (mode == DropMode::Add)
+            {
+                const int added = sw->getNumCaptures() - before;
+                showMessage (added > 0 ? "Added " + count (added) + " to the sweep (" + juce::String (sw->getNumCaptures()) + ")"
+                                       : juce::String ("Already in the sweep"));
+            }
+            else showMessage ("Loaded " + count (sw->getNumCaptures()) + (drop.folder ? " from the folder" : ""));
+            return;
+        }
+
+        // a different kind of block: replace it with one that holds these
+        const bool nam = ! drop.nams.isEmpty();
+        auto fresh = blockWithCaptures (nam ? drop.nams : drop.irs, nam, err);
+        if (fresh == nullptr) { showMessage (err); return; }
+        const auto oldName = target->getName();
+        if (auto* r = engine.replace (target->id, std::move (fresh)))
+        {
+            selectedId = r->id;
+            showMessage ("Replaced " + oldName + " with " + r->getName() + " - Ctrl+Z to undo");
+        }
+        return;
+    }
+
+    // new blocks where they were dropped: the amp first, then its cab
+    if (chain == nullptr) chain = &engine.getRoot();
+    Node* last = nullptr;
+    for (bool nam : { true, false })
+    {
+        const auto& files = nam ? drop.nams : drop.irs;
+        if (files.isEmpty()) continue;
+        auto fresh = blockWithCaptures (files, nam, err);
+        if (fresh == nullptr) { showMessage (err); continue; }
+        int at = index;
+        if (last != nullptr)
+            for (int i = 0; i < (int) chain->nodes.size(); ++i)
+                if (chain->nodes[(size_t) i].get() == last) at = i + 1;
+        last = engine.insert (std::move (fresh), *chain, at);
+        if (last != nullptr) selectedId = last->id;
+    }
+    if (last != nullptr)
+        showMessage ("Added " + count (drop.nams.size() + drop.irs.size()) + (drop.folder ? " from the folder" : ""));
 }
 
 bool RigsmithEditor::insertPlugin (const juce::String& identifier, Chain& chain, int index)
@@ -1241,21 +1361,21 @@ void RigsmithEditor::scanForNewPlugins (bool always)
 bool RigsmithEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (auto& f : files)
-        if (juce::File (f).hasFileExtension ("nam;wav;aif;aiff;flac;rig"))
+        if (juce::File (f).isDirectory() || juce::File (f).hasFileExtension ("nam;wav;aif;aiff;flac;rig"))
             return true;
     return false;
 }
 
 void RigsmithEditor::filesDropped (const juce::StringArray& files, int x, int y)
 {
-    const auto pt = graph.getLocalPoint (this, juce::Point<int> (x, y));
     for (auto& path : files)
-    {
-        const juce::File f (path);
-        if (f.hasFileExtension ("rig")) { engine.loadPreset (f); return; }
-        if (viewport.getBounds().contains (x, y)) graph.dropFile (f, pt);
-        else loadFileInto (nullptr, &engine.getRoot(), -1, f);
-    }
+        if (juce::File (path).hasFileExtension ("rig")) { engine.loadPreset (juce::File (path)); return; }
+
+    // captures (and whole folders of them): where they land in the rig
+    const auto drop = CaptureDrop::fromPaths (files);
+    if (drop.isEmpty()) { showMessage ("No .nam captures or IRs there"); return; }
+    if (viewport.getBounds().contains (x, y)) graph.dropFiles (drop, graph.getLocalPoint (this, juce::Point<int> (x, y)));
+    else dropCaptures (nullptr, &engine.getRoot(), -1, drop, DropMode::Replace);
 }
 
 bool RigsmithEditor::keyPressed (const juce::KeyPress& k)
@@ -1279,6 +1399,7 @@ bool RigsmithEditor::keyPressed (const juce::KeyPress& k)
     if (c >= '1' && c <= '4') { engine.setScene (c - '1'); return true; }
     if (k == juce::KeyPress::escapeKey)
     {
+        if (dropPrompt != nullptr) { dropPrompt.reset(); return true; }
         if (isFullScreen()) setFullScreen (false);
         if (engine.isLearning()) engine.cancelLearn();
         engine.tunerActive = false;
@@ -1487,21 +1608,10 @@ void RigsmithEditor::replaceWith (Node& target, const juce::String& d)
     }
     else if (d.startsWith ("builtin:"))
         fresh = engine.createNode (nodeTypeFromString (d.fromFirstOccurrenceOf ("builtin:", false, false)));
-    else if (d.startsWith ("file:"))
+    else if (CaptureDrop::isCaptureDescription (d))
     {
-        const juce::File f (d.fromFirstOccurrenceOf ("file:", false, false));
-        if (f.hasFileExtension ("nam"))
-        {
-            auto nb = std::make_unique<NamBlock>();
-            if (! engine.loadGear (*nb, f, err)) { showMessage (err); return; }
-            fresh = std::move (nb);
-        }
-        else if (f.hasFileExtension ("wav;aif;aiff;flac"))
-        {
-            auto ir = std::make_unique<IrBlock>();
-            if (! ir->loadIr (f, err)) { showMessage (err); return; }
-            fresh = std::move (ir);
-        }
+        dropCaptures (&target, nullptr, -1, CaptureDrop::fromDescription (d), DropMode::Replace);
+        return;
     }
     if (fresh == nullptr) return;
     if (auto* r = engine.replace (id, std::move (fresh)))

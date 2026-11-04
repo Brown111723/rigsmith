@@ -131,7 +131,7 @@ std::unique_ptr<Node> Randomiser::makeBuiltIn (NodeType t, int variant)
     {
         collectFiles();
         const auto& pool = variant == 1 ? spaceIrs : irs;
-        if (! pool.isEmpty()) ir->loadIr (pick (pool), err);
+        if (! pool.isEmpty()) engine.loadGear (*ir, pick (pool), err, true);   // with the rest of its pack
         if (variant == 1) ir->set (2, 35.0f);   // a room / hall IR as a send-style blend
     }
     b->randomise (rng, 1.0f);

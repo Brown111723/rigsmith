@@ -173,17 +173,18 @@ void Header::resized()
     auto r = getLocalBounds().reduced (12, 12);
     const int bh = r.getHeight();
 
-    // right: icon buttons
+    // right: icon buttons, evenly spaced
+    const int gap = 6;
     menu.setBounds (r.removeFromRight (bh));
-    r.removeFromRight (4);
+    r.removeFromRight (gap);
     tips.setBounds (r.removeFromRight (bh));
-    r.removeFromRight (4);
+    r.removeFromRight (gap);
     fullScreen.setVisible (showFullScreenButton);
-    if (showFullScreenButton) { fullScreen.setBounds (r.removeFromRight (bh)); r.removeFromRight (4); }
+    if (showFullScreenButton) { fullScreen.setBounds (r.removeFromRight (bh)); r.removeFromRight (gap); }
     library.setBounds (r.removeFromRight (bh));
-    r.removeFromRight (12);
+    r.removeFromRight (gap);
     tunerButton.setBounds (r.removeFromRight (bh));
-    r.removeFromRight (4);
+    r.removeFromRight (gap);
     random.setBounds (r.removeFromRight (bh));
     r.removeFromRight (16);
 

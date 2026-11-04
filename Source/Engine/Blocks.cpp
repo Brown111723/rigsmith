@@ -158,28 +158,103 @@ void GainBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 }
 
 //==============================================================================
+struct IrBlock::Bank
+{
+    std::vector<std::unique_ptr<juce::dsp::Convolution>> convs;
+};
+
 IrBlock::IrBlock()
     : Block (NodeType::Ir, {
         P ("lowcut", "Low Cut", 20.0f, 400.0f, 75.0f, "Hz").mid (90.0f).rand (40.0f, 140.0f),
         P ("highcut", "High Cut", 2000.0f, 20000.0f, 8000.0f, "Hz").mid (7000.0f).rand (5000.0f, 13000.0f),
         P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%").fixed(),
-        P ("level", "Level", -24.0f, 12.0f, 0.0f, "dB") }),
-      conv (juce::dsp::Convolution::NonUniform { 0 })
+        P ("level", "Level", -24.0f, 12.0f, 0.0f, "dB"),
+        P ("capture", "Capture", 0.0f, 1.0f, 0.0f).dec (2).fixed() }),
+      loader (std::make_unique<juce::dsp::ConvolutionMessageQueue>()),
+      bank (std::make_unique<Bank>())
 {
+}
+
+IrBlock::~IrBlock()
+{
+    // the convolvers use the loader: let them go first
+    const juce::SpinLock::ScopedLockType sl (bankLock);
+    bank.reset();
+}
+
+juce::File IrBlock::getFile() const
+{
+    return files.isEmpty() ? juce::File() : files[getNearestCapture()];
+}
+
+juce::StringArray IrBlock::getCaptureNames() const
+{
+    juce::StringArray names;
+    for (auto& f : files) names.add (f.getFileNameWithoutExtension());
+    return names;
+}
+
+float IrBlock::getCapturePosition() const noexcept
+{
+    const int n = files.size();
+    return n > 1 ? get (pCapture) * (float) (n - 1) : 0.0f;
+}
+
+void IrBlock::setCapturePosition (float pos) noexcept
+{
+    const int n = files.size();
+    set (pCapture, n > 1 ? juce::jlimit (0.0f, 1.0f, pos / (float) (n - 1)) : 0.0f);
+}
+
+int IrBlock::getNearestCapture() const noexcept
+{
+    return juce::jlimit (0, juce::jmax (0, files.size() - 1), juce::roundToInt (getCapturePosition()));
 }
 
 juce::String IrBlock::getName() const
 {
+    const auto file = getFile();
     if (! file.existsAsFile()) return "Cab IR";
+    const auto tone = getToneInfo();
     return tone.valid && tone.title.isNotEmpty() ? tone.title : file.getFileNameWithoutExtension();
 }
 
 juce::String IrBlock::getDetail() const
 {
     if (autoSkipped.load()) return "Off: the amp includes a cab";
-    if (! file.existsAsFile()) return "Double-click to load .wav";
+    if (! getFile().existsAsFile()) return "Double-click to load .wav";
+    const auto tone = getToneInfo();
     if (tone.valid && tone.creator.isNotEmpty()) return "by " + tone.creator;
     return "Lo " + formatValue (0) + " - Hi " + formatValue (1);
+}
+
+juce::String IrBlock::formatValue (int i, float v) const
+{
+    if (i == pCapture)
+    {
+        const int n = files.size();
+        if (n == 0) return "-";
+        const auto names = getCaptureNames();
+        const float pos = n > 1 ? v * (float) (n - 1) : 0.0f;
+        const int a = juce::jlimit (0, n - 1, (int) std::floor (pos));
+        const float f = pos - (float) a;
+        if (f < 0.02f || a == n - 1) return names[a];
+        if (f > 0.98f) return names[a + 1];
+        return names[a] + " > " + names[a + 1] + " " + juce::String (juce::roundToInt (f * 100.0f)) + "%";
+    }
+    return Block::formatValue (i, v);
+}
+
+void IrBlock::randomise (juce::Random& rng, float amount)
+{
+    Block::randomise (rng, amount);
+    const int n = files.size();
+    if (n > 1 && amount >= 0.999f)
+    {
+        float pos = (float) rng.nextInt (n);
+        if (rng.nextFloat() < 0.3f) pos = juce::jmin ((float) (n - 1), pos + rng.nextFloat());
+        setCapturePosition (pos);
+    }
 }
 
 float IrBlock::responseDb (double hz) const
@@ -191,22 +266,54 @@ float IrBlock::responseDb (double hz) const
     return (float) (h.magnitudeDb (hz, sr) + l.magnitudeDb (hz, sr) + get (3));
 }
 
-int IrBlock::getIrLength() const { return conv.getCurrentIRSize(); }
+int IrBlock::getIrLength() const
+{
+    const juce::SpinLock::ScopedLockType sl (bankLock);
+    const int i = getNearestCapture();
+    return juce::isPositiveAndBelow (i, (int) bank->convs.size()) ? bank->convs[(size_t) i]->getCurrentIRSize() : 0;
+}
 
 bool IrBlock::loadIr (const juce::File& f, juce::String& error)
 {
-    if (! f.existsAsFile())
+    return loadCaptures (juce::Array<juce::File> { f }, 0.0f, error);
+}
+
+bool IrBlock::loadCaptures (const juce::Array<juce::File>& wanted, float pos, juce::String& error)
+{
+    juce::Array<juce::File> list;
+    for (auto& f : wanted)
+        if (f.existsAsFile() && ! list.contains (f)) list.add (f);
+    if (list.isEmpty())
     {
-        error = "IR file not found: " + f.getFullPathName();
+        error = wanted.isEmpty() ? juce::String ("No IRs to load") : "IR file not found: " + wanted[0].getFullPathName();
         return false;
     }
-    // Convolution loads on a background thread and swaps in click-free.
-    conv.loadImpulseResponse (f, juce::dsp::Convolution::Stereo::yes, juce::dsp::Convolution::Trim::yes, 0,
-                              juce::dsp::Convolution::Normalise::yes);
-    file = f;
-    tone = ToneInfo::forFile (f);
-    gearKind = (int) classifyFile (f);
-    hasIr = true;
+
+    // IRs already loaded keep their convolver; new ones load in the background and fade in
+    auto fresh = std::make_unique<Bank>();
+    std::vector<std::unique_ptr<juce::dsp::Convolution>> made ((size_t) list.size());
+    std::vector<int> reuse ((size_t) list.size(), -1);
+    for (int i = 0; i < list.size(); ++i)
+    {
+        reuse[(size_t) i] = files.indexOf (list[i]);
+        if (reuse[(size_t) i] >= 0) continue;
+        auto c = std::make_unique<juce::dsp::Convolution> (juce::dsp::Convolution::NonUniform { 0 }, *loader);
+        c->prepare ({ sampleRate, (juce::uint32) maxBlock, 2 });
+        c->loadImpulseResponse (list[i], juce::dsp::Convolution::Stereo::yes, juce::dsp::Convolution::Trim::yes, 0,
+                                juce::dsp::Convolution::Normalise::yes);
+        made[(size_t) i] = std::move (c);
+    }
+    {
+        const juce::SpinLock::ScopedLockType sl (bankLock);
+        for (int i = 0; i < list.size(); ++i)
+            fresh->convs.push_back (reuse[(size_t) i] >= 0 ? std::move (bank->convs[(size_t) reuse[(size_t) i]]) : std::move (made[(size_t) i]));
+        std::swap (bank, fresh);
+    }
+    fresh.reset();   // convolvers no longer used, freed off the audio thread
+
+    files = list;
+    setCapturePosition (pos);
+    gearKind = (int) classifyFile (files[0]);
     touched();
     return true;
 }
@@ -214,8 +321,19 @@ bool IrBlock::loadIr (const juce::File& f, juce::String& error)
 juce::ValueTree IrBlock::toState() const
 {
     auto v = Block::toState();
-    v.setProperty ("file", file.getFullPathName(), nullptr);
+    v.setProperty ("file", getFile().getFullPathName(), nullptr);
     v.setProperty ("skipAfterFullRig", skipAfterFullRig.load(), nullptr);
+    if (files.size() > 1)
+    {
+        juce::ValueTree list ("Captures");
+        for (auto& f : files)
+        {
+            juce::ValueTree c ("Capture");
+            c.setProperty ("file", f.getFullPathName(), nullptr);
+            list.appendChild (c, nullptr);
+        }
+        v.appendChild (list, nullptr);
+    }
     return v;
 }
 
@@ -223,21 +341,31 @@ void IrBlock::fromState (const juce::ValueTree& v)
 {
     Block::fromState (v);
     skipAfterFullRig = (bool) v.getProperty ("skipAfterFullRig", true);
+    juce::Array<juce::File> list;
+    for (auto c : v.getChildWithName ("Captures"))
+        if (auto path = c.getProperty ("file").toString(); path.isNotEmpty()) list.add (juce::File (path));
     const juce::String path = v.getProperty ("file").toString();
-    if (path.isNotEmpty())
-    {
-        juce::String err;
-        loadIr (juce::File (path), err);
-    }
+    if (list.isEmpty() && path.isNotEmpty()) list.add (juce::File (path));
+    if (list.isEmpty()) return;
+    const float pos = list.size() > 1 ? (float) v.getProperty ("p_capture", 0.0f) * (float) (list.size() - 1) : 0.0f;
+    juce::String err;
+    loadCaptures (list, pos, err);
 }
 
 void IrBlock::prepareImpl (double sr, int block)
 {
-    conv.prepare ({ sr, (juce::uint32) block, 2 });
+    {
+        const juce::SpinLock::ScopedLockType sl (bankLock);
+        for (auto& c : bank->convs) c->prepare ({ sr, (juce::uint32) block, 2 });
+    }
     dryBuf.setSize (2, block, false, true, true);
+    scratch.setSize (2, block, false, true, true);
+    positions.assign ((size_t) block, 0.0f);
     hp.reset(); lp.reset();
     watch.invalidate();
     level.reset (sr, 0.02);
+    position.reset (sr, 0.06);
+    position.setCurrentAndTargetValue (get (pCapture));
 }
 
 void IrBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
@@ -254,10 +382,51 @@ void IrBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     for (int ch = 0; ch < 2; ++ch)
         dryBuf.copyFrom (ch, 0, b, ch, 0, n);
 
-    if (hasIr.load())
     {
-        juce::dsp::AudioBlock<float> block (b.getArrayOfWritePointers(), 2, (size_t) n);
-        conv.process (juce::dsp::ProcessContextReplacing<float> (block));
+        const juce::SpinLock::ScopedTryLockType tl (bankLock);
+        if (tl.isLocked() && ! bank->convs.empty())
+        {
+            // the IRs either side of the Capture position, blended sample by sample
+            const int count = (int) bank->convs.size();
+            const float span = (float) juce::jmax (0, count - 1);
+            position.setTargetValue (get (pCapture));
+            float lo = 1.0e9f, hi = -1.0e9f;
+            for (int i = 0; i < n; ++i)
+            {
+                const float p = position.getNextValue() * span;
+                positions[(size_t) i] = p;
+                lo = juce::jmin (lo, p);
+                hi = juce::jmax (hi, p);
+            }
+            const int first = juce::jlimit (0, count - 1, (int) std::floor (lo));
+            const int last = juce::jlimit (0, count - 1, (int) std::ceil (hi));
+
+            if (first == last)
+            {
+                juce::dsp::AudioBlock<float> block (b.getArrayOfWritePointers(), 2, (size_t) n);
+                bank->convs[(size_t) first]->process (juce::dsp::ProcessContextReplacing<float> (block));
+            }
+            else
+            {
+                b.clear (0, n);
+                for (int k = first; k <= last; ++k)
+                {
+                    for (int ch = 0; ch < 2; ++ch) scratch.copyFrom (ch, 0, dryBuf, ch, 0, n);
+                    juce::dsp::AudioBlock<float> block (scratch.getArrayOfWritePointers(), 2, (size_t) n);
+                    bank->convs[(size_t) k]->process (juce::dsp::ProcessContextReplacing<float> (block));
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        auto* out = b.getWritePointer (ch);
+                        auto* y = scratch.getReadPointer (ch);
+                        for (int i = 0; i < n; ++i)
+                        {
+                            const float w = 1.0f - std::abs (positions[(size_t) i] - (float) k);
+                            if (w > 0.0f) out[i] += y[i] * w;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     auto* l = b.getWritePointer (0);

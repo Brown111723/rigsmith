@@ -41,6 +41,23 @@ Library::Library (GraphHost& h) : host (h)
     addAndMakeVisible (list);
 
     list.setMultipleSelectionEnabled (true);
+    list.describeDrag = [this] (const juce::SparseSet<int>& sel) -> juce::String
+    {
+        if (! isFileTab()) return {};
+        juce::Array<juce::File> files;
+        juce::String single;
+        for (int i = 0; i < sel.size(); ++i)
+        {
+            const int r = sel[i];
+            if (! juce::isPositiveAndBelow (r, rows.size()) || entries[(size_t) rows[r]].kind == Entry::Header) continue;
+            const auto& e = entries[(size_t) rows[r]];
+            single = e.kind == Entry::Capture ? groups[(size_t) e.group]->labels[e.capture] : groups[(size_t) e.group]->title;
+            for (auto& f : filesFor (r)) files.addIfNotAlreadyThere (f);
+        }
+        if (files.size() <= 1) return single;
+        return single.isNotEmpty() && sel.size() == 1 ? single + "  -  " + juce::String (files.size()) + (tab == Models ? " captures" : " IRs")
+                                                       : juce::String (files.size()) + (tab == Models ? " captures" : " IRs");
+    };
 
     gearButton.setTooltip ("Show one kind: amp heads, amp + cab, pedals... (from TONE3000, the capture's own details, or folder names)");
     gearButton.onClick = [this] { showGearMenu(); };
@@ -284,6 +301,31 @@ void Library::applyFilter()
 }
 
 int Library::getNumRows() { return rows.size(); }
+
+juce::ScaledImage Library::List::createSnapshotOfRows (const juce::SparseSet<int>& selected, int& x, int& y)
+{
+    const auto label = describeDrag ? describeDrag (selected) : juce::String();
+    if (label.isEmpty()) return ListBox::createSnapshotOfRows (selected, x, y);
+    const auto f = font (13.0f, true);
+    const int w = juce::jmin (320, juce::GlyphArrangement::getStringWidthInt (f, label) + 40), h = 32;
+    juce::Image img (juce::Image::ARGB, w, h, true);
+    {
+        juce::Graphics g (img);
+        g.setColour (card.withAlpha (0.95f));
+        g.fillRoundedRectangle (0.5f, 0.5f, (float) w - 1.0f, (float) h - 1.0f, 8.0f);
+        g.setColour (accent);
+        g.drawRoundedRectangle (0.5f, 0.5f, (float) w - 1.0f, (float) h - 1.0f, 8.0f, 1.5f);
+        g.fillRoundedRectangle (10.0f, 9.0f, 4.0f, 14.0f, 2.0f);
+        g.setColour (text);
+        g.setFont (f);
+        g.drawText (label, 22, 0, w - 30, h, juce::Justification::centredLeft, true);
+    }
+    // under the pointer, a little to the right
+    const auto mouse = getMouseXYRelative();
+    x = mouse.x + 12;
+    y = mouse.y - h / 2;
+    return juce::ScaledImage (img);
+}
 
 juce::Array<juce::File> Library::filesFor (int row) const
 {
@@ -789,7 +831,7 @@ void Library::activate (int row)
     if (! juce::isPositiveAndBelow (row, rows.size())) return;
     if (tab == Effects) { if (onActivateBuiltIn) onActivateBuiltIn (effects[rows[row]]); }
     else if (tab == Plugins) { if (onActivatePlugin) onActivatePlugin (plugins[rows[row]].createIdentifierString()); }
-    else if (const auto f = fileFor (row); f != juce::File() && onActivateFile) onActivateFile (f);
+    else if (const auto files = filesFor (row); ! files.isEmpty() && onActivateFiles) onActivateFiles (files);
 }
 
 juce::var Library::getDragSourceDescription (const juce::SparseSet<int>& selected)
@@ -799,8 +841,18 @@ juce::var Library::getDragSourceDescription (const juce::SparseSet<int>& selecte
     if (! juce::isPositiveAndBelow (row, rows.size())) return {};
     if (tab == Effects) return "builtin:" + nodeTypeToString (effects[rows[row]]);
     if (tab == Plugins) return "plugin:" + plugins[rows[row]].createIdentifierString();
-    const auto f = fileFor (row);
-    return f == juce::File() ? juce::var() : juce::var ("file:" + f.getFullPathName());
+
+    // exactly what's selected: a gear row brings all its captures, a capture row just itself
+    juce::Array<juce::File> files;
+    for (int i = 0; i < selected.size(); ++i)
+    {
+        const int r = selected[i];
+        if (! juce::isPositiveAndBelow (r, rows.size()) || entries[(size_t) rows[r]].kind == Entry::Header) continue;
+        for (auto& f : filesFor (r)) files.addIfNotAlreadyThere (f);
+        if (files.size() >= Sweepable::maxCaptures) break;
+    }
+    if (files.isEmpty()) return {};
+    return CaptureDrop::describe (files);
 }
 
 juce::String Library::getTooltipForRow (int row)

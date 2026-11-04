@@ -7,6 +7,21 @@ namespace rig
 /** Selection ids for the IN and OUT terminals (not nodes: they open the I/O panel). */
 inline const juce::String kInputId { "__input" }, kOutputId { "__output" };
 
+/** NAM captures and / or IRs being dropped, and whether they came as a whole folder.
+    Drag descriptions: "file:<path>", "files:<path>\n<path>...", "folder:<path>". */
+struct CaptureDrop
+{
+    juce::Array<juce::File> nams, irs;
+    bool folder = false;
+    bool isEmpty() const noexcept { return nams.isEmpty() && irs.isEmpty(); }
+    /** The files this block can take (its kind), or none. */
+    juce::Array<juce::File> forBlock (const Node&) const;
+    static bool isCaptureDescription (const juce::String&);
+    static CaptureDrop fromDescription (const juce::String&);
+    static CaptureDrop fromPaths (const juce::StringArray&);   // from the OS: files and folders
+    static juce::String describe (const juce::Array<juce::File>&);   // -> "file:" / "files:"
+};
+
 /** What the graph needs from the editor that owns it. */
 struct GraphHost
 {
@@ -25,6 +40,10 @@ struct GraphHost
     virtual void switchCapture (Node&, const juce::File&) = 0;
     virtual void showBranchMenu (Split&, int branch, juce::Component* anchor) = 0;
     virtual bool loadFileInto (Node* target, Chain* chain, int index, const juce::File&) = 0;
+    /** Captures dropped onto a block (target) or into a chain at index. Ask: a block that already
+        has captures asks whether to replace them or add these to its sweep (folders just replace). */
+    enum class DropMode { Ask, Replace, Add };
+    virtual void dropCaptures (Node* target, Chain* chain, int index, const CaptureDrop&, DropMode) = 0;
     virtual bool insertPlugin (const juce::String& identifier, Chain& chain, int index) = 0;
     virtual bool insertBuiltIn (NodeType, Chain& chain, int index) = 0;
 
@@ -78,6 +97,7 @@ public:
     /** -1 = insert before, 0 = replace, 1 = insert after */
     int dropZone (juce::Point<int> local) const;
     bool acceptsFile (const juce::File&) const;
+    bool isOverKnob (juce::Point<int> local) const { return selector().valid() && knobArea().expanded (6.0f).contains (local.toFloat()); }
 
 private:
     juce::Rectangle<float> footswitchArea() const;
@@ -91,8 +111,7 @@ private:
         float pos = 0;                      // 0..count-1 (NAM sweeps blend in between)
         juce::StringArray names, labels, tones;
         Gear gear = Gear::Unknown;
-        bool sweep = false;                 // NAM: continuous
-        CaptureGroupPtr group;              // IR: step through the pack
+        bool sweep = true;
         bool valid() const noexcept { return count > 1; }
     };
     Selector selector() const;
@@ -240,8 +259,9 @@ public:
     struct Levels { float inL = 0, inR = 0, outL = 0, outR = 0, grDb = 0; bool limiting = false; };
     void setMeters (const Levels& l) { levels = l; }
 
-    /** Drop a file from the OS: loads into the card under the point or inserts a new block. */
-    bool dropFile (const juce::File&, juce::Point<int> localPoint);
+    /** Files / folders from the OS: into the card under the point (its knob adds to the sweep),
+        or new blocks where they land. */
+    void dropFiles (const CaptureDrop&, juce::Point<int> localPoint);
 
     std::function<void()> onBackgroundClick;
     void mouseDown (const juce::MouseEvent& e) override;

@@ -400,6 +400,21 @@ const CaptureLibrary::Set& CaptureLibrary::get (bool irs, juce::uint32 maxAgeMs)
     return s;
 }
 
+juce::StringArray CaptureLibrary::shortNames (const juce::Array<juce::File>& files, const juce::StringArray& fullNames)
+{
+    juce::StringArray out;
+    juce::StringArray gears;
+    for (int i = 0; i < files.size(); ++i)
+    {
+        auto g = groupFor (files[i]);
+        const int at = g != nullptr ? g->indexOf (files[i]) : -1;
+        out.add (at >= 0 && g->size() > 1 ? g->shortLabels[at] : fullNames[i]);
+        gears.addIfNotAlreadyThere (g != nullptr ? g->key : files[i].getFullPathName());
+    }
+    // one gear: what differs between them is clearer still
+    return gears.size() == 1 ? shortenCaptureLabels (fullNames) : out;
+}
+
 CaptureGroupPtr CaptureLibrary::groupFor (const juce::File& f)
 {
     if (f == juce::File()) return nullptr;

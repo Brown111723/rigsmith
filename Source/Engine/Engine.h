@@ -204,8 +204,12 @@ public:
     /** Loads a .nam into a block with every capture of the same gear ready to sweep through
         (at most maxSweep, around the chosen one), positioned on the chosen file.
         diceOnly: leave out captures the dice may not pick. */
-    bool loadGear (NamBlock&, const juce::File&, juce::String& error, bool diceOnly = false);
-    static constexpr int maxSweep = 16;
+    bool loadGear (Sweepable&, const juce::File&, juce::String& error, bool diceOnly = false);
+    static constexpr int maxSweep = Sweepable::maxCaptures;
+    /** Adds captures to a sweep (ones already there are skipped), keeping the knob where it is. */
+    bool addCaptures (Sweepable&, const juce::Array<juce::File>&, juce::String& error);
+    /** Every .nam (or IR) in a folder and its sub-folders, in name order (at most maxSweep). */
+    static juce::Array<juce::File> capturesInFolder (const juce::File& folder, bool irs);
     bool shouldScanOnStartup() const { return ! hasScannedPlugins() || getSetting ("scanOnStartup", false); }
 
     //--- Randomise include / exclude (the ticks in the library) ---------------------

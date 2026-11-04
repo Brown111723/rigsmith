@@ -52,6 +52,41 @@ private:
     int holdTicks = 0;
 };
 
+/** A knob things can be dropped on (the Capture knob: drop captures to add them to the sweep). */
+class DropKnob : public Knob,
+                 public juce::DragAndDropTarget,
+                 public juce::FileDragAndDropTarget
+{
+public:
+    using Knob::Knob;
+    std::function<void (const juce::String& description)> onDrop;
+    std::function<void (const juce::StringArray& paths)> onFilesDrop;
+
+    bool isInterestedInDragSource (const SourceDetails& d) override
+    {
+        const auto s = d.description.toString();
+        return s.startsWith ("file:") || s.startsWith ("files:") || s.startsWith ("folder:");
+    }
+    void itemDragEnter (const SourceDetails&) override { hover = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { hover = false; repaint(); }
+    void itemDropped (const SourceDetails& d) override { hover = false; repaint(); if (onDrop) onDrop (d.description.toString()); }
+    bool isInterestedInFileDrag (const juce::StringArray&) override { return true; }
+    void fileDragEnter (const juce::StringArray&, int, int) override { hover = true; repaint(); }
+    void fileDragExit (const juce::StringArray&) override { hover = false; repaint(); }
+    void filesDropped (const juce::StringArray& f, int, int) override { hover = false; repaint(); if (onFilesDrop) onFilesDrop (f); }
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        if (! hover) return;
+        g.setColour (theme::teal);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (2.0f), 10.0f, 2.0f);
+        g.setFont (theme::font (11.0f, true));
+        g.drawText ("Add to the sweep", getLocalBounds().removeFromBottom (18), juce::Justification::centred);
+    }
+
+private:
+    bool hover = false;
+};
+
 /** A small segmented selector for choice parameters (delay mode, reverb type...). */
 class ChoiceControl : public juce::Component
 {
@@ -126,8 +161,8 @@ private:
 
     // NAM / IR: every capture of the loaded gear on one knob
     std::unique_ptr<Knob> captureKnob;
-    CaptureGroupPtr captureGroup;   // IRs: step through the pack
-    juce::Array<juce::File> namCaptureFiles;   // NAM: the sweep shown on the knob
+    CaptureGroupPtr captureGroup;
+    juce::Array<juce::File> namCaptureFiles;   // the sweep shown on the knob (NAM or IR)
     juce::StringArray namCaptureLabels;
     juce::Label captureName;
     juce::TextButton editCaptures;
@@ -137,11 +172,19 @@ private:
     {
         TrimMeter in { "IN", -24.0f, 24.0f }, out { "OUT", -24.0f, 24.0f };
         Meters() { addAndMakeVisible (in); addAndMakeVisible (out); }
+        void paint (juce::Graphics& g) override
+        {
+            // framed like the display beside it
+            g.fillAll (juce::Colour (0xff111215));
+            g.setColour (theme::border);
+            g.drawRect (getLocalBounds());
+            g.fillRect (getWidth() / 2, 8, 1, getHeight() - 16);
+        }
         void resized() override
         {
-            auto r = getLocalBounds();
-            in.setBounds (r.removeFromLeft (r.getWidth() / 2).reduced (2, 0));
-            out.setBounds (r.reduced (2, 0));
+            auto r = getLocalBounds().reduced (1, 2);
+            in.setBounds (r.removeFromLeft (r.getWidth() / 2));
+            out.setBounds (r);
         }
     };
     std::unique_ptr<Meters> meters;

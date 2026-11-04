@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Gear.h"
+#include "Captures.h"
 #include "Tuner.h"
 
 namespace rig
@@ -67,22 +67,44 @@ private:
 //==============================================================================
 //==============================================================================
 /** Cabinet impulse response loader with lo/hi cut and mix. */
-class IrBlock : public Block
+class IrBlock : public Block,
+                public Sweepable
 {
 public:
     IrBlock();
+    ~IrBlock() override;
     juce::String getName() const override;
     juce::String getDetail() const override;
     Visual getVisual() const override { return Visual::Response; }
     float responseDb (double hz) const override;
 
+    /** One IR. */
     bool loadIr (const juce::File& f, juce::String& error);
-    juce::File getFile() const { return file; }
+    /** The IR nearest the Capture position. */
+    juce::File getFile() const;
     int getIrLength() const;
+
+    //--- the sweep: several IRs, blended between neighbours ----------------------
+    bool loadCaptures (const juce::Array<juce::File>&, float position, juce::String& error) override;
+    juce::Array<juce::File> getCaptureFiles() const override { return files; }
+    int getNumCaptures() const noexcept override { return files.size(); }
+    juce::StringArray getCaptureNames() const override;
+    float getCapturePosition() const noexcept override;
+    void setCapturePosition (float) noexcept override;
+    int getNearestCapture() const noexcept override;
+    int getCaptureParam() const noexcept override { return pCapture; }
+    bool takesFile (const juce::File& f) const override { return isIrFile (f); }
+    Gear getSweepGear() const override { return getGear(); }
+    std::vector<int> panelOrder() const override { return { pLowCut, pHighCut, pMix, pLevel }; }
+    juce::String formatValue (int i, float v) const override;
+    using Block::formatValue;
+    void randomise (juce::Random&, float amount) override;
+
+    enum Params { pLowCut = 0, pHighCut, pMix, pLevel, pCapture };
 
     Gear getGear() const noexcept { return (Gear) gearKind.load(); }
     Category getCategory() const override { return gearCategory (getGear(), true); }
-    ToneInfo getToneInfo() const { return tone; }
+    ToneInfo getToneInfo() const { return ToneInfo::forFile (getFile()); }
     /** On by default: when the amp model before this IR already includes a cab
         ("Amp + Cab"), the IR switches itself out so the cab isn't doubled. */
     std::atomic<bool> skipAfterFullRig { true };
@@ -95,15 +117,17 @@ protected:
     void processImpl (juce::AudioBuffer<float>&, int) noexcept override;
 
 private:
-    juce::dsp::Convolution conv;
-    juce::File file;
+    struct Bank;
+    std::unique_ptr<juce::dsp::ConvolutionMessageQueue> loader;   // shared by the IRs' convolvers
+    std::unique_ptr<Bank> bank;
+    juce::SpinLock bankLock;
+    juce::Array<juce::File> files;   // message thread
     std::atomic<int> gearKind { (int) Gear::Cab };
-    ToneInfo tone;
-    std::atomic<bool> hasIr { false };
-    juce::AudioBuffer<float> dryBuf;
+    juce::AudioBuffer<float> dryBuf, scratch;
+    std::vector<float> positions;
     Biquad hp, lp;
     ChangeWatch watch;
-    juce::SmoothedValue<float> level;
+    juce::SmoothedValue<float> level, position;
 };
 
 //==============================================================================

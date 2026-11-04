@@ -47,6 +47,54 @@ static bool isAudioFile (const juce::File& f)
 }
 
 //==============================================================================
+juce::Array<juce::File> CaptureDrop::forBlock (const Node& n) const
+{
+    if (n.getType() == NodeType::Nam) return nams;
+    if (n.getType() == NodeType::Ir) return irs;
+    return {};
+}
+
+bool CaptureDrop::isCaptureDescription (const juce::String& s)
+{
+    return s.startsWith ("file:") || s.startsWith ("files:") || s.startsWith ("folder:");
+}
+
+CaptureDrop CaptureDrop::fromPaths (const juce::StringArray& paths)
+{
+    CaptureDrop d;
+    for (auto& p : paths)
+    {
+        const juce::File f (p);
+        if (f.isDirectory())
+        {
+            // a whole folder: every capture in it (and its sub-folders)
+            d.folder = true;
+            for (auto& x : Engine::capturesInFolder (f, false)) d.nams.addIfNotAlreadyThere (x);
+            for (auto& x : Engine::capturesInFolder (f, true)) d.irs.addIfNotAlreadyThere (x);
+        }
+        else if (Sweepable::isNamFile (f)) d.nams.addIfNotAlreadyThere (f);
+        else if (Sweepable::isIrFile (f)) d.irs.addIfNotAlreadyThere (f);
+    }
+    return d;
+}
+
+CaptureDrop CaptureDrop::fromDescription (const juce::String& s)
+{
+    if (s.startsWith ("folder:")) return fromPaths ({ s.fromFirstOccurrenceOf ("folder:", false, false) });
+    if (s.startsWith ("files:")) return fromPaths (juce::StringArray::fromLines (s.fromFirstOccurrenceOf ("files:", false, false)));
+    if (s.startsWith ("file:")) return fromPaths ({ s.fromFirstOccurrenceOf ("file:", false, false) });
+    return {};
+}
+
+juce::String CaptureDrop::describe (const juce::Array<juce::File>& files)
+{
+    if (files.size() == 1) return "file:" + files[0].getFullPathName();
+    juce::StringArray paths;
+    for (auto& f : files) paths.add (f.getFullPathName());
+    return "files:" + paths.joinIntoString ("\n");
+}
+
+//==============================================================================
 BlockCard::BlockCard (GraphHost& h, Node& n) : host (h), node (n)
 {
     setRepaintsOnMouseActivity (true);
@@ -82,51 +130,28 @@ static juce::File loadedFile (const Node& n)
 
 BlockCard::Selector BlockCard::selector() const
 {
+    // NAM and IR blocks: the block's own sweep (blends between captures)
     Selector sel;
-    if (auto* nb = dynamic_cast<NamBlock*> (&node))
-    {
-        // NAM: the block's own sweep (blends between captures)
-        sel.count = nb->getNumCaptures();
-        if (sel.count < 2) return sel;
-        sel.pos = nb->getCapturePosition();
-        const auto names = nb->getCaptureNames();
-        sel.names = names;
-        sel.labels = shortenCaptureLabels (names);
-        for (int i = 0; i < sel.count; ++i) sel.tones.add (toneTypeName (nb->getInfo (i).toneType));
-        sel.gear = nb->getGear();
-        sel.sweep = true;
-        return sel;
-    }
-    const auto f = loadedFile (node);
-    if (f == juce::File()) return sel;
-    if (auto g = host.getEngine().captures.groupFor (f); g != nullptr && g->size() > 1)
-    {
-        sel.count = g->size();
-        sel.pos = (float) juce::jmax (0, g->indexOf (f));
-        sel.names = g->labels;
-        sel.labels = g->shortLabels;
-        for (auto& t : g->fileToneTypes) sel.tones.add (toneTypeName (t));
-        sel.gear = g->gear;
-        sel.group = g;
-    }
+    auto* sw = dynamic_cast<Sweepable*> (&node);
+    if (sw == nullptr) return sel;
+    sel.count = sw->getNumCaptures();
+    if (sel.count < 2) return sel;
+    sel.pos = sw->getCapturePosition();
+    const auto names = sw->getCaptureNames();
+    sel.names = names;
+    sel.labels = host.getEngine().captures.shortNames (sw->getCaptureFiles(), names);
+    for (int i = 0; i < sel.count; ++i) sel.tones.add (toneTypeName (sw->getCaptureToneType (i)));
+    sel.gear = sw->getSweepGear();
     return sel;
 }
 
 void BlockCard::setSelector (const Selector& sel, float pos)
 {
     pos = juce::jlimit (0.0f, (float) (sel.count - 1), pos);
-    if (sel.sweep)
+    if (auto* sw = dynamic_cast<Sweepable*> (&node))
     {
-        if (auto* nb = dynamic_cast<NamBlock*> (&node))
-        {
-            nb->setCapturePosition (pos);
-            host.getEngine().markDirty();
-        }
-    }
-    else if (sel.group != nullptr)
-    {
-        const auto f = sel.group->files[juce::roundToInt (pos)];
-        if (f != loadedFile (node)) host.switchCapture (node, f);
+        sw->setCapturePosition (pos);
+        host.getEngine().markDirty();
     }
     repaint();
 }
@@ -140,9 +165,9 @@ void BlockCard::stepCapture (int delta)
 {
     const auto sel = selector();
     if (! sel.valid()) return;
-    // a sweep moves in quarter steps (so a scroll can find the blends); IRs a whole step
-    const float step = sel.sweep ? 0.25f : 1.0f;
-    const float target = sel.sweep ? std::round ((sel.pos + step * (float) delta) / step) * step : sel.pos + (float) delta;
+    // quarter steps, so a scroll can find the blends
+    const float step = 0.25f;
+    const float target = std::round ((sel.pos + step * (float) delta) / step) * step;
     setSelector (sel, target);
 }
 
@@ -314,7 +339,13 @@ void BlockCard::paint (juce::Graphics& g)
     drawFootswitch (g, sw, c, on);
     g.setColour (on ? text : muted);
     g.setFont (font (11.0f));
-    g.drawText (! on ? "Bypassed" : skipped ? "Auto off" : "On", (int) sw.getRight() + 8, (int) sw.getY(), 70, (int) sw.getHeight(), juce::Justification::centredLeft);
+    {
+        // stop short of the dice
+        const int lx = (int) sw.getRight() + 7;
+        const int lw = (hasDice() ? (int) diceArea().getX() - 4 : getWidth() - 12) - lx;
+        g.drawFittedText (! on ? "Bypassed" : skipped ? "Auto off" : "On", lx, (int) sw.getY(), lw, (int) sw.getHeight(),
+                          juce::Justification::centredLeft, 1, 0.75f);
+    }
 
     // TONE3000 tones carry a small mark (with the creator in the detail line)
     ToneInfo tone;
@@ -441,8 +472,7 @@ void BlockCard::mouseDrag (const juce::MouseEvent& e)
         if (! sel.valid()) return;
         const int dist = e.getDistanceFromDragStartX() - e.getDistanceFromDragStartY();
         knobMoved = juce::jmax (knobMoved, std::abs (e.getDistanceFromDragStartX()) + std::abs (e.getDistanceFromDragStartY()));
-        if (sel.sweep) setSelector (sel, knobStart + (float) dist / (e.mods.isShiftDown() ? 160.0f : 40.0f));
-        else           setSelector (sel, (float) juce::roundToInt (knobStart + (float) (dist / 12)));
+        setSelector (sel, knobStart + (float) dist / (e.mods.isShiftDown() ? 160.0f : 40.0f));
         return;
     }
     if (pressedSwitch || dragging || e.mods.isPopupMenu() || e.getDistanceFromDragStart() < 6)
@@ -476,6 +506,7 @@ ChainView* BlockCard::parentChain() const { return dynamic_cast<ChainView*> (get
 
 int BlockCard::dropZone (juce::Point<int> p) const
 {
+    if (isOverKnob (p)) return 0;   // the capture knob takes drops itself (it sits near the edge)
     const int edge = getWidth() / 5;
     return p.x < edge ? -1 : (p.x > getWidth() - edge ? 1 : 0);
 }
@@ -483,8 +514,7 @@ int BlockCard::dropZone (juce::Point<int> p) const
 bool BlockCard::isInterestedInDragSource (const SourceDetails& d)
 {
     const auto s = d.description.toString();
-    if (s.startsWith ("file:"))
-        return juce::File (s.fromFirstOccurrenceOf ("file:", false, false)).hasFileExtension ("nam;wav;aif;aiff;flac");
+    if (CaptureDrop::isCaptureDescription (s)) return true;
     return s.startsWith ("plugin:") || s.startsWith ("node:") || s.startsWith ("builtin:");
 }
 
@@ -502,8 +532,19 @@ void BlockCard::itemDragMove (const SourceDetails& d)
             const auto otherId = s.fromFirstOccurrenceOf ("node:", false, false);
             label = otherId == node.id ? juce::String() : "Swap places";
         }
-        else if (s.startsWith ("file:"))
-            label = acceptsFile (juce::File (s.fromFirstOccurrenceOf ("file:", false, false))) ? "Load here" : "Replace";
+        else if (CaptureDrop::isCaptureDescription (s))
+        {
+            const auto drop = CaptureDrop::fromDescription (s);
+            const auto mine = drop.forBlock (node);
+            auto* sw = dynamic_cast<Sweepable*> (&node);
+            if (mine.isEmpty()) label = "Replace";
+            else if (sw != nullptr && sw->getNumCaptures() > 0 && knobArea().expanded (6.0f).contains (d.localPosition.toFloat()))
+                label = "Add to the sweep";
+            else if (sw != nullptr && sw->getNumCaptures() > 0 && ! drop.folder)
+                label = "Replace or add?";
+            else
+                label = mine.size() > 1 ? "Load " + juce::String (mine.size()) + " captures" : juce::String ("Load here");
+        }
         else
             label = "Replace";
         if (cv != nullptr) cv->setDropIndex (-1);
@@ -539,10 +580,14 @@ void BlockCard::itemDropped (const SourceDetails& d)
         cv->dropAt (s, zone < 0 ? idx : idx + 1);
         return;
     }
-    if (s.startsWith ("file:"))
+    if (CaptureDrop::isCaptureDescription (s))
     {
-        const juce::File f (s.fromFirstOccurrenceOf ("file:", false, false));
-        if (acceptsFile (f)) { host.loadFileInto (&node, nullptr, -1, f); return; }
+        // onto the knob: straight into the sweep; onto the block: replace or add (folders replace)
+        const auto drop = CaptureDrop::fromDescription (s);
+        auto* sw = dynamic_cast<Sweepable*> (&node);
+        const bool onKnob = sw != nullptr && sw->getNumCaptures() > 0 && knobArea().expanded (6.0f).contains (d.localPosition.toFloat());
+        host.dropCaptures (&node, nullptr, -1, drop, onKnob ? GraphHost::DropMode::Add : GraphHost::DropMode::Ask);
+        return;
     }
     if (s == "node:" + node.id) return;
     host.replaceWith (node, s);
@@ -686,7 +731,7 @@ bool ChainView::isInterestedInDragSource (const SourceDetails& d)
     const auto s = d.description.toString();
     if (s.startsWith ("node:"))
         return host.getEngine().canDropInto (s.fromFirstOccurrenceOf ("node:", false, false), chain);
-    return s.startsWith ("file:") || s.startsWith ("plugin:") || s.startsWith ("builtin:");
+    return CaptureDrop::isCaptureDescription (s) || s.startsWith ("plugin:") || s.startsWith ("builtin:");
 }
 
 void ChainView::itemDragMove (const SourceDetails& d)
@@ -713,8 +758,8 @@ void ChainView::dropAt (const juce::String& s, int idx)
 {
     if (s.startsWith ("node:"))
         host.getEngine().move (s.fromFirstOccurrenceOf ("node:", false, false), chain, idx);
-    else if (s.startsWith ("file:"))
-        host.loadFileInto (nullptr, &chain, idx, juce::File (s.fromFirstOccurrenceOf ("file:", false, false)));
+    else if (CaptureDrop::isCaptureDescription (s))
+        host.dropCaptures (nullptr, &chain, idx, CaptureDrop::fromDescription (s), GraphHost::DropMode::Replace);
     else if (s.startsWith ("plugin:"))
         host.insertPlugin (s.fromFirstOccurrenceOf ("plugin:", false, false), chain, idx);
     else if (s.startsWith ("builtin:"))
@@ -1068,30 +1113,38 @@ void GraphView::mouseMove (const juce::MouseEvent& e)
     if (h != hoverTerminal) { hoverTerminal = h; setMouseCursor (h != 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor); repaint(); }
 }
 
-bool GraphView::dropFile (const juce::File& f, juce::Point<int> pt)
+void GraphView::dropFiles (const CaptureDrop& drop, juce::Point<int> pt)
 {
+    if (drop.isEmpty()) return;
     auto* c = getComponentAt (pt);
     while (c != nullptr && c != this)
     {
         if (auto* card = dynamic_cast<BlockCard*> (c))
         {
-            const int zone = card->dropZone (card->getLocalPoint (this, pt));
+            const auto local = card->getLocalPoint (this, pt);
+            const int zone = card->dropZone (local);
             if (zone == 0)
             {
-                if (card->acceptsFile (f)) return host.loadFileInto (card->getNode(), nullptr, -1, f);
-                if (! f.hasFileExtension ("rig")) { host.replaceWith (*card->getNode(), "file:" + f.getFullPathName()); return true; }
+                auto* sw = dynamic_cast<Sweepable*> (card->getNode());
+                const bool onKnob = sw != nullptr && sw->getNumCaptures() > 0 && card->isOverKnob (local);
+                host.dropCaptures (card->getNode(), nullptr, -1, drop, onKnob ? GraphHost::DropMode::Add : GraphHost::DropMode::Ask);
+                return;
             }
-            else if (auto* cv = dynamic_cast<ChainView*> (card->getParentComponent()))
+            if (auto* cv = dynamic_cast<ChainView*> (card->getParentComponent()))
             {
                 const int idx = cv->indexOfItem (card);
-                return host.loadFileInto (nullptr, &cv->getChain(), zone < 0 ? idx : idx + 1, f);
+                host.dropCaptures (nullptr, &cv->getChain(), zone < 0 ? idx : idx + 1, drop, GraphHost::DropMode::Replace);
+                return;
             }
         }
         if (auto* cv = dynamic_cast<ChainView*> (c))
-            return host.loadFileInto (nullptr, &cv->getChain(), cv->indexForX (cv->getLocalPoint (this, pt).x), f);
+        {
+            host.dropCaptures (nullptr, &cv->getChain(), cv->indexForX (cv->getLocalPoint (this, pt).x), drop, GraphHost::DropMode::Replace);
+            return;
+        }
         c = c->getParentComponent();
     }
-    return host.loadFileInto (nullptr, &host.getEngine().getRoot(), -1, f);
+    host.dropCaptures (nullptr, &host.getEngine().getRoot(), -1, drop, GraphHost::DropMode::Replace);
 }
 
 } // namespace rig
@@ -1102,13 +1155,15 @@ namespace rig
 RigMap::RigMap (juce::Viewport& v, GraphView& g) : viewport (v), graph (g)
 {
     setTooltip ("The whole rig: click or drag to go to any part of it");
+    setOpaque (false);
+    setRepaintsOnMouseActivity (true);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     startTimerHz (12);
 }
 
 juce::Rectangle<float> RigMap::mapArea() const
 {
-    return getLocalBounds().toFloat().reduced (12.0f, 6.0f);
+    return getLocalBounds().toFloat().reduced (8.0f, 5.0f);
 }
 
 juce::Point<float> RigMap::toMap (juce::Point<float> p) const
@@ -1139,12 +1194,12 @@ void RigMap::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDeta
 void RigMap::paint (juce::Graphics& g)
 {
     using namespace theme;
-    g.fillAll (panel);
-    g.setColour (border);
-    g.drawHorizontalLine (0, 0.0f, (float) getWidth());
+    const auto box = getLocalBounds().toFloat().reduced (0.5f);
+    g.setColour (panel.withAlpha (0.94f));
+    g.fillRoundedRectangle (box, 7.0f);
+    g.setColour (isMouseOverOrDragging() ? borderHi : border);
+    g.drawRoundedRectangle (box, 7.0f, 1.0f);
     const auto a = mapArea();
-    g.setColour (bg);
-    g.fillRoundedRectangle (a.expanded (4.0f, 2.0f), 5.0f);
     if (! graph.isVisible()) return;   // being rebuilt: its cards may point at removed blocks
 
     auto mapRect = [this] (juce::Rectangle<int> r)

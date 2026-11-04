@@ -4,6 +4,8 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 ![Sweeping a JCM800 between two captures (47% / 53%), with Gain, the IN / OUT meters and the rig map under the graph](docs/screenshot-sweep.png)
 
+![The bottom panel for a reverb: the display with IN / OUT meters beside it, Type along the top and the knobs underneath](docs/screenshot-panel.png)
+
 ![A Marshall JCM800 with five captures as one row in the library, opened up; the Capture knob in the bottom panel and the small knob on the card switch between them](docs/screenshot-captures.png)
 
 ![Amps grouped by type in the library, an Amp + Cab model with the cab IR switched off automatically](docs/screenshot-gear.png)
@@ -25,7 +27,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - Automatic **resampling** when a model's rate differs from your interface (e.g. a 48 kHz model at 44.1 or 96 kHz).
 - **Loudness normalisation** so models are level-matched, plus a post-amp tone stack (bass, middle, treble, presence).
 - **Gain** works like an amp's gain knob: it drives the capture harder (5 is as captured, 10 is +24 dB). When a capture loads, Rigsmith plays a short strum through it at several drive levels and learns how its volume follows the drive, then trims the output to match, so mostly the drive changes, not the volume (the panel shows the drive and the trim).
-- **IN / OUT meters** on every block, with a handle on each to trim the level (double-click for 0 dB). On a NAM block they're its Input and Output.
+- **IN / OUT meters** on every block, beside its display, with the live level in dBFS and a handle on each to trim it (double-click for 0 dB). On a NAM block they're its Input and Output.
 - **Cab IR loader** with low/high cut, mix and level.
 
 **Routing**
@@ -51,7 +53,9 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - A piece of gear with many captures is **one row**: "Marshall JCM800 Zakk Wylde Signature - 12 captures", not twelve files. Rigsmith reads what each `.nam` says about itself (`gear_make`, `gear_model`, `gear_type`, `tone_type`, `name`, `modeled_by`, as written by the NAM trainer and TONE3000), wherever the file is. Click the arrow to see each capture.
 - Gear sits under a heading per type (click a heading to fold it). Filter by **type** (amp heads, pedals...) and **tone** (clean, crunch, hi-gain, metal, 2000s...). Search finds gear, makers, tone types, creators and individual captures.
 - On a NAM block the big **Capture** knob **sweeps** through the captures of that gear: between two captures both run and blend (each level-matched), so turning it morphs smoothly from one to the next. Right-click to jump to one or MIDI-learn it (an expression pedal from clean to crunch), and it's saved per scene. The card has a small knob for the same thing. The arrows step to the next piece of gear.
-- **Edit captures...** chooses which captures are in the sweep and in what order: tick the ones you want (say clean, crunch and lead out of ten), drag or use the arrows to reorder.
+- **Edit captures...** chooses which captures are in the sweep and in what order: tick the ones you want (say clean, crunch and lead out of ten), drag or use the arrows to reorder. Names are shortened to what tells them apart, with every other capture of the same gear listed under the gear's name.
+- **What you drop is what you get**: a whole folder (from Explorer) loads every capture in it; a few captures picked in the library (Ctrl / Shift-click) or in the file window load just those. Drop captures on a block that already has some and it asks: **Replace**, or **Add to the sweep**, so you can sweep across different amps for hybrids. Drop them on the Capture knob (on the block or in the panel) and they're simply added. Folders always replace.
+- **IRs sweep too**: an IR block can hold several cabs (or rooms) and blend between them the same way.
 - The metadata is read from the start or the end of the file, so A1 and A2 captures both work, and remembered in `Rigsmith.captures` next to the ini so big libraries open quickly.
 - The dice give every piece of gear the same chance, then pick any one of its captures.
 
@@ -103,7 +107,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **Crash-proof plug-in scanning**: each plug-in is scanned by a separate little helper (`RigsmithScanner.exe`), so one that crashes or hangs is just skipped (and listed as failed) instead of taking Rigsmith, or your DAW, down with it. Rigsmith never scans itself.
 - **Plug-in scanning**: the first run scans for plug-ins. After that, Rigsmith opens straight away with the remembered list, unless you tick **Look for new plug-ins every time Rigsmith opens** (or click **Scan**).
 - Every dB readout is shown to one decimal place.
-- **Rig map**: when the rig is longer than the window, a miniature of it sits under the graph; click or drag on it to jump anywhere.
+- **Rig map**: when the rig is longer than the window, a small miniature of it floats at the bottom of the graph; click or drag on it to jump anywhere.
 - **Tooltips** are off by default: the speech-bubble button in the top bar (or the menu) turns them on.
 - The standalone's audio settings and session save / load are in the menu (no separate Options button).
 - **More room**: drag the bar above the bottom panel to make it taller (double-click toggles), hide the library (`L`), and go **full screen** (`F11`, or open full screen every time in Settings).
@@ -129,7 +133,7 @@ Every push builds on GitHub Actions. Open the **Actions** tab, pick the latest r
 To publish a GitHub Release, push a tag:
 
 ```
-git tag v0.9.0 && git push origin v0.9.0
+git tag v0.10.0 && git push origin v0.10.0
 ```
 
 ## Quick start

@@ -14,7 +14,8 @@ namespace rig
     loads (a short synthetic strum at several drive levels), and the output is trimmed by that
     curve, so turning Gain up changes the drive far more than the volume.
     Input and Output are level trims (the panel shows them as meters with handles). */
-class NamBlock : public Block
+class NamBlock : public Block,
+                 public Sweepable
 {
 public:
     NamBlock();
@@ -27,7 +28,7 @@ public:
     /** One capture. */
     bool loadModel (const juce::File& f, juce::String& error);
     /** Several captures to sweep through, in this order. position: 0..n-1 (fractions blend). */
-    bool loadCaptures (const juce::Array<juce::File>& files, float position, juce::String& error);
+    bool loadCaptures (const juce::Array<juce::File>& files, float position, juce::String& error) override;
     void clearModel();
 
     struct Info
@@ -46,13 +47,17 @@ public:
     juce::String getCaptureName() const;
 
     //--- the sweep --------------------------------------------------------------
-    int getNumCaptures() const noexcept { return captureFiles.size(); }
-    juce::Array<juce::File> getCaptureFiles() const { return captureFiles; }
-    juce::StringArray getCaptureNames() const;
+    int getNumCaptures() const noexcept override { return captureFiles.size(); }
+    juce::Array<juce::File> getCaptureFiles() const override { return captureFiles; }
+    juce::StringArray getCaptureNames() const override;
+    juce::String getCaptureToneType (int i) const override { return getInfo (i).toneType; }
     /** 0..n-1; between two whole numbers the two captures are blended. */
-    float getCapturePosition() const noexcept;
-    void setCapturePosition (float position) noexcept;
-    int getNearestCapture() const noexcept;
+    float getCapturePosition() const noexcept override;
+    void setCapturePosition (float position) noexcept override;
+    int getNearestCapture() const noexcept override;
+    int getCaptureParam() const noexcept override { return pCapture; }
+    bool takesFile (const juce::File& f) const override { return isNamFile (f); }
+    Gear getSweepGear() const override { return getGear(); }
 
     juce::ValueTree toState() const override;
     void fromState (const juce::ValueTree&) override;

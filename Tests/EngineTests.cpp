@@ -1231,6 +1231,80 @@ int main (int argc, char** argv)
                && ! OutOfProcessScanner::isRigsmith ("C:\\Program Files\\Common Files\\VST3\\ValhallaRoom.vst3"), "Rigsmith never scans itself");
     }
 
+    //==========================================================================
+    std::printf ("--- v0.10: IR sweeps, adding captures, folders\n");
+    {
+        juce::String err;
+        // two IRs: a plain impulse and a two-tap one
+        const auto dir = testDir.getChildFile ("IrSweep");
+        dir.createDirectory();
+        auto writeIr = [&] (const juce::String& name, int tap)
+        {
+            juce::AudioBuffer<float> ir (1, 256);
+            ir.clear();
+            ir.setSample (0, 0, 1.0f);
+            if (tap > 0) ir.setSample (0, tap, 0.8f);
+            juce::WavAudioFormat wav;
+            const auto f = dir.getChildFile (name);
+            auto out = f.createOutputStream();
+            if (auto w = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (out.release(), 48000.0, 1, 24, {}, 0)))
+                w->writeFromAudioSampleBuffer (ir, 0, 256);
+            return f;
+        };
+        const auto irA = writeIr ("A close.wav", 0), irB = writeIr ("B room.wav", 40);
+
+        auto render = [] (IrBlock& b)
+        {
+            b.prepare (48000.0, 256);
+            juce::AudioBuffer<float> buf (2, 256);
+            // let the convolvers load their IRs (they do it in the background)
+            for (int i = 0; i < 40; ++i) { buf.clear(); b.process (buf, 256); juce::Thread::sleep (10); }
+            std::vector<float> out;
+            juce::Random rnd (3);
+            for (int k = 0; k < 20; ++k)
+            {
+                for (int i = 0; i < 256; ++i) { const float x = (rnd.nextFloat() - 0.5f) * 0.5f; buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                b.process (buf, 256);
+                for (int i = 0; i < 256; ++i) out.push_back (buf.getSample (0, i));
+            }
+            return out;
+        };
+        const juce::Array<juce::File> pair { irA, irB };
+        IrBlock a0, a1, half;
+        CHECK (a0.loadCaptures (pair, 0.0f, err) && a1.loadCaptures (pair, 1.0f, err) && half.loadCaptures (pair, 0.5f, err),
+               "an IR block takes several IRs");
+        const auto y0 = render (a0), y1 = render (a1), yh = render (half);
+        float worst = 0, level = 0, diff = 0;
+        for (size_t i = 0; i < yh.size(); ++i)
+        {
+            worst = juce::jmax (worst, std::abs (yh[i] - 0.5f * (y0[i] + y1[i])));
+            level = juce::jmax (level, std::abs (yh[i]));
+            diff = juce::jmax (diff, std::abs (y0[i] - y1[i]));
+        }
+        CHECK (level > 1.0e-3f && diff > 1.0e-3f && worst < 2.0e-3f * juce::jmax (1.0f, level), "halfway between two IRs is an even blend");
+        CHECK (half.formatValue (IrBlock::pCapture).contains ("50%") && half.getNumCaptures() == 2, "and the knob reads as a blend");
+        IrBlock back;
+        back.fromState (half.toState());
+        CHECK (back.getCaptureFiles() == pair && std::abs (back.getCapturePosition() - 0.5f) < 1.0e-3f, "an IR sweep is saved with the rig");
+
+        // adding captures: new ones go on the end, the knob stays put, nothing twice, only the right kind
+        Engine e;
+        const auto a1nam = models.getChildFile ("wavenet_a1_standard.nam"), lstm = models.getChildFile ("lstm.nam");
+        NamBlock amp;
+        amp.loadCaptures ({ a1nam }, 0.0f, err);
+        CHECK (e.addCaptures (amp, { lstm, a1nam, irA }, err) && amp.getCaptureFiles() == juce::Array<juce::File> ({ a1nam, lstm })
+               && amp.getFile() == a1nam, "adding captures from other gear: appended, no duplicates, the knob stays on its capture");
+        IrBlock cab;
+        cab.loadCaptures ({ irA }, 0.0f, err);
+        CHECK (e.addCaptures (cab, { irB }, err) && cab.getNumCaptures() == 2, "IRs can be added to an IR sweep");
+
+        // a whole folder: every capture in it, in name order
+        const auto folder = Engine::capturesInFolder (dir, true);
+        CHECK (folder.size() == 2 && folder[0] == irA && folder[1] == irB, "a folder brings all its IRs, in order");
+        const auto lib = Engine::capturesInFolder (testDir.getChildFile ("Captures/Lib"), false);
+        CHECK (lib.size() == 6, "and all its .nam captures, sub-folders included");
+    }
+
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;
 }

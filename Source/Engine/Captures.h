@@ -64,6 +64,32 @@ juce::StringArray shortenCaptureLabels (const juce::StringArray&);
 std::vector<CaptureGroupPtr> groupCaptures (const juce::Array<juce::File>&);
 
 //==============================================================================
+/** A block that holds several captures (NAM models or IRs) and sweeps between them:
+    neighbours are blended, so the sound morphs from one capture to the next. */
+struct Sweepable
+{
+    virtual ~Sweepable() = default;
+    /** These captures, in this order; position 0..n-1 (fractions blend). */
+    virtual bool loadCaptures (const juce::Array<juce::File>&, float position, juce::String& error) = 0;
+    virtual juce::Array<juce::File> getCaptureFiles() const = 0;
+    virtual int getNumCaptures() const noexcept = 0;
+    virtual juce::StringArray getCaptureNames() const = 0;
+    virtual juce::String getCaptureToneType (int) const { return {}; }
+    virtual float getCapturePosition() const noexcept = 0;
+    virtual void setCapturePosition (float) noexcept = 0;
+    virtual int getNearestCapture() const noexcept = 0;
+    /** The parameter that holds the position (for MIDI learn and scenes). */
+    virtual int getCaptureParam() const noexcept = 0;
+    /** Which files it takes: "nam" or IRs. */
+    virtual bool takesFile (const juce::File&) const = 0;
+    virtual Gear getSweepGear() const = 0;
+
+    static bool isNamFile (const juce::File& f) { return f.hasFileExtension ("nam"); }
+    static bool isIrFile (const juce::File& f)  { return f.hasFileExtension ("wav;aif;aiff;flac"); }
+    static constexpr int maxCaptures = 24;
+};
+
+//==============================================================================
 /** Every NAM capture and IR in the library folders, grouped by gear. One scan, shared by
     the library, the blocks' capture knobs and the dice. */
 class CaptureLibrary
@@ -90,6 +116,10 @@ public:
     /** The gear a file belongs to, with its other captures. Files outside the library
         folders are grouped with their own folder. Never null for an existing file. */
     CaptureGroupPtr groupFor (const juce::File&);
+
+    /** Short names for a sweep's captures: each one's distinctive part within its own gear
+        ("Crunch G4"), so a sweep mixing gear still reads well. */
+    juce::StringArray shortNames (const juce::Array<juce::File>& files, const juce::StringArray& fullNames);
 
     /** Bumped on every scan (UI caches compare it). */
     int version = 0;
