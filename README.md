@@ -2,6 +2,8 @@
 
 A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flexible routing system and a VST3 host — shipped as both **`Rigsmith.exe`** and **`Rigsmith.vst3`** from one codebase.
 
+![Sweeping a JCM800 between two captures (47% / 53%), with Gain, the IN / OUT meters and the rig map under the graph](docs/screenshot-sweep.png)
+
 ![A Marshall JCM800 with five captures as one row in the library, opened up; the Capture knob in the bottom panel and the small knob on the card switch between them](docs/screenshot-captures.png)
 
 ![Amps grouped by type in the library, an Amp + Cab model with the cab IR switched off automatically](docs/screenshot-gear.png)
@@ -22,6 +24,8 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **NAM built in** (NeuralAmpModelerCore): WaveNet, LSTM, ConvNet, A2 and more. Drop a `.nam` file on a block, or double-click it.
 - Automatic **resampling** when a model's rate differs from your interface (e.g. a 48 kHz model at 44.1 or 96 kHz).
 - **Loudness normalisation** so models are level-matched, plus a post-amp tone stack (bass, middle, treble, presence).
+- **Gain** works like an amp's gain knob: it drives the capture harder (5 is as captured, 10 is +24 dB). When a capture loads, Rigsmith plays a short strum through it at several drive levels and learns how its volume follows the drive, then trims the output to match, so mostly the drive changes, not the volume (the panel shows the drive and the trim).
+- **IN / OUT meters** on every block, with a handle on each to trim the level (double-click for 0 dB). On a NAM block they're its Input and Output.
 - **Cab IR loader** with low/high cut, mix and level.
 
 **Routing**
@@ -46,7 +50,8 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 **Captures grouped by gear**
 - A piece of gear with many captures is **one row**: "Marshall JCM800 Zakk Wylde Signature - 12 captures", not twelve files. Rigsmith reads what each `.nam` says about itself (`gear_make`, `gear_model`, `gear_type`, `tone_type`, `name`, `modeled_by`, as written by the NAM trainer and TONE3000), wherever the file is. Click the arrow to see each capture.
 - Gear sits under a heading per type (click a heading to fold it). Filter by **type** (amp heads, pedals...) and **tone** (clean, crunch, hi-gain, metal, 2000s...). Search finds gear, makers, tone types, creators and individual captures.
-- On a NAM block the big **Capture** knob, first in the bottom panel, switches between every capture of that gear (drag, scroll or right-click for the list); the block keeps its settings. The card has a small knob for the same thing. The arrows step to the next piece of gear.
+- On a NAM block the big **Capture** knob **sweeps** through the captures of that gear: between two captures both run and blend (each level-matched), so turning it morphs smoothly from one to the next. Right-click to jump to one or MIDI-learn it (an expression pedal from clean to crunch), and it's saved per scene. The card has a small knob for the same thing. The arrows step to the next piece of gear.
+- **Edit captures...** chooses which captures are in the sweep and in what order: tick the ones you want (say clean, crunch and lead out of ten), drag or use the arrows to reorder.
 - The metadata is read from the start or the end of the file, so A1 and A2 captures both work, and remembered in `Rigsmith.captures` next to the ini so big libraries open quickly.
 - The dice give every piece of gear the same chance, then pick any one of its captures.
 
@@ -82,11 +87,11 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - Everything is one **undo** step (Ctrl+Z / Ctrl+Y, also the arrows in the top bar).
 
 **Workflow**
-- **Gain compensation** on any block: like normalising, it measures loudness in vs out while you play, then holds one fixed level match (no pumping). It measures again when you change the block's settings; right-click the button to measure now. The match is saved with the preset.
+- **Gain compensation** (Auto) on any block: it measures loudness in vs out while you play, then holds one fixed level match (no pumping). It measures again when you change the block's settings; right-click the button to measure now. The match is saved with the preset. Best for drives, compressors, EQs and plug-ins; on NAM amps use **Normalize** instead (steadier, and instant when you change capture). The panel says so if both are on.
 - **Block presets**: save, load and init any block's settings (bookmark icon). Stored in `Documents\Rigsmith\Block Presets`, or wherever you choose in Settings.
 - **Drag to replace**: drop a block, model, IR or plug-in onto the middle of another block to replace it (two blocks swap places); drop near its edge to insert instead.
 - **Replace** from the right-click menu too, keeping scenes and footswitch mappings.
-- Step through models and IRs in a folder with the `<` `>` buttons.
+- Step through your gear (or IRs in a folder) with the `<` `>` buttons.
 - **Plug-in parameters in the panel**: every automatable parameter appears as a knob; right-click to pin your favourites.
 - **Auto-categorised, colour-coded plug-ins** (Dynamics, Drive, Amp, Cab, EQ, Filter, Modulation, Delay, Reverb, Pitch).
 - **Built-in tab** in the library lists every built-in effect by category: drag one onto the rig (or onto a block to replace it), or double-click to add it after the selected block.
@@ -95,15 +100,19 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **Add anywhere**: a small **+** sits on the wire before every block, as well as the big one at the end of each chain.
 - **Remembered folders**: several NAM, IR and plug-in folders, set once in **Menu → Settings & folders**.
 - **`Rigsmith.ini`** holds your folders, preferences and randomise ticks, and is read every time Rigsmith starts. Rigsmith looks for it next to `Rigsmith.exe` first (a **portable** copy), then in `%APPDATA%\Rigsmith\`, and creates it there if neither exists. Settings has **Show Rigsmith.ini** and **Make this copy portable** buttons. It's plain text, so it's safe to edit or back up. Older settings are brought across automatically.
+- **Crash-proof plug-in scanning**: each plug-in is scanned by a separate little helper (`RigsmithScanner.exe`), so one that crashes or hangs is just skipped (and listed as failed) instead of taking Rigsmith, or your DAW, down with it. Rigsmith never scans itself.
 - **Plug-in scanning**: the first run scans for plug-ins. After that, Rigsmith opens straight away with the remembered list, unless you tick **Look for new plug-ins every time Rigsmith opens** (or click **Scan**).
 - Every dB readout is shown to one decimal place.
+- **Rig map**: when the rig is longer than the window, a miniature of it sits under the graph; click or drag on it to jump anywhere.
+- **Tooltips** are off by default: the speech-bubble button in the top bar (or the menu) turns them on.
+- The standalone's audio settings and session save / load are in the menu (no separate Options button).
 - **More room**: drag the bar above the bottom panel to make it taller (double-click toggles), hide the library (`L`), and go **full screen** (`F11`, or open full screen every time in Settings).
 - **Init** is always the first preset; Page Up / Down steps from Init through your presets.
 
 **Hosting & live use**
 - Hosts any **VST3** effect (and VST2 in builds made with the VST2 SDK; see below). Plug-in state is saved in your presets, and a missing plug-in keeps its settings until you reinstall it.
 - **Scenes A–D**: per-scene bypass, path levels and mutes, with click-free crossfades.
-- **MIDI learn** for footswitches and expression pedals: scenes, bypass, path levels, an A/B amp blend, any knob, next/previous preset, tuner and master volume. Program Change selects presets.
+- **MIDI learn** for footswitches and expression pedals: scenes, bypass, path levels, an A/B amp blend, the capture sweep, any knob, next/previous preset, tuner and master volume. Program Change selects presets. Esc or the x on the message cancels.
 - **Tuner**: the tuning fork in the top bar opens a full-screen tuner (`T`), and **Tuner** is also a block you can put anywhere in the rig, with a strobe, a cents needle, a steadiness history, mute and a 430–450 Hz reference.
 - Presets are `.rig` files in `Documents\Rigsmith\Presets` (sub-folders show up as banks). **Settings > Where Rigsmith saves things** moves rig presets, block presets and TONE3000 downloads wherever you like; **Keep presets with my NAM models** puts them all in your NAM folder, and your existing presets can move with them.
 - **Click IN or OUT** for the input / output panel: stereo peak + RMS meters with peak hold and clip counters, and a level history.
@@ -115,12 +124,12 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 Every push builds on GitHub Actions. Open the **Actions** tab, pick the latest run, and download **Rigsmith-Windows**. It contains:
 
 - **`Rigsmith-x.y.z-Setup.exe`**: installs the app, adds a Start-menu shortcut and puts the VST3 in `C:\Program Files\Common Files\VST3`.
-- **`Rigsmith-x.y.z-windows.zip`**: a portable copy of `Rigsmith.exe` and `Rigsmith.vst3`.
+- **`Rigsmith-x.y.z-windows.zip`**: a portable copy of `Rigsmith.exe` (keep `RigsmithScanner.exe` next to it) and `Rigsmith.vst3`.
 
 To publish a GitHub Release, push a tag:
 
 ```
-git tag v0.8.0 && git push origin v0.8.0
+git tag v0.9.0 && git push origin v0.9.0
 ```
 
 ## Quick start

@@ -128,6 +128,27 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> box, juce::C
             p.startNewSubPath (P (5.5f, 4.5f)); p.quadraticTo (P (4, 7), P (5.5f, 9.5f));
             p.startNewSubPath (P (18.5f, 4.5f)); p.quadraticTo (P (20, 7), P (18.5f, 9.5f));
             break;
+        case Icon::Tooltip:   // speech bubble with a question mark
+        {
+            p.addRoundedRectangle (R (3.5f, 4, 17, 12.5f), 3.0f * s);
+            g.strokePath (p, stroke);
+            juce::Path tail;
+            tail.startNewSubPath (P (8, 16.5f));
+            tail.lineTo (P (7, 21));
+            tail.lineTo (P (12.5f, 16.5f));
+            g.strokePath (tail, stroke);
+            juce::Path q;
+            q.startNewSubPath (P (10, 8.5f));
+            q.cubicTo (P (10, 6.3f), P (14, 6.3f), P (14, 8.5f));
+            q.cubicTo (P (14, 10.2f), P (12, 10.2f), P (12, 11.8f));
+            g.strokePath (q, juce::PathStrokeType (1.6f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.fillEllipse (R (11.1f, 13.1f, 1.8f, 1.8f));
+            return;
+        }
+        case Icon::Close:
+            line (6.5f, 6.5f, 17.5f, 17.5f);
+            line (17.5f, 6.5f, 6.5f, 17.5f);
+            break;
         case Icon::Save:
             poly ({ { 5, 4 }, { 16, 4 }, { 20, 8 }, { 20, 20 }, { 4, 20 }, { 4, 4 }, { 5, 4 } });
             p.addRectangle (R (8, 13, 8, 7));

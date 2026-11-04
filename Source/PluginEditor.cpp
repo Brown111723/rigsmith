@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "UI/Settings.h"
+#include "Engine/PluginScanner.h"
 
 #if JucePlugin_Build_Standalone
  #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
@@ -54,11 +55,12 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
 
     addAndMakeVisible (header);
     viewport.setViewedComponent (&graph, false);
-    viewport.setScrollBarsShown (true, true);
+    viewport.setScrollBarsShown (true, false);   // sideways: the rig map below (or the wheel)
     viewport.setScrollBarThickness (10);
     viewport.setWantsKeyboardFocus (false);   // keys (scenes, presets, bypass) belong to the rig, not to scrolling
     graph.onBackgroundClick = [this] { select ({}); grabKeyboardFocus(); };
     addAndMakeVisible (viewport);
+    addChildComponent (rigMap);
     addAndMakeVisible (inspector);
     addChildComponent (ioPanel);
     ioPanel.onResetOvers = [this] { levels.inOvers = levels.outOvers = 0; };
@@ -102,6 +104,10 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     header.onPresetMenu = [this] { showPresetMenu(); };
     header.onSave = [this] { savePreset (false); };
     header.onMenu = [this] { showMainMenu(); };
+    header.onTooltips = [this] { setTooltipsEnabled (tooltips == nullptr); };
+    setTooltipsEnabled (engine.getSetting ("tooltips", false));
+    learnClose.onClick = [this] { engine.cancelLearn(); toast.clear(); learnClose.setVisible (false); repaint(); };
+    addChildComponent (learnClose);
     header.onTuner = [this] { engine.tunerActive = ! engine.tunerActive.load(); updateTuner(); };
     header.onSceneRightClick = [this] (int s) { showSceneMenu (s); };
     tunerOverlay.onClose = [this] { engine.tunerActive = false; updateTuner(); };
@@ -178,20 +184,48 @@ RigsmithEditor::~RigsmithEditor()
 //==============================================================================
 void RigsmithEditor::paint (juce::Graphics& g) { g.fillAll (bg); }
 
+void RigsmithEditor::setTooltipsEnabled (bool on)
+{
+    if (on && tooltips == nullptr) tooltips = std::make_unique<juce::TooltipWindow> (this, 600);
+    if (! on) tooltips.reset();
+    header.tips.setToggleState (on, juce::dontSendNotification);
+    engine.setSetting ("tooltips", on);
+}
+
+juce::Rectangle<int> RigsmithEditor::toastBounds() const
+{
+    const auto f = font (14.0f, true);
+    const int extra = engine.isLearning() ? 36 : 0;   // room for the x
+    const int w = juce::jmin (viewport.getWidth() - 40, juce::GlyphArrangement::getStringWidthInt (f, toast) + 48 + extra);
+    return { viewport.getX() + (viewport.getWidth() - w) / 2, viewport.getBottom() - 74, w, 40 };
+}
+
 void RigsmithEditor::paintOverChildren (juce::Graphics& g)
 {
     if (toast.isEmpty()) return;
     const auto age = juce::Time::getMillisecondCounter() - toastTime;
-    const float alpha = engine.isLearning() ? 1.0f : juce::jlimit (0.0f, 1.0f, (5000.0f - (float) age) / 600.0f);
+    const bool learning = engine.isLearning();
+    const float alpha = learning ? 1.0f : juce::jlimit (0.0f, 1.0f, (5000.0f - (float) age) / 600.0f);
     if (alpha <= 0) return;
 
     const auto f = font (14.0f, true);
-    const int w = juce::jmin (viewport.getWidth() - 40, juce::GlyphArrangement::getStringWidthInt (f, toast) + 48);
-    const auto r = juce::Rectangle<int> (viewport.getX() + (viewport.getWidth() - w) / 2, viewport.getBottom() - 60, w, 40).toFloat();
+    auto r = toastBounds().toFloat();
     g.setColour (card.withAlpha (0.97f * alpha));
     g.fillRoundedRectangle (r, 10.0f);
-    g.setColour ((engine.isLearning() ? accent : borderHi).withAlpha (alpha));
+    g.setColour ((learning ? accent : borderHi).withAlpha (alpha));
     g.drawRoundedRectangle (r, 10.0f, 1.5f);
+    if (learning)
+    {
+        // the x that cancels (Esc does too)
+        const auto x = learnClose.getBounds().toFloat();
+        if (learnClose.isMouseOver())
+        {
+            g.setColour (accent.withAlpha (0.2f));
+            g.fillEllipse (x.reduced (2.0f));
+        }
+        drawIcon (g, Icon::Close, x.reduced (7.0f), learnClose.isMouseOver() ? accent : muted);
+        r.removeFromRight (34.0f);
+    }
     g.setColour (text.withAlpha (alpha));
     g.setFont (f);
     g.drawFittedText (toast, r.toNearestInt().reduced (16, 0), juce::Justification::centred, 1);
@@ -207,10 +241,22 @@ void RigsmithEditor::resized()
     inspector.setBounds (r.removeFromBottom (ih));
     ioPanel.setBounds (inspector.getBounds());
     divider.setBounds (r.removeFromBottom (8));
-    viewport.setBounds (r);
+    graphArea = r;
+    layoutGraph (r);
     statusLabel.setBounds (r.getX() + 12, r.getBottom() - 46, 260, 34);
     tunerOverlay.setBounds (r);
-    graph.fitTo (viewport.getLocalBounds().withTrimmedBottom (viewport.getScrollBarThickness()));
+}
+
+void RigsmithEditor::layoutGraph (juce::Rectangle<int> r)
+{
+    // a long (or tall) rig gets the mini map at the bottom instead of a horizontal scrollbar
+    const auto need = graph.contentSize();
+    const bool map = need.x > r.getWidth() || need.y > r.getHeight();
+    rigMap.setVisible (map);
+    if (map) rigMap.setBounds (r.removeFromBottom (54));
+    viewport.setScrollBarsShown (true, false);
+    viewport.setBounds (r);
+    graph.fitTo (viewport.getLocalBounds().withTrimmedRight (graph.contentSize().y > r.getHeight() ? viewport.getScrollBarThickness() : 0));
 }
 
 void RigsmithEditor::showMessage (const juce::String& message)
@@ -228,9 +274,25 @@ void RigsmithEditor::updateTuner()
 }
 
 //==============================================================================
+void RigsmithEditor::hideStandaloneOptionsButton()
+{
+    // the standalone window's own "Options" button: its items live in the menu instead
+    if (optionsHidden || ! processor.isStandalone()) return;
+    auto* top = getTopLevelComponent();
+    if (top == nullptr || top == this) return;
+    for (auto* c : top->getChildren())
+        if (auto* b = dynamic_cast<juce::TextButton*> (c); b != nullptr && b->getButtonText() == "Options")
+        {
+            b->setVisible (false);
+            b->setEnabled (false);
+            optionsHidden = true;
+        }
+}
+
 void RigsmithEditor::timerCallback()
 {
     ++tick;
+    if (tick % 15 == 1) hideStandaloneOptionsButton();
     {
         auto fall = [] (float& v, std::atomic<float>& src) { v = juce::jmax (src.exchange (0.0f), v * 0.86f); };
         auto ease = [] (float& v, std::atomic<float>& src) { const float x = src.load(); v += (x - v) * (x > v ? 0.5f : 0.15f); };
@@ -276,8 +338,18 @@ void RigsmithEditor::timerCallback()
 
     if (toast.isNotEmpty() && ! engine.isLearning() && juce::Time::getMillisecondCounter() - toastTime > 5000)
         toast.clear();
+    {
+        const bool showX = engine.isLearning() && toast.isNotEmpty();
+        if (showX)
+        {
+            const auto t = toastBounds();
+            learnClose.setBounds (t.getRight() - 40, t.getY() + 4, 32, 32);
+            learnClose.toFront (false);
+        }
+        if (showX != learnClose.isVisible()) learnClose.setVisible (showX);
+    }
     if (toast.isNotEmpty())
-        repaint (viewport.getBounds().removeFromBottom (70));
+        repaint (viewport.getBounds().removeFromBottom (84));
 }
 
 void RigsmithEditor::handleAsyncUpdate()
@@ -287,7 +359,7 @@ void RigsmithEditor::handleAsyncUpdate()
     graph.setVisible (true);
     if (isShowing() && juce::Component::getCurrentlyFocusedComponent() == nullptr)
         grabKeyboardFocus();
-    graph.fitTo (viewport.getLocalBounds().withTrimmedBottom (viewport.getScrollBarThickness()));
+    layoutGraph (graphArea);
     viewport.setViewPosition (viewPos);
     auto* n = engine.findNode (selectedId);
     if (n == nullptr && ! isIoSelected()) selectedId.clear();
@@ -458,7 +530,7 @@ bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const 
     if (target != nullptr)
     {
         bool ok = false;
-        if (auto* nb = dynamic_cast<NamBlock*> (target); nb != nullptr && isNam) ok = nb->loadModel (f, err);
+        if (auto* nb = dynamic_cast<NamBlock*> (target); nb != nullptr && isNam) ok = engine.loadGear (*nb, f, err);
         else if (auto* ir = dynamic_cast<IrBlock*> (target); ir != nullptr && isIr) ok = ir->loadIr (f, err);
         else err = "That file doesn't fit this block";
 
@@ -477,7 +549,7 @@ bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const 
     if (isNam)
     {
         auto nb = std::make_unique<NamBlock>();
-        if (! nb->loadModel (f, err)) { showMessage (err); return false; }
+        if (! engine.loadGear (*nb, f, err)) { showMessage (err); return false; }
         n = std::move (nb);
     }
     else
@@ -729,7 +801,12 @@ void RigsmithEditor::switchCapture (Node& n, const juce::File& f)
 {
     juce::String err;
     bool ok = false;
-    if (auto* nb = dynamic_cast<NamBlock*> (&n)) ok = nb->getFile() == f || nb->loadModel (f, err);
+    if (auto* nb = dynamic_cast<NamBlock*> (&n))
+    {
+        // in the sweep already: just go there; otherwise load it (with its gear's captures)
+        if (const int i = nb->getCaptureFiles().indexOf (f); i >= 0) { nb->setCapturePosition ((float) i); ok = true; }
+        else ok = engine.loadGear (*nb, f, err);
+    }
     else if (auto* ir = dynamic_cast<IrBlock*> (&n)) ok = ir->getFile() == f || ir->loadIr (f, err);
     if (! ok) { showMessage (err); return; }
     engine.updateAutoSkips();
@@ -991,7 +1068,15 @@ void RigsmithEditor::showMainMenu()
 {
     juce::PopupMenu m;
     if (processor.isStandalone())
+    {
         m.addItem (1, "Audio / MIDI settings...");
+        juce::PopupMenu state;
+        state.addItem (21, "Save the current state as...");
+        state.addItem (22, "Load a saved state...");
+        state.addSeparator();
+        state.addItem (23, "Reset to the default state");
+        m.addSubMenu ("Session state", state);
+    }
     m.addItem (17, "Settings & folders...");
     m.addItem (2, "Scan plug-ins...");
     m.addSeparator();
@@ -1004,6 +1089,7 @@ void RigsmithEditor::showMainMenu()
     if (processor.isStandalone())
         m.addItem (18, "Full screen  (F11)", true, isFullScreen());
     m.addItem (19, "Show library  (L)", true, libraryVisible);
+    m.addItem (20, "Tooltips", true, tooltips != nullptr);
     m.addItem (3, "Output safety limiter", true, engine.limiterOn.load());
     m.addItem (4, "Tuner", true, engine.tunerActive.load());
 
@@ -1041,8 +1127,16 @@ void RigsmithEditor::showMainMenu()
                 break;
             case 2: showPluginScanner(); break;
             case 17: showSettings(); break;
+           #if RIGSMITH_HAS_STANDALONE_HOLDER
+            case 21: if (auto* h = juce::StandalonePluginHolder::getInstance()) h->askUserToSaveState(); break;
+            case 22: if (auto* h = juce::StandalonePluginHolder::getInstance()) h->askUserToLoadState(); break;
+            case 23:
+                if (auto* w = dynamic_cast<juce::StandaloneFilterWindow*> (getTopLevelComponent())) w->resetToDefaultState();
+                break;
+           #endif
             case 18: setFullScreen (! isFullScreen()); break;
             case 19: setLibraryVisible (! libraryVisible); break;
+            case 20: setTooltipsEnabled (tooltips == nullptr); break;
             case 3: engine.limiterOn = ! engine.limiterOn.load(); break;
             case 4: engine.tunerActive = ! engine.tunerActive.load(); updateTuner(); break;
             case 5: learn (MidiMapping::Target::PresetNext); break;
@@ -1131,7 +1225,7 @@ void RigsmithEditor::scanForNewPlugins (bool always)
         const auto path = engine.getPluginPaths (*f);   // the folders in Rigsmith.ini
         juce::StringArray fresh;
         for (auto& file : f->searchPathsForPlugins (path, true, false))
-            if (! blacklist.contains (file) && ! engine.knownPlugins.isListingUpToDate (file, *f))
+            if (! blacklist.contains (file) && ! OutOfProcessScanner::isRigsmith (file) && ! engine.knownPlugins.isListingUpToDate (file, *f))
                 fresh.add (file);
         if (fresh.isEmpty()) continue;
         showMessage ("Found " + juce::String (fresh.size()) + " new " + f->getName() + " plug-in" + (fresh.size() == 1 ? "" : "s") + " - scanning");
@@ -1399,7 +1493,7 @@ void RigsmithEditor::replaceWith (Node& target, const juce::String& d)
         if (f.hasFileExtension ("nam"))
         {
             auto nb = std::make_unique<NamBlock>();
-            if (! nb->loadModel (f, err)) { showMessage (err); return; }
+            if (! engine.loadGear (*nb, f, err)) { showMessage (err); return; }
             fresh = std::move (nb);
         }
         else if (f.hasFileExtension ("wav;aif;aiff;flac"))

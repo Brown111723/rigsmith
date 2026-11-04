@@ -125,7 +125,7 @@ std::unique_ptr<Node> Randomiser::makeBuiltIn (NodeType t, int variant)
         // try a couple of files in case one is unreadable
         const auto& pool = variant == 1 ? pedalModels : models;
         for (int attempt = 0; attempt < 3 && ! pool.isEmpty(); ++attempt)
-            if (nb->loadModel (pick (pool), err)) break;
+            if (engine.loadGear (*nb, pick (pool), err, true)) break;   // with its other captures, for the sweep
     }
     else if (auto* ir = dynamic_cast<IrBlock*> (b))
     {

@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "PluginScanner.h"
 
 namespace rig
 {
@@ -45,6 +46,7 @@ namespace
         { "autoCategorise",   "Plug-ins",  "AutoCategorise" },
         { "fullScreen",       "Window",    "FullScreen" },
         { "libraryVisible",   "Window",    "ShowLibrary" },
+        { "tooltips",         "Window",    "Tooltips" },
         { "inspectorHeight",  "Window",    "PanelHeight" },
         { "randomUsePlugins", "Randomise", "UsePlugins" },
         { "randomSplits",     "Randomise", "AllowSplits" },
@@ -133,6 +135,10 @@ Engine::Engine() : root (std::make_unique<Chain>())
     if (auto* s = props.getUserSettings())
         if (auto xml = s->getXmlValue ("pluginList"))
             knownPlugins.recreateFromXml (*xml);
+    // scan each plug-in in its own process (a crash only skips that plug-in), never Rigsmith itself
+    installSafeScanner (knownPlugins);
+    for (auto& d : knownPlugins.getTypes())
+        if (OutOfProcessScanner::isRigsmith (d.fileOrIdentifier)) knownPlugins.removeType (d);
 
     openSettings();
     setCaptureCacheFile (ini.getFile().getSiblingFile ("Rigsmith.captures"));
@@ -271,6 +277,25 @@ void Engine::setFolder (const juce::String& key, const juce::File& f)
                     : key == "blockPresetFolder" ? "BlockPresets" : key == "downloadFolder" ? "TONE3000" : key.toRawUTF8();
     if (f != juce::File()) f.createDirectory();
     ini.set ("Folders", name, f.getFullPathName());   // an empty File clears it (back to the default)
+}
+
+bool Engine::loadGear (NamBlock& nb, const juce::File& f, juce::String& error, bool diceOnly)
+{
+    juce::Array<juce::File> files;
+    if (auto g = captures.groupFor (f); g != nullptr && g->size() > 1)
+        for (auto& c : g->files)
+            if (c == f || ! (diceOnly && isRandomExcluded (c))) files.add (c);
+    if (! files.contains (f)) files = { f };
+    // a big pack: the captures around the chosen one
+    int at = files.indexOf (f);
+    if (files.size() > maxSweep)
+    {
+        const int start = juce::jlimit (0, files.size() - maxSweep, at - maxSweep / 2);
+        files.removeRange (start + maxSweep, files.size());
+        files.removeRange (0, start);
+        at = files.indexOf (f);
+    }
+    return nb.loadCaptures (files, (float) at, error);
 }
 
 juce::File Engine::getBlockPresetRoot() const
@@ -1597,7 +1622,7 @@ std::unique_ptr<Chain> Engine::buildFactory (int index, juce::StringArray& scene
     {
         auto nam = std::make_unique<NamBlock>();
         // the second amp falls back to the first model (or IR) if the library only has one
-        if (! models.isEmpty()) nam->loadModel (models[juce::jmin (which, models.size() - 1)], err);
+        if (! models.isEmpty()) loadGear (*nam, models[juce::jmin (which, models.size() - 1)], err);
         c.nodes.push_back (std::move (nam));
         auto cab = std::make_unique<IrBlock>();
         if (! irFiles.isEmpty()) cab->loadIr (irFiles[juce::jmin (which, irFiles.size() - 1)], err);

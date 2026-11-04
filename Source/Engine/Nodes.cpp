@@ -268,6 +268,10 @@ void Node::prepare (double sr, int block)
     wetGain.setCurrentAndTargetValue (bypassed.load() ? 0.0f : 1.0f);
     compGain.reset (sr, 0.25);
     compGain.setCurrentAndTargetValue (autoGain.load() ? dbToGain (autoGainDb.load()) : 1.0f);
+    inTrim.reset (sr, 0.03);
+    outTrim.reset (sr, 0.03);
+    inTrim.setCurrentAndTargetValue (dbToGain (inTrimDb.load()));
+    outTrim.setCurrentAndTargetValue (dbToGain (outTrimDb.load()));
     prepareImpl (sr, maxBlock);
 }
 
@@ -277,8 +281,21 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
     auto* t = tap.load (std::memory_order_relaxed);
     if (t != nullptr) t->push (false, buffer, n);
 
+    auto peakOf = [&buffer, n]
+    {
+        return juce::jmax (buffer.getMagnitude (0, 0, n), buffer.getMagnitude (1, 0, n));
+    };
+    auto hold = [] (std::atomic<float>& a, float v)
+    {
+        float cur = a.load (std::memory_order_relaxed);
+        while (v > cur && ! a.compare_exchange_weak (cur, v, std::memory_order_relaxed)) {}
+    };
+
     if (! wetGain.isSmoothing() && wetGain.getCurrentValue() < 0.5f)
     {
+        const float pk = peakOf();
+        hold (peakIn, pk);
+        hold (peakOut, pk);
         if (t != nullptr) t->push (true, buffer, n);
         return;  // fully bypassed: untouched
     }
@@ -289,10 +306,21 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
         for (int ch = 0; ch < 2; ++ch)
             dry.copyFrom (ch, 0, buffer, ch, 0, n);
 
+    // input trim, then the block
+    inTrim.setTargetValue (dbToGain (inTrimDb.load (std::memory_order_relaxed)));
+    if (inTrim.isSmoothing() || inTrim.getCurrentValue() != 1.0f)
+    {
+        auto* il = buffer.getWritePointer (0);
+        auto* ir = buffer.getWritePointer (1);
+        for (int i = 0; i < n; ++i) { const float g = inTrim.getNextValue(); il[i] *= g; ir[i] *= g; }
+    }
+    hold (peakIn, peakOf());
+
     processImpl (buffer, n);
 
     auto* l = buffer.getWritePointer (0);
     auto* r = buffer.getWritePointer (1);
+
 
     if (ag)
     {
@@ -346,6 +374,11 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
         compGain.setCurrentAndTargetValue (1.0f);
     }
 
+    // output trim after gain compensation, so the compensation never undoes it
+    outTrim.setTargetValue (dbToGain (outTrimDb.load (std::memory_order_relaxed)));
+    if (outTrim.isSmoothing() || outTrim.getCurrentValue() != 1.0f)
+        for (int i = 0; i < n; ++i) { const float g = outTrim.getNextValue(); l[i] *= g; r[i] *= g; }
+
     if (wetGain.isSmoothing())
     {
         auto* dl = dry.getReadPointer (0);
@@ -358,6 +391,7 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
         }
     }
 
+    hold (peakOut, peakOf());
     if (t != nullptr) t->push (true, buffer, n);
 }
 
@@ -373,6 +407,8 @@ juce::ValueTree Node::toState() const
         v.setProperty ("autoGainDb", autoGainDb.load(), nullptr);
     }
     if (locked.load()) v.setProperty ("locked", true, nullptr);
+    if (inTrimDb.load() != 0.0f) v.setProperty ("inTrim", inTrimDb.load(), nullptr);
+    if (outTrimDb.load() != 0.0f) v.setProperty ("outTrim", outTrimDb.load(), nullptr);
     return v;
 }
 
@@ -386,6 +422,8 @@ void Node::fromState (const juce::ValueTree& v)
     relearn = false;
     if (autoGain.load() && ! v.hasProperty ("autoGainDb")) requestRelearn();   // v0.2 presets: measure once
     locked = (bool) v.getProperty ("locked", false);
+    inTrimDb = (float) v.getProperty ("inTrim", 0.0f);
+    outTrimDb = (float) v.getProperty ("outTrim", 0.0f);
 }
 
 //==============================================================================

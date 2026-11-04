@@ -201,6 +201,11 @@ public:
     void markPluginsScanned();
     /** Every NAM capture and IR in the library folders, grouped by gear (see Captures.h). */
     CaptureLibrary captures;
+    /** Loads a .nam into a block with every capture of the same gear ready to sweep through
+        (at most maxSweep, around the chosen one), positioned on the chosen file.
+        diceOnly: leave out captures the dice may not pick. */
+    bool loadGear (NamBlock&, const juce::File&, juce::String& error, bool diceOnly = false);
+    static constexpr int maxSweep = 16;
     bool shouldScanOnStartup() const { return ! hasScannedPlugins() || getSetting ("scanOnStartup", false); }
 
     //--- Randomise include / exclude (the ticks in the library) ---------------------

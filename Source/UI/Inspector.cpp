@@ -73,6 +73,105 @@ void Knob::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+TrimMeter::TrimMeter (const juce::String& l, float mn, float mx) : label (l), minDb (mn), maxDb (mx)
+{
+    setRepaintsOnMouseActivity (true);
+}
+
+void TrimMeter::setLevel (float peak)
+{
+    const float next = juce::jmax (peak, shown * 0.82f);
+    if (peak >= held) { held = peak; holdTicks = 30; }
+    else if (--holdTicks <= 0) held *= 0.9f;
+    if (std::abs (next - shown) > 1.0e-4f || peak > 0.0f) { shown = next; repaint(); }
+}
+
+juce::Rectangle<float> TrimMeter::track() const
+{
+    auto r = getLocalBounds().toFloat();
+    r.removeFromTop (18.0f);
+    r.removeFromBottom (18.0f);
+    return r.withSizeKeepingCentre (10.0f, r.getHeight() - 8.0f);
+}
+
+float TrimMeter::trimToY (float db) const
+{
+    const auto t = track();
+    return t.getBottom() - (db - minDb) / (maxDb - minDb) * t.getHeight();
+}
+
+void TrimMeter::paint (juce::Graphics& g)
+{
+    using namespace theme;
+    const auto t = track();
+    g.setColour (muted);
+    g.setFont (font (10.5f, true));
+    g.drawText (label, getLocalBounds().removeFromTop (16), juce::Justification::centred);
+
+    // the signal: -60 .. +6 dBFS up the track
+    g.setColour (bg);
+    g.fillRoundedRectangle (t, 3.0f);
+    auto levelY = [&t] (float lin)
+    {
+        const float db = juce::jlimit (-60.0f, 6.0f, gainToDb (lin));
+        return t.getBottom() - (db + 60.0f) / 66.0f * t.getHeight();
+    };
+    const float y = levelY (shown);
+    const float zeroY = levelY (1.0f);
+    const auto fill = juce::Rectangle<float> (t.getX() + 2.0f, y, t.getWidth() - 4.0f, t.getBottom() - y - 1.0f);
+    if (fill.getHeight() > 0.5f)
+    {
+        juce::ColourGradient grad (teal, 0.0f, t.getBottom(), red, 0.0f, zeroY, false);
+        grad.addColour (0.8, accent);
+        g.setGradientFill (grad);
+        g.fillRect (fill);
+    }
+    if (held > 1.0e-4f)
+    {
+        g.setColour (held >= 1.0f ? red : text.withAlpha (0.7f));
+        g.fillRect (t.getX() + 2.0f, levelY (held) - 1.0f, t.getWidth() - 4.0f, 1.5f);
+    }
+    g.setColour (border.brighter (0.2f));
+    g.drawHorizontalLine ((int) zeroY, t.getX() - 3.0f, t.getRight() + 3.0f);   // 0 dBFS
+
+    // the trim handle
+    const float trim = getTrim ? getTrim() : 0.0f;
+    const float hy = trimToY (trim);
+    const bool over = isMouseOverOrDragging();
+    juce::Path h;
+    h.addTriangle (t.getRight() + 2.0f, hy, t.getRight() + 10.0f, hy - 5.0f, t.getRight() + 10.0f, hy + 5.0f);
+    g.setColour (over ? accent : text.withAlpha (0.85f));
+    g.fillPath (h);
+    g.fillRect (t.getX() - 4.0f, hy - 1.0f, t.getWidth() + 6.0f, 2.0f);
+    g.setColour (std::abs (trim) < 0.05f ? muted : accent);
+    g.setFont (mono (10.0f));
+    g.drawText ((trim > 0.05f ? "+" : "") + juce::String (trim, 1), getLocalBounds().removeFromBottom (16), juce::Justification::centred);
+}
+
+void TrimMeter::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu()) { if (onRightClick) onRightClick(); return; }
+    dragStart = getTrim ? getTrim() : 0.0f;
+}
+
+void TrimMeter::mouseDrag (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu() || ! setTrim) return;
+    // fine control with shift; about 0.25 dB a pixel otherwise
+    const float perPx = (maxDb - minDb) / track().getHeight() * (e.mods.isShiftDown() ? 0.2f : 1.0f);
+    float v = dragStart - (float) e.getDistanceFromDragStartY() * perPx;
+    v = juce::jlimit (minDb, maxDb, std::round (v * 10.0f) / 10.0f);
+    if (std::abs (v) < 0.3f) v = 0.0f;   // a little detent at 0 dB
+    setTrim (v);
+    repaint();
+}
+
+void TrimMeter::mouseDoubleClick (const juce::MouseEvent&)
+{
+    if (setTrim) { setTrim (0.0f); repaint(); }
+}
+
+//==============================================================================
 ChoiceControl::ChoiceControl (const juce::String& name, const juce::StringArray& options, juce::Colour colour)
 {
     label.setText (name, juce::dontSendNotification);
@@ -312,6 +411,9 @@ void Inspector::clearControls()
     display.reset();
     captureKnob.reset();
     captureGroup.reset();
+    namCaptureFiles.clear();
+    namCaptureLabels.clear();
+    meters.reset();
     knobs.clear();
     toggles.clear();
     choices.clear();
@@ -324,7 +426,7 @@ void Inspector::clearControls()
     strips.clear();
     for (auto* c : std::initializer_list<juce::Component*> { &openButton, &bypassButton, &autoGainButton, &prevFile, &nextFile,
                                                               &diceButton, &presetButton, &lockButton,
-                                                              &autoGainSum, &addPathButton, &pluginHeader, &pluginScope, &captureName })
+                                                              &autoGainSum, &addPathButton, &pluginHeader, &pluginScope, &captureName, &editCaptures })
         c->setVisible (false);
 }
 
@@ -384,7 +486,11 @@ void Inspector::buildBlock (Block& b)
     display->onEdited = [this] { host.getEngine().markDirty(); };
     addAndMakeVisible (*display);
 
-    for (int i = 0; i < b.numParams(); ++i)
+    // the parameters, in the block's panel order (NAM: Gain first; Input / Output are the meters)
+    std::vector<int> order = b.panelOrder();
+    if (order.empty())
+        for (int i = 0; i < b.numParams(); ++i) order.push_back (i);
+    for (int i : order)
     {
         const auto& sp = b.getSpecs()[(size_t) i];
         if (sp.toggle)
@@ -424,11 +530,17 @@ void Inspector::buildBlock (Block& b)
             if (display) display->setHighlight (over ? b.getSpecs()[(size_t) i].name + "  " + b.formatValue (i) : juce::String());
         };
         k->onRightClick = [this, &b, i] { if (onLearnParam) onLearnParam (b, i); };
+        k->slider.setTooltip (b.getType() == NodeType::Nam && i == NamBlock::pGain
+                                  ? juce::String ("Gain: drives the amp harder, like the gain knob on the real thing. "
+                                                  "Rigsmith measured this capture when it loaded and trims the output, so mostly the drive changes, not the volume. "
+                                                  "Double-click: 5 (as captured). Right-click: MIDI learn")
+                                  : sp.name + ": drag up / down (Shift for fine). Double-click: default. Right-click: MIDI learn");
         k->refreshText();
         knobParam.push_back (i);
     }
 
     buildCaptureKnob (b);
+    buildMeters (b);
 
     switch (b.getType())
     {
@@ -474,45 +586,360 @@ static juce::File loadedFile (const Node& n)
     return {};
 }
 
+//==============================================================================
+/** Choose which captures of a gear the Capture knob sweeps through, and in what order:
+    tick to include, drag (or use the arrows) to reorder. Changes apply as you make them. */
+class CaptureEditor : public juce::Component
+{
+public:
+    CaptureEditor (Engine& e, NamBlock& b, std::function<void()> changedFn)
+        : engine (e), block (b), onChanged (std::move (changedFn))
+    {
+        const auto list = block.getCaptureFiles();
+        const auto names = block.getCaptureNames();
+        for (int i = 0; i < list.size(); ++i)
+            rows.push_back ({ list[i], names[i], toneTypeName (block.getInfo (i).toneType), true });
+        if (! list.isEmpty())
+            if (auto g = engine.captures.groupFor (list[0]))
+            {
+                title = g->title;
+                for (int i = 0; i < g->size(); ++i)
+                    if (! list.contains (g->files[i]))
+                        rows.push_back ({ g->files[i], g->labels[i], toneTypeName (g->fileToneTypes[i]), false });
+            }
+        if (title.isEmpty()) title = block.getName();
+
+        for (auto* btn : { &allButton, &resetButton })
+        {
+            btn->setColour (juce::TextButton::buttonColourId, card);
+            addAndMakeVisible (btn);
+        }
+        allButton.onClick = [this] { for (auto& r : rows) r.in = true; apply(); };
+        resetButton.onClick = [this]
+        {
+            // the gear's own order, everything in
+            if (auto g = engine.captures.groupFor (rows.empty() ? juce::File() : rows[0].file))
+            {
+                std::vector<Row> fresh;
+                for (int i = 0; i < g->size(); ++i)
+                    fresh.push_back ({ g->files[i], g->labels[i], toneTypeName (g->fileToneTypes[i]), true });
+                rows = fresh;
+                apply();
+            }
+        };
+        allButton.setTooltip ("Sweep through every capture of this gear");
+        resetButton.setTooltip ("Every capture, in the gear's own order");
+        setSize (380, juce::jmin (560, headerH + (int) rows.size() * rowH + footerH));
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (panel);
+        g.setColour (text);
+        g.setFont (font (14.0f, true));
+        g.drawText ("Captures to sweep", 14, 8, getWidth() - 28, 18, juce::Justification::centredLeft);
+        g.setColour (muted);
+        g.setFont (font (11.0f));
+        g.drawText (title + "  -  tick to include, drag to reorder", 14, 26, getWidth() - 28, 14, juce::Justification::centredLeft, true);
+
+        int included = 0;
+        for (auto& r : rows) included += r.in ? 1 : 0;
+        for (int i = firstRow; i < (int) rows.size(); ++i)
+        {
+            const auto area = rowArea (i);
+            if (area.getY() >= getHeight() - footerH) break;
+            const auto& r = rows[(size_t) i];
+            if (i == dragRow) { g.setColour (cardHi); g.fillRoundedRectangle (area.toFloat().reduced (4, 1), 5.0f); }
+            // tick box
+            const auto box = tickArea (i).toFloat();
+            g.setColour (r.in ? accent : borderHi);
+            if (r.in)
+            {
+                g.fillRoundedRectangle (box, 4.0f);
+                g.setColour (bg);
+                juce::Path t;
+                t.startNewSubPath (box.getX() + 4.0f, box.getCentreY());
+                t.lineTo (box.getX() + 7.5f, box.getBottom() - 4.5f);
+                t.lineTo (box.getRight() - 4.0f, box.getY() + 4.5f);
+                g.strokePath (t, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+            else g.drawRoundedRectangle (box.reduced (0.5f), 4.0f, 1.3f);
+
+            // position in the sweep
+            g.setColour (r.in ? muted : dim);
+            g.setFont (mono (10.0f));
+            if (r.in) g.drawText (juce::String (positionOf (i) + 1), area.getX() + 34, area.getY(), 22, area.getHeight(), juce::Justification::centredRight);
+            g.setColour (r.in ? text : muted);
+            g.setFont (font (12.5f, r.in));
+            g.drawText (r.label, area.getX() + 62, area.getY(), area.getWidth() - 62 - 120, area.getHeight(), juce::Justification::centredLeft, true);
+            g.setColour (muted);
+            g.setFont (font (11.0f));
+            g.drawText (r.tone, area.getRight() - 118, area.getY(), 60, area.getHeight(), juce::Justification::centredRight, true);
+            if (r.in && included > 1)
+            {
+                // up / down arrows
+                juce::Path up, down;
+                const auto u = upArea (i).toFloat().reduced (6.0f), d = downArea (i).toFloat().reduced (6.0f);
+                up.addTriangle (u.getX(), u.getBottom(), u.getRight(), u.getBottom(), u.getCentreX(), u.getY());
+                down.addTriangle (d.getX(), d.getY(), d.getRight(), d.getY(), d.getCentreX(), d.getBottom());
+                g.setColour (positionOf (i) > 0 ? muted : dim.withAlpha (0.4f));
+                g.fillPath (up);
+                g.setColour (positionOf (i) < included - 1 ? muted : dim.withAlpha (0.4f));
+                g.fillPath (down);
+            }
+        }
+        if ((int) rows.size() * rowH > getHeight() - headerH - footerH)
+        {
+            g.setColour (muted);
+            g.setFont (font (10.0f));
+            g.drawText ("scroll for more", 0, getHeight() - footerH - 14, getWidth() - 14, 12, juce::Justification::centredRight);
+        }
+    }
+
+    void resized() override
+    {
+        auto f = getLocalBounds().removeFromBottom (footerH).reduced (14, 8);
+        allButton.setBounds (f.removeFromLeft (110));
+        f.removeFromLeft (8);
+        resetButton.setBounds (f.removeFromLeft (150));
+    }
+
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override
+    {
+        const int visible = (getHeight() - headerH - footerH) / rowH;
+        firstRow = juce::jlimit (0, juce::jmax (0, (int) rows.size() - visible), firstRow - (w.deltaY > 0 ? 1 : -1));
+        repaint();
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragRow = -1;
+        const int i = rowAt (e.y);
+        if (i < 0) return;
+        auto& r = rows[(size_t) i];
+        if (tickArea (i).expanded (4).contains (e.getPosition()))
+        {
+            int included = 0;
+            for (auto& x : rows) included += x.in ? 1 : 0;
+            if (r.in && included == 1) return;   // keep at least one
+            r.in = ! r.in;
+            if (r.in)
+            {
+                // newly included captures go to the end of the sweep
+                auto row = r;
+                rows.erase (rows.begin() + i);
+                int at = 0;
+                while (at < (int) rows.size() && rows[(size_t) at].in) ++at;
+                rows.insert (rows.begin() + at, row);
+            }
+            else
+            {
+                auto row = r;
+                rows.erase (rows.begin() + i);
+                rows.push_back (row);
+            }
+            apply();
+            return;
+        }
+        if (r.in && upArea (i).contains (e.getPosition()) && i > 0 && rows[(size_t) i - 1].in) { std::swap (rows[(size_t) i], rows[(size_t) i - 1]); apply(); return; }
+        if (r.in && downArea (i).contains (e.getPosition()) && i + 1 < (int) rows.size() && rows[(size_t) i + 1].in) { std::swap (rows[(size_t) i], rows[(size_t) i + 1]); apply(); return; }
+        if (r.in) { dragRow = i; repaint(); }
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (dragRow < 0) return;
+        int target = rowAt (juce::jlimit (headerH, getHeight() - footerH - 1, e.y));
+        if (target < 0) return;
+        int lastIn = 0;
+        while (lastIn + 1 < (int) rows.size() && rows[(size_t) lastIn + 1].in) ++lastIn;
+        target = juce::jlimit (0, lastIn, target);
+        if (target != dragRow)
+        {
+            auto row = rows[(size_t) dragRow];
+            rows.erase (rows.begin() + dragRow);
+            rows.insert (rows.begin() + target, row);
+            dragRow = target;
+            moved = true;
+            repaint();
+        }
+    }
+
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (moved) apply();
+        moved = false;
+        dragRow = -1;
+        repaint();
+    }
+
+private:
+    struct Row { juce::File file; juce::String label, tone; bool in; };
+    static constexpr int headerH = 48, rowH = 28, footerH = 44;
+
+    juce::Rectangle<int> rowArea (int i) const { return { 0, headerH + (i - firstRow) * rowH, getWidth(), rowH }; }
+    juce::Rectangle<int> tickArea (int i) const { auto a = rowArea (i); return { 14, a.getCentreY() - 8, 16, 16 }; }
+    juce::Rectangle<int> upArea (int i) const { auto a = rowArea (i); return { getWidth() - 54, a.getY() + 2, 20, a.getHeight() - 4 }; }
+    juce::Rectangle<int> downArea (int i) const { auto a = rowArea (i); return { getWidth() - 32, a.getY() + 2, 20, a.getHeight() - 4 }; }
+    int rowAt (int y) const
+    {
+        if (y < headerH || y >= getHeight() - footerH) return -1;
+        const int i = firstRow + (y - headerH) / rowH;
+        return i < (int) rows.size() ? i : -1;
+    }
+    int positionOf (int i) const { int p = 0; for (int k = 0; k < i; ++k) p += rows[(size_t) k].in ? 1 : 0; return p; }
+
+    void apply()
+    {
+        // keep the knob on the capture it was on, wherever that ends up
+        const auto current = block.getFile();
+        juce::Array<juce::File> files;
+        for (auto& r : rows) if (r.in) files.add (r.file);
+        const int at = juce::jmax (0, files.indexOf (current));
+        juce::String err;
+        block.loadCaptures (files, (float) at, err);
+        engine.markDirty();
+        repaint();
+        if (onChanged) onChanged();
+    }
+
+    Engine& engine;
+    NamBlock& block;
+    std::function<void()> onChanged;
+    std::vector<Row> rows;
+    juce::String title;
+    juce::TextButton allButton { "Use them all" }, resetButton { "All, in the gear's order" };
+    int firstRow = 0, dragRow = -1;
+    bool moved = false;
+};
+
+void Inspector::buildMeters (Block& b)
+{
+    if (b.getType() == NodeType::Tuner) return;
+    meters = std::make_unique<Meters>();
+    auto& eng = host.getEngine();
+    if (auto* nb = dynamic_cast<NamBlock*> (&b))
+    {
+        // NAM: the handles are its Input / Output trims (scene- and MIDI-learnable parameters)
+        meters->in.getTrim = [nb] { return nb->get (NamBlock::pInput); };
+        meters->in.setTrim = [nb, &eng] (float v) { nb->set (NamBlock::pInput, v); eng.markDirty(); };
+        meters->out.getTrim = [nb] { return nb->get (NamBlock::pOutput); };
+        meters->out.setTrim = [nb, &eng] (float v) { nb->set (NamBlock::pOutput, v); eng.markDirty(); };
+        meters->in.onRightClick = [this, nb] { if (onLearnParam) onLearnParam (*nb, NamBlock::pInput); };
+        meters->out.onRightClick = [this, nb] { if (onLearnParam) onLearnParam (*nb, NamBlock::pOutput); };
+        meters->in.setTooltip ("Level into the amp. Drag the handle to trim it: hotter or quieter pickups, or to calibrate a capture. "
+                               "Gain is the knob for drive. Double-click: 0 dB. Right-click: MIDI learn");
+    }
+    else
+    {
+        auto* n = &b;
+        meters->in.getTrim = [n] { return n->inTrimDb.load(); };
+        meters->in.setTrim = [n, &eng] (float v) { n->inTrimDb = v; n->touched(); eng.markDirty(); };
+        meters->out.getTrim = [n] { return n->outTrimDb.load(); };
+        meters->out.setTrim = [n, &eng] (float v) { n->outTrimDb = v; eng.markDirty(); };
+        meters->in.setTooltip ("Level into this block. Drag the handle to trim it (how hard it's driven). Double-click: 0 dB");
+    }
+    meters->out.setTooltip ("Level out of this block. Drag the handle to trim it. Double-click: 0 dB");
+    controls.addAndMakeVisible (*meters);
+}
+
+//==============================================================================
 void Inspector::buildCaptureKnob (Block& b)
 {
-    const auto file = loadedFile (b);
-    if (file == juce::File()) return;
-    captureGroup = host.getEngine().captures.groupFor (file);
-    if (captureGroup == nullptr || captureGroup->size() < 2) return;
+    if (auto* nb = dynamic_cast<NamBlock*> (&b))
+    {
+        // NAM: a sweep through the block's captures, blending between neighbours
+        namCaptureFiles = nb->getCaptureFiles();
+        const int n = namCaptureFiles.size();
+        auto group = n > 0 ? host.getEngine().captures.groupFor (namCaptureFiles[0]) : nullptr;
+        const bool more = group != nullptr && group->size() > 1;
+        if (n < 2 && ! more) return;
 
-    // one big selector through every capture of this gear
-    auto group = captureGroup;
-    captureKnob = std::make_unique<Knob> ("Capture", gearColour (group->gear));
-    auto* k = captureKnob.get();
-    k->nameLabel.setFont (font (12.0f, true));
-    k->slider.setRange (0.0, (double) (group->size() - 1), 1.0);
-    k->slider.setMouseDragSensitivity (juce::jlimit (90, 400, group->size() * 14));
-    k->slider.setDoubleClickReturnValue (false, 0);
-    k->slider.setValue (juce::jmax (0, group->indexOf (file)), juce::dontSendNotification);
-    k->detents = group->size() <= 48 ? group->size() : 0;
-    k->detentColour = gearColour (group->gear);
-    k->valueLabel.setFont (font (12.0f, true));
-    k->valueLabel.setColour (juce::Label::textColourId, text);
-    k->formatValue = [k, group]
-    {
-        const int i = juce::jlimit (0, group->size() - 1, (int) k->slider.getValue());
-        return group->shortLabels[i];
-    };
-    k->slider.onValueChange = [this, k, group]
-    {
+        editCaptures.setButtonText (n < 2 ? "Sweep captures..." : "Edit captures...");
+        editCaptures.setTooltip ("Choose which captures of this gear the Capture knob sweeps through, and in what order");
+        editCaptures.onClick = [this] { showCaptureEditor(); };
+        controls.addAndMakeVisible (editCaptures);
+        if (n < 2) return;
+
+        namCaptureLabels = shortenCaptureLabels (nb->getCaptureNames());
+        const auto colour = gearColour (nb->getGear());
+        captureKnob = std::make_unique<Knob> ("Capture", colour);
+        auto* k = captureKnob.get();
+        k->nameLabel.setFont (font (12.0f, true));
+        k->slider.setRange (0.0, (double) (n - 1), 0.0);
+        k->slider.setMouseDragSensitivity (juce::jlimit (160, 420, n * 60));
+        k->slider.setDoubleClickReturnValue (false, 0);
+        k->slider.setValue (nb->getCapturePosition(), juce::dontSendNotification);
+        k->detents = n;
+        k->detentColour = colour;
+        k->valueLabel.setFont (font (12.0f, true));
+        k->valueLabel.setColour (juce::Label::textColourId, text);
+        k->formatValue = [this, k]
+        {
+            const int count = namCaptureLabels.size();
+            const float pos = (float) k->slider.getValue();
+            const int a = juce::jlimit (0, count - 1, (int) std::floor (pos));
+            const float f = pos - (float) a;
+            if (f < 0.02f || a >= count - 1) return namCaptureLabels[a];
+            if (f > 0.98f) return namCaptureLabels[a + 1];
+            return namCaptureLabels[a] + " > " + namCaptureLabels[a + 1];
+        };
+        k->slider.onValueChange = [this, k]
+        {
+            if (auto* block = dynamic_cast<NamBlock*> (node))
+            {
+                block->setCapturePosition ((float) k->slider.getValue());
+                host.getEngine().markDirty();
+            }
+            k->refreshText();
+            updateCaptureText();
+        };
+        k->onRightClick = [this] { showCaptureMenu(); };
+        k->slider.setTooltip ("Sweeps through the captures, morphing smoothly from one to the next. "
+                              "Right-click to jump to one, MIDI-learn it (an expression pedal works well) or edit the list");
         k->refreshText();
-        k->repaint();
-        const int i = juce::jlimit (0, group->size() - 1, (int) k->slider.getValue());
-        if (node != nullptr && loadedFile (*node) != group->files[i])
-            host.switchCapture (*node, group->files[i]);
-        updateCaptureText();
-    };
-    k->onRightClick = [this] { showCaptureMenu(); };
-    k->slider.setTooltip ("Every capture of " + group->title + " (" + juce::String (group->size())
-                          + "). Drag, scroll or use the arrow keys to switch; right-click for the list");
-    k->refreshText();
-    controls.addAndMakeVisible (k);
+        controls.addAndMakeVisible (k);
+    }
+    else
+    {
+        // IRs: step through every IR of the pack
+        const auto file = loadedFile (b);
+        if (file == juce::File()) return;
+        captureGroup = host.getEngine().captures.groupFor (file);
+        if (captureGroup == nullptr || captureGroup->size() < 2) return;
+
+        auto group = captureGroup;
+        captureKnob = std::make_unique<Knob> ("Capture", gearColour (group->gear));
+        auto* k = captureKnob.get();
+        k->nameLabel.setFont (font (12.0f, true));
+        k->slider.setRange (0.0, (double) (group->size() - 1), 1.0);
+        k->slider.setMouseDragSensitivity (juce::jlimit (90, 400, group->size() * 14));
+        k->slider.setDoubleClickReturnValue (false, 0);
+        k->slider.setValue (juce::jmax (0, group->indexOf (file)), juce::dontSendNotification);
+        k->detents = group->size() <= 48 ? group->size() : 0;
+        k->detentColour = gearColour (group->gear);
+        k->valueLabel.setFont (font (12.0f, true));
+        k->valueLabel.setColour (juce::Label::textColourId, text);
+        k->formatValue = [k, group]
+        {
+            const int i = juce::jlimit (0, group->size() - 1, (int) k->slider.getValue());
+            return group->shortLabels[i];
+        };
+        k->slider.onValueChange = [this, k, group]
+        {
+            k->refreshText();
+            k->repaint();
+            const int i = juce::jlimit (0, group->size() - 1, (int) k->slider.getValue());
+            if (node != nullptr && loadedFile (*node) != group->files[i])
+                host.switchCapture (*node, group->files[i]);
+            updateCaptureText();
+        };
+        k->onRightClick = [this] { showCaptureMenu(); };
+        k->slider.setTooltip ("Every IR of " + group->title + " (" + juce::String (group->size())
+                              + "). Drag, scroll or use the arrow keys to switch; right-click for the list");
+        k->refreshText();
+        controls.addAndMakeVisible (k);
+    }
 
     captureName.setFont (font (11.0f));
     captureName.setColour (juce::Label::textColourId, muted);
@@ -525,20 +952,74 @@ void Inspector::buildCaptureKnob (Block& b)
 
 void Inspector::updateCaptureText()
 {
-    if (captureKnob == nullptr || captureGroup == nullptr) return;
-    const int i = juce::jlimit (0, captureGroup->size() - 1, (int) captureKnob->slider.getValue());
-    captureKnob->nameLabel.setText ("CAPTURE  " + juce::String (i + 1) + " / " + juce::String (captureGroup->size()),
-                                    juce::dontSendNotification);
-    captureName.setText (toneTypeName (captureGroup->fileToneTypes[i]), juce::dontSendNotification);
+    if (captureKnob == nullptr) return;
+    if (auto* nb = dynamic_cast<NamBlock*> (node))
+    {
+        const int n = nb->getNumCaptures();
+        const float pos = nb->getCapturePosition();
+        const int a = juce::jlimit (0, n - 1, (int) std::floor (pos));
+        const float f = pos - (float) a;
+        juce::String head = "CAPTURE  " + juce::String (nb->getNearestCapture() + 1) + " / " + juce::String (n);
+        juce::String line = toneTypeName (nb->getInfo().toneType);
+        if (f >= 0.02f && f <= 0.98f && a + 1 < n)
+            line = juce::String (juce::roundToInt ((1.0f - f) * 100.0f)) + "% / " + juce::String (juce::roundToInt (f * 100.0f)) + "%";
+        captureKnob->nameLabel.setText (head, juce::dontSendNotification);
+        captureName.setText (line, juce::dontSendNotification);
+    }
+    else if (captureGroup != nullptr)
+    {
+        const int i = juce::jlimit (0, captureGroup->size() - 1, (int) captureKnob->slider.getValue());
+        captureKnob->nameLabel.setText ("CAPTURE  " + juce::String (i + 1) + " / " + juce::String (captureGroup->size()),
+                                        juce::dontSendNotification);
+        captureName.setText (toneTypeName (captureGroup->fileToneTypes[i]), juce::dontSendNotification);
+    }
     captureKnob->repaint();
+}
+
+void Inspector::showCaptureEditor()
+{
+    auto* nb = dynamic_cast<NamBlock*> (node);
+    if (nb == nullptr) return;
+    auto ed = std::make_unique<CaptureEditor> (host.getEngine(), *nb, [sp = juce::Component::SafePointer<Inspector> (this)]
+    {
+        if (sp != nullptr) sp->needsRebuild = true;
+    });
+    auto* anchor = captureKnob != nullptr ? static_cast<juce::Component*> (captureKnob.get()) : &editCaptures;
+    juce::CallOutBox::launchAsynchronously (std::move (ed), anchor->getScreenBounds(), nullptr);
 }
 
 void Inspector::showCaptureMenu()
 {
-    if (captureGroup == nullptr || node == nullptr) return;
+    if (node == nullptr) return;
+    juce::PopupMenu m;
+    if (auto* nb = dynamic_cast<NamBlock*> (node))
+    {
+        const auto names = nb->getCaptureNames();
+        m.addSectionHeader (nb->getName());
+        const int nearest = nb->getNearestCapture();
+        for (int i = 0; i < names.size(); ++i)
+        {
+            const auto tone = toneTypeName (nb->getInfo (i).toneType);
+            m.addItem (i + 1, names[i] + (tone.isNotEmpty() ? "   (" + tone + ")" : juce::String()), true, i == nearest);
+        }
+        m.addSeparator();
+        m.addItem (1001, "Edit captures...");
+        m.addItem (1002, "MIDI learn (expression pedal)");
+        juce::Component::SafePointer<Inspector> sp (this);
+        auto* block = nb;
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (captureKnob.get()), [sp, block] (int r)
+        {
+            if (sp == nullptr || sp->node != block) return;
+            if (r == 1001) { sp->showCaptureEditor(); return; }
+            if (r == 1002) { if (sp->onLearnParam) sp->onLearnParam (*block, NamBlock::pCapture); return; }
+            if (r > 0 && sp->captureKnob != nullptr) sp->captureKnob->slider.setValue (r - 1, juce::sendNotificationSync);
+        });
+        return;
+    }
+
+    if (captureGroup == nullptr) return;
     auto group = captureGroup;
     const auto current = loadedFile (*node);
-    juce::PopupMenu m;
     m.addSectionHeader (group->title);
     for (int i = 0; i < group->size(); ++i)
     {
@@ -656,9 +1137,28 @@ void Inspector::timerCallback()
     }
 
     title.setText (node->getName(), juce::dontSendNotification);
-    if (node->getType() == NodeType::Nam || node->getType() == NodeType::Ir)
+    if (meters != nullptr)
     {
-        // the capture changed somewhere else (the card's knob, the arrows, the dice...)
+        float in = node->peakIn.exchange (0.0f), out = node->peakOut.exchange (0.0f);
+        if (auto* nb = dynamic_cast<NamBlock*> (node)) in *= dbToGain (nb->get (NamBlock::pInput));   // what reaches the model
+        meters->in.setLevel (in);
+        meters->out.setLevel (out);
+    }
+    if (auto* nb = dynamic_cast<NamBlock*> (node))
+    {
+        // the sweep changed somewhere else (the card's knob, MIDI, a scene, the dice...)
+        if (nb->getCaptureFiles() != namCaptureFiles) { needsRebuild = true; return; }
+        if (captureKnob != nullptr && ! captureKnob->slider.isMouseButtonDown()
+            && std::abs (captureKnob->slider.getValue() - nb->getCapturePosition()) > 1.0e-4)
+        {
+            captureKnob->slider.setValue (nb->getCapturePosition(), juce::dontSendNotification);
+            captureKnob->refreshText();
+            updateCaptureText();
+        }
+    }
+    else if (node->getType() == NodeType::Ir)
+    {
+        // the IR changed somewhere else (the card's knob, the arrows, the dice...)
         const auto file = loadedFile (*node);
         const auto group = file == juce::File() ? nullptr : host.getEngine().captures.groupFor (file);
         const bool wantsKnob = group != nullptr && group->size() > 1;
@@ -717,7 +1217,13 @@ void Inspector::timerCallback()
         if (i.loaded)
         {
             sub = "NAM - " + i.architecture.toUpperCase();
+            // gain compensation measures and overrides Normalize: say so rather than leave both fighting
+            if (nb->autoGain.load() && nb->get (NamBlock::pNormalize) > 0.5f && i.hasLoudness)
+                inf << "Auto is overriding Normalize - switch one off (Normalize is steadier for amps)\n";
             if (nb->getCaptureName() != nb->getName()) inf << nb->getCaptureName() << "\n";
+            if (std::abs (nb->getGainDb()) > 0.05f)
+                inf << "Gain " << (nb->getGainDb() > 0 ? "+" : "") << juce::String (nb->getGainDb(), 1) << " dB drive, level "
+                    << (nb->getGainCompensationDb() > 0 ? "+" : "") << juce::String (nb->getGainCompensationDb(), 1) << " dB\n";
             if (i.toneType.isNotEmpty()) inf << toneTypeName (i.toneType) << "\n";
             if (i.modeledBy.isNotEmpty()) inf << "by " << i.modeledBy << "\n";
             inf << "Trained at " << juce::String (i.modelRate / 1000.0, 1) << " kHz";
@@ -763,6 +1269,7 @@ void Inspector::timerCallback()
     if (dynamic_cast<Split*> (node) == nullptr)
         inf = inf.replace ("\n", "   -   ");
     subtitle.setText (sub, juce::dontSendNotification);
+    info.setColour (juce::Label::textColourId, inf.startsWith ("Auto is overriding") ? accent : muted);
     const bool hadInfo = info.getText().isNotEmpty();
     info.setText (inf, juce::dontSendNotification);
     title.setTooltip (inf.replace ("   -   ", "\n"));
@@ -805,14 +1312,12 @@ void Inspector::layoutControls()
     const int kw = 80;
     auto placeGrid = [&] (juce::OwnedArray<Knob>& ks, int startX, int startY, int availH)
     {
+        // read left to right, then the next row
         const int r = juce::jmax (1, (availH + 6) / (kh + 6));
-        int col = 0, row = 0;
-        for (auto* k : ks)
-        {
-            k->setBounds (startX + col * (kw + 4), startY + row * (kh + 6), kw, kh);
-            if (++row >= r) { row = 0; ++col; }
-        }
-        return startX + (col + (row > 0 ? 1 : 0)) * (kw + 4);
+        const int cols = juce::jmax (1, (ks.size() + r - 1) / r);
+        for (int i = 0; i < ks.size(); ++i)
+            ks[i]->setBounds (startX + (i % cols) * (kw + 4), startY + (i / cols) * (kh + 6), kw, kh);
+        return startX + (ks.isEmpty() ? 0 : cols * (kw + 4));
     };
 
     if (! modeButtons.isEmpty())
@@ -826,6 +1331,13 @@ void Inspector::layoutControls()
         if (addPathButton.isVisible()) { addPathButton.setBounds (x, y + (h - y) / 2 - 16, 100, 32); x += 108; }
         controls.setSize (juce::jmax (x, bx + 170), h);
         return;
+    }
+
+    if (meters != nullptr)
+    {
+        // IN / OUT meters first, full height
+        meters->setBounds (x, 0, 64, juce::jmin (h, 230));
+        x += 64 + 18;
     }
 
     if (! choices.isEmpty())
@@ -845,10 +1357,16 @@ void Inspector::layoutControls()
     if (captureKnob != nullptr)
     {
         // the big one, first: which capture of this gear
-        const int cw = 150, ch = juce::jmin (h, 176);
+        const int cw = 150, ch = juce::jmin (h - (editCaptures.isVisible() ? 30 : 0), 176);
         captureKnob->setBounds (x, 0, cw, ch - 18);
         captureName.setBounds (x - 10, ch - 18, cw + 20, 16);
+        if (editCaptures.isVisible()) editCaptures.setBounds (x + 15, ch + 2, cw - 30, 24);
         x += cw + 22;
+    }
+    else if (editCaptures.isVisible())
+    {
+        editCaptures.setBounds (x, h / 2 - 14, 140, 28);
+        x += 140 + 18;
     }
 
     x = placeGrid (knobs, x, 0, h);

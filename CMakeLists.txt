@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.8.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.9.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -108,6 +108,7 @@ target_sources(Rigsmith PRIVATE
     Source/Engine/IniFile.cpp
     Source/Engine/Gear.cpp
     Source/Engine/Captures.cpp
+    Source/Engine/PluginScanner.cpp
     Source/T3K/Tone3000.cpp
     Source/UI/Theme.cpp
     Source/UI/Icons.cpp
@@ -178,6 +179,21 @@ target_link_libraries(Rigsmith
         juce::juce_recommended_warning_flags)
 
 # ---------------------------------------------------------------------------
+# RigsmithScanner: scans one plug-in per run, so a plug-in that crashes while being scanned
+# only takes this helper down. Ship it next to Rigsmith.exe and in Rigsmith.vst3/Contents/Resources.
+# ---------------------------------------------------------------------------
+juce_add_console_app(RigsmithScanner PRODUCT_NAME "RigsmithScanner")
+target_sources(RigsmithScanner PRIVATE Source/Scanner/ScannerMain.cpp)
+target_compile_definitions(RigsmithScanner PRIVATE
+    JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=0 JUCE_PLUGINHOST_LV2=0 JUCE_PLUGINHOST_LADSPA=0
+    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_XINPUT=0)
+if(RIGSMITH_VST2_SDK AND EXISTS "${RIGSMITH_VST2_SDK}/pluginterfaces/vst2.x/aeffect.h")
+    target_compile_definitions(RigsmithScanner PRIVATE JUCE_PLUGINHOST_VST=1)
+    target_include_directories(RigsmithScanner PRIVATE "${RIGSMITH_VST2_SDK}")
+endif()
+target_link_libraries(RigsmithScanner PRIVATE juce::juce_audio_processors juce::juce_recommended_config_flags)
+
+# ---------------------------------------------------------------------------
 # Headless engine tests:  cmake -DRIGSMITH_TESTS=ON ...  then run RigsmithTests <NAM example_models dir>
 # ---------------------------------------------------------------------------
 option(RIGSMITH_TESTS "Build the headless engine tests" OFF)
@@ -196,11 +212,14 @@ if(RIGSMITH_TESTS)
     Source/Engine/IniFile.cpp
     Source/Engine/Gear.cpp
     Source/Engine/Captures.cpp
+    Source/Engine/PluginScanner.cpp
     Source/T3K/Tone3000.cpp)
     target_include_directories(RigsmithTests PRIVATE Source)
+    add_dependencies(RigsmithTests RigsmithScanner)
     target_compile_definitions(RigsmithTests PRIVATE
         JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_XINPUT=0 JUCE_MODAL_LOOPS_PERMITTED=1
-        RIGSMITH_EXAMPLE_MODELS="${NAM_DIR}/example_models")
+        RIGSMITH_EXAMPLE_MODELS="${NAM_DIR}/example_models"
+        RIGSMITH_SCANNER_EXE="$<TARGET_FILE:RigsmithScanner>")
     target_link_libraries(RigsmithTests PRIVATE
         "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" juce::juce_audio_utils juce::juce_audio_processors juce::juce_dsp juce::juce_gui_extra juce::juce_cryptography
         juce::juce_recommended_config_flags)

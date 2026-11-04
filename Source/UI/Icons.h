@@ -7,7 +7,8 @@ namespace rig
 enum class Icon
 {
     Open, Folder, Power, AutoGain, Dice, Shuffle, Preset, Lock, Unlock,
-    Prev, Next, FullScreen, ExitFullScreen, Library, Undo, Redo, Init, Menu, Save, Caret, TuningFork
+    Prev, Next, FullScreen, ExitFullScreen, Library, Undo, Redo, Init, Menu, Save, Caret, TuningFork,
+    Tooltip, Close
 };
 
 /** Draws an icon into a box (stroked line art, filled where it reads better). */

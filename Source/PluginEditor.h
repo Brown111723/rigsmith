@@ -124,6 +124,9 @@ private:
     rig::Header header;
     juce::Viewport viewport;
     rig::GraphView graph;
+    rig::RigMap rigMap { viewport, graph };
+    void layoutGraph (juce::Rectangle<int> area);
+    juce::Rectangle<int> graphArea;
     rig::Inspector inspector;
     rig::IoPanel ioPanel { *this };
     std::unique_ptr<rig::t3k::Client> tone3000;   // before the library, which shows it
@@ -134,7 +137,19 @@ private:
     juce::Label statusLabel;
     bool libraryVisible = true;
     int inspectorHeight = 330, dragStartHeight = 330;
-    juce::TooltipWindow tooltips { this, 700 };
+    std::unique_ptr<juce::TooltipWindow> tooltips;   // off by default; the speech-bubble button turns them on
+    void setTooltipsEnabled (bool);
+
+    /** The x on the MIDI-learn message: an invisible hit area over the drawn cross. */
+    struct LearnClose : public juce::Component
+    {
+        std::function<void()> onClick;
+        LearnClose() { setRepaintsOnMouseActivity (true); setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+        void mouseUp (const juce::MouseEvent& e) override { if (contains (e.getPosition()) && onClick) onClick(); }
+    } learnClose;
+    juce::Rectangle<int> toastBounds() const;
+    void hideStandaloneOptionsButton();
+    bool optionsHidden = false;
 
     juce::OwnedArray<PluginWindow> pluginWindows;
     std::unique_ptr<juce::FileChooser> chooser;

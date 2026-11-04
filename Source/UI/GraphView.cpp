@@ -80,12 +80,55 @@ static juce::File loadedFile (const Node& n)
     return {};
 }
 
-CaptureGroupPtr BlockCard::captureGroup() const
+BlockCard::Selector BlockCard::selector() const
 {
+    Selector sel;
+    if (auto* nb = dynamic_cast<NamBlock*> (&node))
+    {
+        // NAM: the block's own sweep (blends between captures)
+        sel.count = nb->getNumCaptures();
+        if (sel.count < 2) return sel;
+        sel.pos = nb->getCapturePosition();
+        const auto names = nb->getCaptureNames();
+        sel.names = names;
+        sel.labels = shortenCaptureLabels (names);
+        for (int i = 0; i < sel.count; ++i) sel.tones.add (toneTypeName (nb->getInfo (i).toneType));
+        sel.gear = nb->getGear();
+        sel.sweep = true;
+        return sel;
+    }
     const auto f = loadedFile (node);
-    if (f == juce::File()) return nullptr;
-    auto g = host.getEngine().captures.groupFor (f);
-    return g != nullptr && g->size() > 1 ? g : nullptr;
+    if (f == juce::File()) return sel;
+    if (auto g = host.getEngine().captures.groupFor (f); g != nullptr && g->size() > 1)
+    {
+        sel.count = g->size();
+        sel.pos = (float) juce::jmax (0, g->indexOf (f));
+        sel.names = g->labels;
+        sel.labels = g->shortLabels;
+        for (auto& t : g->fileToneTypes) sel.tones.add (toneTypeName (t));
+        sel.gear = g->gear;
+        sel.group = g;
+    }
+    return sel;
+}
+
+void BlockCard::setSelector (const Selector& sel, float pos)
+{
+    pos = juce::jlimit (0.0f, (float) (sel.count - 1), pos);
+    if (sel.sweep)
+    {
+        if (auto* nb = dynamic_cast<NamBlock*> (&node))
+        {
+            nb->setCapturePosition (pos);
+            host.getEngine().markDirty();
+        }
+    }
+    else if (sel.group != nullptr)
+    {
+        const auto f = sel.group->files[juce::roundToInt (pos)];
+        if (f != loadedFile (node)) host.switchCapture (node, f);
+    }
+    repaint();
 }
 
 juce::Rectangle<float> BlockCard::knobArea() const
@@ -95,38 +138,37 @@ juce::Rectangle<float> BlockCard::knobArea() const
 
 void BlockCard::stepCapture (int delta)
 {
-    auto g = captureGroup();
-    if (g == nullptr) return;
-    const int at = juce::jmax (0, g->indexOf (loadedFile (node)));
-    const int next = juce::jlimit (0, g->size() - 1, at + delta);
-    if (next != at) { host.switchCapture (node, g->files[next]); repaint(); }
+    const auto sel = selector();
+    if (! sel.valid()) return;
+    // a sweep moves in quarter steps (so a scroll can find the blends); IRs a whole step
+    const float step = sel.sweep ? 0.25f : 1.0f;
+    const float target = sel.sweep ? std::round ((sel.pos + step * (float) delta) / step) * step : sel.pos + (float) delta;
+    setSelector (sel, target);
 }
 
 void BlockCard::showCaptureMenu()
 {
-    auto g = captureGroup();
-    if (g == nullptr) return;
-    const auto current = loadedFile (node);
+    const auto sel = selector();
+    if (! sel.valid()) return;
+    const int nearest = juce::roundToInt (sel.pos);
     juce::PopupMenu m;
-    m.addSectionHeader (g->title + "  -  " + juce::String (g->size()) + " captures");
-    for (int i = 0; i < g->size(); ++i)
-    {
-        const auto tone = toneTypeName (g->fileToneTypes[i]);
-        m.addItem (i + 1, g->labels[i] + (tone.isNotEmpty() ? "   (" + tone + ")" : juce::String()), true, g->files[i] == current);
-    }
+    m.addSectionHeader (node.getName() + "  -  " + juce::String (sel.count) + " captures");
+    for (int i = 0; i < sel.count; ++i)
+        m.addItem (i + 1, sel.names[i] + (sel.tones[i].isNotEmpty() ? "   (" + sel.tones[i] + ")" : juce::String()), true, i == nearest);
     juce::Component::SafePointer<BlockCard> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe, g] (int r)
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r)
     {
-        if (safe == nullptr || r <= 0 || r > g->size()) return;
+        if (safe == nullptr || r <= 0) return;
+        const auto now = safe->selector();
+        if (r > now.count) return;
         safe->host.select (safe->node.id);
-        safe->host.switchCapture (safe->node, g->files[r - 1]);
-        safe->repaint();
+        safe->setSelector (now, (float) (r - 1));
     });
 }
 
 void BlockCard::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
 {
-    if (captureGroup() != nullptr && knobArea().expanded (4.0f).contains (e.position))
+    if (selector().valid() && knobArea().expanded (4.0f).contains (e.position))
     {
         const float d = std::abs (w.deltaY) > std::abs (w.deltaX) ? w.deltaY : -w.deltaX;
         if (d != 0.0f) stepCapture ((d > 0.0f) != w.isReversed ? -1 : 1);
@@ -138,13 +180,13 @@ void BlockCard::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWhee
 juce::String BlockCard::getTooltip()
 {
     const auto p = getMouseXYRelative().toFloat();
-    if (auto g = captureGroup(); g != nullptr && knobArea().expanded (4.0f).contains (p))
+    if (const auto sel = selector(); sel.valid() && knobArea().expanded (4.0f).contains (p))
     {
-        const int i = juce::jmax (0, g->indexOf (loadedFile (node)));
-        const auto tone = toneTypeName (g->fileToneTypes[i]);
-        return "Capture " + juce::String (i + 1) + " of " + juce::String (g->size()) + ": " + g->labels[i]
-             + (tone.isNotEmpty() ? " (" + tone + ")" : juce::String())
-             + "\nDrag up / down or scroll to switch, click for the list";
+        const int i = juce::roundToInt (sel.pos);
+        return "Capture " + juce::String (i + 1) + " of " + juce::String (sel.count) + ": " + sel.names[i]
+             + (sel.tones[i].isNotEmpty() ? " (" + sel.tones[i] + ")" : juce::String())
+             + (sel.sweep ? "\nDrag up / down or scroll to sweep between captures, click for the list"
+                          : "\nDrag up / down or scroll to switch, click for the list");
     }
     if (hasDice() && lockArea().expanded (3.0f).contains (p))
         return node.locked.load() ? "Locked: the dice leave this block alone. Click to unlock"
@@ -153,7 +195,10 @@ juce::String BlockCard::getTooltip()
         return "Random " + categoryName (Randomiser::categoryOf (node)).toLowerCase() + " block (Shift+R). Ctrl+Z undoes it";
     if (footswitchArea().expanded (6.0f).contains (p))
         return "On / bypass";
-    return {};
+    return node.getName() + "\nClick to edit it below, drag to move it, double-click to "
+         + (node.getType() == NodeType::Plugin ? juce::String ("open its window")
+            : node.getType() == NodeType::Nam || node.getType() == NodeType::Ir ? juce::String ("load a file") : juce::String ("edit"))
+         + ", right-click for options. Drop a file or plug-in on it to replace it";
 }
 
 void BlockCard::mouseMove (const juce::MouseEvent&)
@@ -196,22 +241,23 @@ void BlockCard::paint (juce::Graphics& g)
     g.setFont (font (10.0f, true).withExtraKerningFactor (0.08f));
     g.drawFittedText (kindLabel (node), 12, 22, getWidth() - 24 - (node.autoGain.load() || node.getLatency() > 0 ? 58 : 0), 14, juce::Justification::centredLeft, 1, 0.8f);
 
-    const auto captures = captureGroup();
+    const auto sel = selector();
+    const bool hasKnob = sel.valid();
     g.setColour (text.withMultipliedAlpha (alpha));
     g.setFont (font (14.0f, true));
-    g.drawFittedText (node.getName(), 12, 37, getWidth() - 24 - (captures != nullptr ? 34 : 0), 36, juce::Justification::topLeft, 2, 0.9f);
+    g.drawFittedText (node.getName(), 12, 37, getWidth() - 24 - (hasKnob ? 34 : 0), 36, juce::Justification::topLeft, 2, 0.9f);
 
     juce::String detail = node.getDetail();
-    if (captures != nullptr)
+    if (hasKnob)
     {
         // the capture selector: a little pointer knob with "3/12" under it
-        const int at = juce::jmax (0, captures->indexOf (loadedFile (node)));
-        const int n = captures->size();
+        const int n = sel.count;
+        const int at = juce::jlimit (0, n - 1, juce::roundToInt (sel.pos));
         const auto k = knobArea();
         const bool over = isMouseOver() && k.expanded (4.0f).contains (getMouseXYRelative().toFloat());
-        const auto kc = gearColour (captures->gear).withMultipliedAlpha (alpha);
+        const auto kc = gearColour (sel.gear).withMultipliedAlpha (alpha);
         const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
-        const float pos = a0 + (a1 - a0) * (float) at / (float) juce::jmax (1, n - 1);
+        const float pos = a0 + (a1 - a0) * sel.pos / (float) juce::jmax (1, n - 1);
         const auto ctr = k.getCentre();
         const float rad = k.getWidth() * 0.5f;
 
@@ -237,11 +283,16 @@ void BlockCard::paint (juce::Graphics& g)
         g.drawText (juce::String (at + 1) + "/" + juce::String (n), k.withY (k.getBottom()).withHeight (10.0f).expanded (6.0f, 0.0f),
                     juce::Justification::centred);
 
-        detail = captures->shortLabels[at];
-        if (const auto tone = toneTypeName (captures->fileToneTypes[at]); tone.isNotEmpty())
-            detail << "  -  " << tone;
+        const int a = juce::jlimit (0, n - 1, (int) std::floor (sel.pos));
+        const float f = sel.pos - (float) a;
+        if (sel.sweep && f > 0.02f && f < 0.98f && a + 1 < n)
+            detail = sel.labels[a] + " > " + sel.labels[a + 1];
+        else
+        {
+            detail = sel.labels[at];
+            if (sel.tones[at].isNotEmpty()) detail << "  -  " << sel.tones[at];
+        }
     }
-
     auto detailColour = muted.withMultipliedAlpha (alpha);
     if (auto* tb = dynamic_cast<TunerBlock*> (&node))
     {
@@ -256,7 +307,7 @@ void BlockCard::paint (juce::Graphics& g)
         if (auto* ir = dynamic_cast<IrBlock*> (&node)) return ir->getToneInfo().valid;
         return false;
     }();
-    g.drawFittedText (detail, 12, 72, getWidth() - 24 - (captures != nullptr || hasBadge ? 34 : 0), 16, juce::Justification::topLeft, 1, 0.85f);
+    g.drawFittedText (detail, 12, 72, getWidth() - 24 - (hasKnob || hasBadge ? 34 : 0), 16, juce::Justification::topLeft, 1, 0.85f);
 
     // footswitch + LED glow
     const auto sw = footswitchArea();
@@ -339,11 +390,11 @@ void BlockCard::mouseDown (const juce::MouseEvent& e)
     pressedSwitch = false;
     knobDragging = false;
     if (! e.mods.isPopupMenu())
-        if (auto g = captureGroup(); g != nullptr && knobArea().expanded (4.0f).contains (e.position))
+        if (const auto sel = selector(); sel.valid() && knobArea().expanded (4.0f).contains (e.position))
         {
             pressedSwitch = true;   // not a block drag
             knobDragging = true;
-            knobStart = juce::jmax (0, g->indexOf (loadedFile (node)));
+            knobStart = sel.pos;
             knobMoved = 0;
             host.select (node.id);
             repaint();
@@ -385,14 +436,13 @@ void BlockCard::mouseDrag (const juce::MouseEvent& e)
 {
     if (knobDragging)
     {
-        // up / right = next capture, about 12 px a step
-        auto g = captureGroup();
-        if (g == nullptr) return;
-        const int moved = (e.getDistanceFromDragStartX() - e.getDistanceFromDragStartY()) / 12;
+        // up / right = next capture: a sweep glides (about 40 px a capture), IRs step every 12 px
+        const auto sel = selector();
+        if (! sel.valid()) return;
+        const int dist = e.getDistanceFromDragStartX() - e.getDistanceFromDragStartY();
         knobMoved = juce::jmax (knobMoved, std::abs (e.getDistanceFromDragStartX()) + std::abs (e.getDistanceFromDragStartY()));
-        const int target = juce::jlimit (0, g->size() - 1, knobStart + moved);
-        if (g->files[target] != loadedFile (node)) host.switchCapture (node, g->files[target]);
-        repaint();
+        if (sel.sweep) setSelector (sel, knobStart + (float) dist / (e.mods.isShiftDown() ? 160.0f : 40.0f));
+        else           setSelector (sel, (float) juce::roundToInt (knobStart + (float) (dist / 12)));
         return;
     }
     if (pressedSwitch || dragging || e.mods.isPopupMenu() || e.getDistanceFromDragStart() < 6)
@@ -416,7 +466,7 @@ void BlockCard::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (! footswitchArea().expanded (6.0f).contains (e.position) && ! (hasDice() && diceArea().expanded (3.0f).contains (e.position))
         && ! (hasDice() && lockArea().expanded (3.0f).contains (e.position))
-        && ! (captureGroup() != nullptr && knobArea().expanded (4.0f).contains (e.position)))
+        && ! (selector().valid() && knobArea().expanded (4.0f).contains (e.position)))
         host.openNode (node);
 }
 
@@ -912,6 +962,12 @@ void GraphView::rebuild()
     fitTo (viewArea);
 }
 
+juce::Point<int> GraphView::contentSize() const
+{
+    const auto p = main->preferredSize();
+    return { 24 + termW + p.x + termW + 24, p.y + 48 };
+}
+
 void GraphView::fitTo (juce::Rectangle<int> area)
 {
     viewArea = area;
@@ -1036,6 +1092,105 @@ bool GraphView::dropFile (const juce::File& f, juce::Point<int> pt)
         c = c->getParentComponent();
     }
     return host.loadFileInto (nullptr, &host.getEngine().getRoot(), -1, f);
+}
+
+} // namespace rig
+
+namespace rig
+{
+//==============================================================================
+RigMap::RigMap (juce::Viewport& v, GraphView& g) : viewport (v), graph (g)
+{
+    setTooltip ("The whole rig: click or drag to go to any part of it");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    startTimerHz (12);
+}
+
+juce::Rectangle<float> RigMap::mapArea() const
+{
+    return getLocalBounds().toFloat().reduced (12.0f, 6.0f);
+}
+
+juce::Point<float> RigMap::toMap (juce::Point<float> p) const
+{
+    const auto a = mapArea();
+    const float sx = a.getWidth() / (float) juce::jmax (1, graph.getWidth());
+    const float sy = a.getHeight() / (float) juce::jmax (1, graph.getHeight());
+    return { a.getX() + p.x * sx, a.getY() + p.y * sy };
+}
+
+void RigMap::jumpTo (juce::Point<float> m)
+{
+    // centre the view on the point clicked
+    const auto a = mapArea();
+    const float gx = (m.x - a.getX()) / a.getWidth() * (float) graph.getWidth();
+    const float gy = (m.y - a.getY()) / a.getHeight() * (float) graph.getHeight();
+    viewport.setViewPosition (juce::roundToInt (gx - (float) viewport.getViewWidth() * 0.5f),
+                              juce::roundToInt (gy - (float) viewport.getViewHeight() * 0.5f));
+    repaint();
+}
+
+void RigMap::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w)
+{
+    const float d = std::abs (w.deltaX) > std::abs (w.deltaY) ? w.deltaX : w.deltaY;
+    viewport.setViewPosition (viewport.getViewPositionX() - juce::roundToInt (d * 500.0f), viewport.getViewPositionY());
+}
+
+void RigMap::paint (juce::Graphics& g)
+{
+    using namespace theme;
+    g.fillAll (panel);
+    g.setColour (border);
+    g.drawHorizontalLine (0, 0.0f, (float) getWidth());
+    const auto a = mapArea();
+    g.setColour (bg);
+    g.fillRoundedRectangle (a.expanded (4.0f, 2.0f), 5.0f);
+    if (! graph.isVisible()) return;   // being rebuilt: its cards may point at removed blocks
+
+    auto mapRect = [this] (juce::Rectangle<int> r)
+    {
+        const auto tl = toMap (r.getTopLeft().toFloat()), br = toMap (r.getBottomRight().toFloat());
+        return juce::Rectangle<float> (tl, br);
+    };
+
+    // the signal line, then every block in its colour
+    const auto in = mapRect (graph.getInBox()), out = mapRect (graph.getOutBox());
+    g.setColour (borderHi);
+    g.fillRect (juce::Rectangle<float> (in.getRight(), in.getCentreY() - 0.5f, out.getX() - in.getRight(), 1.0f));
+    g.setColour (muted.withAlpha (0.6f));
+    g.fillRoundedRectangle (in, 2.0f);
+    g.fillRoundedRectangle (out, 2.0f);
+
+    std::function<void (juce::Component&)> visit = [&] (juce::Component& c)
+    {
+        for (auto* child : c.getChildren())
+        {
+            if (auto* card = dynamic_cast<BlockCard*> (child))
+            {
+                auto r = mapRect (graph.getLocalArea (card, card->getLocalBounds())).reduced (0.6f, 0.0f);
+                if (r.getWidth() < 2.0f) r = r.withSizeKeepingCentre (2.0f, r.getHeight());
+                auto* n = card->getNode();
+                const bool on = n != nullptr && ! n->bypassed.load();
+                const auto col = n != nullptr ? colourFor (*n) : muted;
+                g.setColour (on ? col.withAlpha (0.85f) : col.withAlpha (0.3f));
+                g.fillRoundedRectangle (r, 2.0f);
+                if (n != nullptr && n->id == graph.getSelectedId())
+                {
+                    g.setColour (text);
+                    g.drawRoundedRectangle (r.expanded (1.0f), 2.0f, 1.2f);
+                }
+            }
+            else visit (*child);
+        }
+    };
+    visit (graph);
+
+    // what's on screen
+    auto view = mapRect (viewport.getViewArea()).getIntersection (a.expanded (2.0f));
+    g.setColour (accent.withAlpha (0.10f));
+    g.fillRoundedRectangle (view, 3.0f);
+    g.setColour (accent.withAlpha (0.9f));
+    g.drawRoundedRectangle (view, 3.0f, 1.5f);
 }
 
 } // namespace rig

@@ -2,6 +2,7 @@
 #include "Engine/Engine.h"
 #include "Engine/Randomiser.h"
 #include "T3K/Tone3000.h"
+#include "Engine/PluginScanner.h"
 #include <cstdio>
 
 using namespace rig;
@@ -1065,6 +1066,169 @@ int main (int argc, char** argv)
         CHECK (client.isInLibrary (t) && client.folderFor (t) == oldFolder, "tones downloaded to the old place still count as downloaded");
         oldFolder.deleteRecursively();
         CHECK (client.folderFor (t).isAChildOf (nam.getChildFile ("TONE3000")), "new downloads go to the NAM folder");
+    }
+
+    //==========================================================================
+    std::printf ("--- v0.9: capture sweep, Gain, trims and meters, safe scanning\n");
+    {
+        // render the same input through a block (fresh state each time)
+        auto render = [] (Block& b, int blocks, float amp = 0.25f)
+        {
+            b.prepare (48000.0, 256);
+            juce::Random rnd (7);
+            juce::AudioBuffer<float> buf (2, 256);
+            std::vector<float> out;
+            for (int k = 0; k < blocks; ++k)
+            {
+                for (int i = 0; i < 256; ++i)
+                {
+                    // a guitar-ish signal: a decaying sine plus a little noise
+                    const float x = amp * (std::sin ((float) (k * 256 + i) * 0.031f) * std::exp (-(float) (k * 256 + i) / 30000.0f)
+                                           + (rnd.nextFloat() - 0.5f) * 0.05f);
+                    buf.setSample (0, i, x); buf.setSample (1, i, x);
+                }
+                b.process (buf, 256);
+                for (int i = 0; i < 256; ++i) out.push_back (buf.getSample (0, i));
+            }
+            return out;
+        };
+        auto rmsDb = [] (const std::vector<float>& y)
+        {
+            double s = 0; for (size_t i = y.size() / 4; i < y.size(); ++i) s += (double) y[i] * y[i];
+            return 10.0 * std::log10 (s / (double) (y.size() - y.size() / 4) + 1.0e-12);
+        };
+
+        const auto a1 = models.getChildFile ("wavenet_a1_standard.nam"), lstm = models.getChildFile ("lstm.nam"),
+                   a2 = models.getChildFile ("A2.nam");
+        juce::String err;
+        for (auto f : { a1, a2 })
+        {
+            NamBlock t;
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            t.loadModel (f, err);
+            std::printf ("      loading %s (with its gain curve): %.0f ms\n", f.getFileName().toRawUTF8(),
+                         juce::Time::getMillisecondCounterHiRes() - t0);
+        }
+
+        // the sweep: halfway between two captures is half of each
+        const juce::Array<juce::File> pair { a1, lstm };
+        NamBlock at0, at1, half;
+        CHECK (at0.loadCaptures (pair, 0.0f, err) && at1.loadCaptures (pair, 1.0f, err) && half.loadCaptures (pair, 0.5f, err),
+               "loads two captures to sweep between");
+        CHECK (half.getNumCaptures() == 2 && std::abs (half.getCapturePosition() - 0.5f) < 1.0e-4f, "position 0.5 of 2 captures");
+        const auto y0 = render (at0, 40), y1 = render (at1, 40), yh = render (half, 40);
+        float worst = 0, level = 0;
+        for (size_t i = 0; i < yh.size(); ++i) { worst = juce::jmax (worst, std::abs (yh[i] - 0.5f * (y0[i] + y1[i]))); level = juce::jmax (level, std::abs (yh[i])); }
+        CHECK (level > 1.0e-3f && worst < 1.0e-3f * juce::jmax (1.0f, level), "halfway is an even blend of the two captures (a morph, not a switch)");
+        CHECK (half.formatValue (NamBlock::pCapture).contains ("50%"), "the knob reads as a blend");
+
+        // sweeping while playing stays finite and click-free (no jumps bigger than the signal itself)
+        {
+            NamBlock sweep;
+            sweep.loadCaptures (pair, 0.0f, err);
+            sweep.prepare (48000.0, 128);
+            juce::AudioBuffer<float> buf (2, 128);
+            float prev = 0, maxJump = 0, peak = 0;
+            bool finite = true;
+            for (int k = 0; k < 400; ++k)
+            {
+                sweep.setCapturePosition ((float) k / 399.0f);
+                for (int i = 0; i < 128; ++i) { const float x = 0.2f * std::sin ((float) (k * 128 + i) * 0.02f); buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                sweep.process (buf, 128);
+                for (int i = 0; i < 128; ++i)
+                {
+                    const float y = buf.getSample (0, i);
+                    finite &= std::isfinite (y);
+                    if (k > 4) maxJump = juce::jmax (maxJump, std::abs (y - prev));
+                    peak = juce::jmax (peak, std::abs (y));
+                    prev = y;
+                }
+            }
+            CHECK (finite && peak > 1.0e-3f && maxJump < peak * 0.5f, "a full sweep while playing: no clicks");
+        }
+
+        // edit the list: reorder, drop one, keep the knob on the same capture
+        NamBlock list;
+        list.loadCaptures ({ a1, lstm, a2 }, 1.0f, err);
+        CHECK (list.getNumCaptures() == 3 && list.getFile() == lstm, "three captures, on the second");
+        list.loadCaptures ({ lstm, a1 }, 0.0f, err);
+        CHECK (list.getNumCaptures() == 2 && list.getCaptureFiles()[0] == lstm && list.getFile() == lstm, "reordered and trimmed, same capture");
+
+        // saved with the rig, fractions and all
+        list.setCapturePosition (0.25f);
+        NamBlock back;
+        back.fromState (list.toState());
+        CHECK (back.getCaptureFiles() == list.getCaptureFiles() && std::abs (back.getCapturePosition() - 0.25f) < 1.0e-3f,
+               "the sweep and its position are saved with the rig");
+
+        // Gain: much more drive, much less of a volume jump than turning the input up
+        NamBlock g5, g10, hot;
+        g5.loadModel (a1, err); g10.loadModel (a1, err); hot.loadModel (a1, err);
+        g10.set (NamBlock::pGain, 10.0f);
+        hot.set (NamBlock::pInput, 24.0f);
+        CHECK (std::abs (g5.getGainCompensationDb()) < 1.0e-3f && g10.getGainDb() > 23.0f, "Gain 5 is as captured, 10 is +24 dB of drive");
+        const double l5 = rmsDb (render (g5, 60)), l10 = rmsDb (render (g10, 60)), lHot = rmsDb (render (hot, 60));
+        std::printf ("      Gain 5: %.1f dB, Gain 10: %.1f dB, Input +24: %.1f dB\n", l5, l10, lHot);
+        CHECK (l10 - l5 < 7.6 && l10 - l5 > -3.0, "turning Gain up adds drive, the level only rises a little");
+        NamBlock g0;
+        g0.loadModel (a1, err);
+        g0.set (NamBlock::pGain, 0.0f);
+        const double l0 = rmsDb (render (g0, 60));
+        std::printf ("      Gain 0: %.1f dB (compensation %+.1f dB)\n", l0, g0.getGainCompensationDb());
+        CHECK (g0.getGainCompensationDb() >= 0.0f && l0 > l5 - 7.6, "turned down, it cleans up without vanishing (the measured curve)");
+        {
+            // a clean, linear "amp": the curve has to hold the level up when Gain goes down
+            NamBlock lin;
+            lin.loadModel (models.getChildFile ("lstm.nam"), err);
+            lin.set (NamBlock::pGain, 0.0f);
+            CHECK (lin.getGainCompensationDb() >= 0.0f, "never quieter than the capture itself would be");
+        }
+
+        // trims and meters on any block
+        auto gainBlock = std::make_unique<GainBlock>();
+        auto& gb = *gainBlock;
+        const auto plain = render (gb, 20);
+        gb.outTrimDb = -6.0f;
+        const auto trimmed = render (gb, 20);
+        CHECK (std::abs ((rmsDb (trimmed) - rmsDb (plain)) + 6.0) < 0.2, "the OUT handle trims the block's output");
+        CHECK (gb.peakIn.exchange (0.0f) > 0.0f && gb.peakOut.exchange (0.0f) > 0.0f, "in / out levels are metered");
+        auto saved = gb.toState();
+        GainBlock gb2;
+        gb2.fromState (saved);
+        CHECK (std::abs (gb2.outTrimDb.load() + 6.0f) < 1.0e-4f, "trims are saved with the rig");
+
+        // the engine loads a gear's captures ready to sweep
+        Engine e;
+        e.setPaths ("modelPaths", juce::FileSearchPath (testDir.getChildFile ("Captures/Lib").getFullPathName()));
+        NamBlock gear;
+        const auto crunch = testDir.getChildFile ("Captures/Lib/Pack B/zw crunch.nam");
+        CHECK (e.loadGear (gear, crunch, err) && gear.getNumCaptures() == 3 && gear.getFile() == crunch,
+               "loading one capture brings its gear's other captures into the sweep, on the one chosen");
+
+        // plug-in scanning in a separate process: a crash only skips that plug-in
+       #ifdef RIGSMITH_SCANNER_EXE
+        const juce::File scannerExe (RIGSMITH_SCANNER_EXE);
+        juce::VST3PluginFormat vst3;
+        const auto notAPlugin = testDir.getChildFile ("Fake.vst3");
+        notAPlugin.replaceWithText ("not a plug-in");
+        {
+            OutOfProcessScanner sc (scannerExe);
+            juce::OwnedArray<juce::PluginDescription> found;
+            CHECK (sc.findPluginTypesFor (vst3, found, notAPlugin.getFullPathName()) && found.isEmpty(),
+                   "the scanner helper looks inside a file and reports nothing found");
+        }
+        {
+            juce::KnownPluginList list;
+            auto crashy = std::make_unique<OutOfProcessScanner> (scannerExe);
+            crashy->argsPrefix = { "--crash-test" };
+            list.setCustomScanner (std::move (crashy));
+            juce::OwnedArray<juce::PluginDescription> found;
+            list.scanAndAddFile (notAPlugin.getFullPathName(), false, found, vst3);
+            CHECK (list.getBlacklistedFiles().contains (notAPlugin.getFullPathName()), "a plug-in that crashes the scan is skipped (blacklisted), Rigsmith keeps running");
+        }
+       #endif
+        CHECK (OutOfProcessScanner::isRigsmith ("C:\\Program Files\\Common Files\\VST3\\Rigsmith.vst3")
+               && ! OutOfProcessScanner::isRigsmith ("C:\\Program Files\\Common Files\\VST3\\ValhallaRoom.vst3"), "Rigsmith never scans itself");
     }
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);

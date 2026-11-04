@@ -99,6 +99,11 @@ public:
     /** Locked blocks are kept when the rig is randomised. */
     std::atomic<bool> locked { false };
 
+    /** Level trims around the block (the handles on the panel's IN / OUT meters), in dB. */
+    std::atomic<float> inTrimDb { 0.0f }, outTrimDb { 0.0f };
+    /** Peak levels in and out of the block since the UI last took them (linear). */
+    std::atomic<float> peakIn { 0.0f }, peakOut { 0.0f };
+
     std::atomic<AnalyzerTap*> tap { nullptr };
 
     double getSampleRate() const noexcept { return sampleRate; }
@@ -113,7 +118,7 @@ protected:
 private:
     const NodeType type;
     juce::AudioBuffer<float> dry;
-    juce::SmoothedValue<float> wetGain, compGain;
+    juce::SmoothedValue<float> wetGain, compGain, inTrim, outTrim;
     std::atomic<juce::uint32> learnedEdit { 0 };
     double accIn = 0, accOut = 0;
     int accSamples = 0;
@@ -215,7 +220,9 @@ public:
     }
     int indexOf (const juce::String& pid) const;
     juce::String formatValue (int i) const;
-    juce::String formatValue (int i, float v) const;
+    virtual juce::String formatValue (int i, float v) const;
+    /** Which parameters the panel shows as knobs, in order (empty: all of them, as declared). */
+    virtual std::vector<int> panelOrder() const { return {}; }
 
     juce::ValueTree toState() const override;
     void fromState (const juce::ValueTree&) override;

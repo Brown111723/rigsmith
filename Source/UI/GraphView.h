@@ -84,13 +84,25 @@ private:
     juce::Rectangle<float> diceArea() const;
     juce::Rectangle<float> lockArea() const;
     bool hasDice() const;
-    /** NAM / IR blocks whose gear has several captures get a little selector knob. */
-    CaptureGroupPtr captureGroup() const;
+    /** NAM blocks sweeping several captures, and IRs from a pack, get a little selector knob. */
+    struct Selector
+    {
+        int count = 0;
+        float pos = 0;                      // 0..count-1 (NAM sweeps blend in between)
+        juce::StringArray names, labels, tones;
+        Gear gear = Gear::Unknown;
+        bool sweep = false;                 // NAM: continuous
+        CaptureGroupPtr group;              // IR: step through the pack
+        bool valid() const noexcept { return count > 1; }
+    };
+    Selector selector() const;
+    void setSelector (const Selector&, float pos);
     juce::Rectangle<float> knobArea() const;
     void stepCapture (int delta);
     void showCaptureMenu();
     bool knobDragging = false;
-    int knobStart = 0, knobMoved = 0;
+    float knobStart = 0;
+    int knobMoved = 0;
     ChainView* parentChain() const;
     GraphHost& host;
     Node& node;
@@ -185,6 +197,30 @@ private:
 
 //==============================================================================
 /** The whole rig: IN terminal → main chain → OUT terminal. Lives in a Viewport. */
+class GraphView;
+
+/** A miniature of the whole rig under the graph (instead of a scrollbar): every block in its
+    colour, with the visible part outlined. Click or drag anywhere on it to go there. */
+class RigMap : public juce::Component,
+               public juce::SettableTooltipClient,
+               private juce::Timer
+{
+public:
+    RigMap (juce::Viewport&, GraphView&);
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent& e) override { jumpTo (e.position); }
+    void mouseDrag (const juce::MouseEvent& e) override { jumpTo (e.position); }
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+
+private:
+    void timerCallback() override { if (isShowing()) repaint(); }
+    juce::Rectangle<float> mapArea() const;
+    juce::Point<float> toMap (juce::Point<float> graphPoint) const;
+    void jumpTo (juce::Point<float> mapPoint);
+    juce::Viewport& viewport;
+    GraphView& graph;
+};
+
 class GraphView : public juce::Component
 {
 public:
@@ -193,6 +229,11 @@ public:
 
     void rebuild();
     void fitTo (juce::Rectangle<int> viewportArea);
+    /** Size the whole rig needs (with margins). */
+    juce::Point<int> contentSize() const;
+    juce::Rectangle<int> getInBox() const noexcept { return inBox; }
+    juce::Rectangle<int> getOutBox() const noexcept { return outBox; }
+    juce::String getSelectedId() const { return host.getSelectedId(); }
     void resized() override;
     void paint (juce::Graphics&) override;
 

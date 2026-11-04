@@ -15,6 +15,12 @@ Library::Library (GraphHost& h) : host (h)
         else addAndMakeVisible (tabs[i]);
     }
 
+    tabs[Models].setTooltip ("Your NAM captures (amps, pedals...), grouped by gear");
+    tabs[Irs].setTooltip ("Your impulse responses: cabinets, rooms and halls");
+    tabs[Plugins].setTooltip ("Your scanned VST3 effects");
+    tabs[Effects].setTooltip ("Rigsmith's own effects");
+    tabs[Tone3000].setTooltip ("Browse and download captures and IRs from TONE3000");
+    search.setTooltip ("Search names, makers, tone types, creators and folders");
     folderButton.onClick = [this]
     {
         if (tab == Plugins) { if (onScanPlugins) onScanPlugins(); }

@@ -285,8 +285,10 @@ namespace
         return x;
     }
 
+}
+
     /** What's left of each label after the part they all share ("Omega - Omega-BITE G3" -> "G3"). */
-    juce::StringArray shorten (const juce::StringArray& labels)
+    juce::StringArray shortenCaptureLabels (const juce::StringArray& labels)
     {
         if (labels.size() < 2) return labels;
         int common = labels[0].length();
@@ -307,7 +309,6 @@ namespace
         }
         return out;
     }
-}
 
 juce::String captureGroupKey (const juce::File& f) { return factsFor (f).key; }
 
@@ -349,7 +350,7 @@ std::vector<CaptureGroupPtr> groupCaptures (const juce::Array<juce::File>& files
         for (int i = 0; i < g->files.size(); ++i)
             if (uses[original[i].toLowerCase()] > 1)
                 g->labels.set (i, g->files[i].getFileNameWithoutExtension());
-        g->shortLabels = shorten (g->labels);
+        g->shortLabels = shortenCaptureLabels (g->labels);
         out.push_back (std::move (g));
     }
     std::sort (out.begin(), out.end(), [] (const CaptureGroupPtr& a, const CaptureGroupPtr& b)

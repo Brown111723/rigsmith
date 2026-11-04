@@ -31,7 +31,7 @@ public:
 
     void refresh (const Tuner::Reading&, const juce::String& status);
 
-    std::function<void()> onPresetMenu, onSave, onMenu, onTuner, onUndo, onRedo, onRandom, onRandomMenu, onLibrary, onFullScreen;
+    std::function<void()> onPresetMenu, onSave, onMenu, onTuner, onUndo, onRedo, onRandom, onRandomMenu, onLibrary, onFullScreen, onTooltips;
     std::function<void (int)> onSceneRightClick;
 
     juce::TextButton presetButton;
@@ -42,6 +42,7 @@ public:
                tunerButton { Icon::TuningFork, "Tuner (T)", theme::teal },
                library { Icon::Library, "Show / hide the library (L)", theme::teal },
                fullScreen { Icon::FullScreen, "Full screen (F11)", theme::teal },
+               tips { Icon::Tooltip, "Tooltips on / off: hover anything for a hint", theme::teal },
                menu { Icon::Menu, "Menu" };
     SceneButton scenes[kNumScenes];
     /** Double-click a scene: type a new name in place (Enter keeps it, Esc cancels). */

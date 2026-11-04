@@ -57,6 +57,9 @@ using CaptureGroupPtr = std::shared_ptr<const CaptureGroup>;
     else its TONE3000 tone, else the file alone. */
 juce::String captureGroupKey (const juce::File&);
 
+/** What's left of each name after the part they all share ("Omega - Omega-BITE G3" -> "G3"). */
+juce::StringArray shortenCaptureLabels (const juce::StringArray&);
+
 /** Groups files by gear; groups come out sorted by type then title. */
 std::vector<CaptureGroupPtr> groupCaptures (const juce::Array<juce::File>&);
 

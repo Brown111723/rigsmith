@@ -23,8 +23,10 @@ Header::Header (Engine& e) : engine (e)
     tunerButton.onClick = [this] { if (onTuner) onTuner(); };
     library.onClick = [this] { if (onLibrary) onLibrary(); };
     fullScreen.onClick = [this] { if (onFullScreen) onFullScreen(); };
+    tips.onClick = [this] { if (onTooltips) onTooltips(); };
+    menu.setTooltip ("Menu: audio / MIDI settings, folders, plug-ins, MIDI mappings, shortcuts");
     for (auto* b : std::initializer_list<juce::Component*> { &prev, &next, &presetButton, &save, &menu, &undo, &redo,
-                                                             &random, &tunerButton, &library, &fullScreen })
+                                                             &random, &tunerButton, &library, &fullScreen, &tips })
         addAndMakeVisible (b);
 
     for (int i = 0; i < kNumScenes; ++i)
@@ -174,6 +176,8 @@ void Header::resized()
     // right: icon buttons
     menu.setBounds (r.removeFromRight (bh));
     r.removeFromRight (4);
+    tips.setBounds (r.removeFromRight (bh));
+    r.removeFromRight (4);
     fullScreen.setVisible (showFullScreenButton);
     if (showFullScreenButton) { fullScreen.setBounds (r.removeFromRight (bh)); r.removeFromRight (4); }
     library.setBounds (r.removeFromRight (bh));
@@ -192,7 +196,7 @@ void Header::resized()
         sceneW += sceneWidths[i] + 5;
     }
     const int statusW = 190;   // audio / CPU readout between the scenes and the dice
-    const int fixed = bh + 4 + 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + sceneW + statusW;
+    const int fixed = bh + 4 + bh + 4 + 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + sceneW + statusW;
     const bool showName = r.getWidth() - (30 + textW + 10) - fixed >= 150;
     logoArea = r.removeFromLeft (showName ? 30 + textW : 30);
     r.removeFromLeft (10);
