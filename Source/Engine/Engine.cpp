@@ -124,6 +124,7 @@ bool Engine::moveSettingsTo (const juce::File& target)
 
 Engine::Engine() : root (std::make_unique<Chain>())
 {
+    trace ("engine: start");
     juce::PropertiesFile::Options o;
     o.applicationName = "Rigsmith";
     o.filenameSuffix = ".settings";
@@ -140,15 +141,19 @@ Engine::Engine() : root (std::make_unique<Chain>())
     for (auto& d : knownPlugins.getTypes())
         if (isRigsmithPlugin (d.fileOrIdentifier)) knownPlugins.removeType (d);
 
+    trace ("engine: plug-in list loaded");
     openSettings();
+    trace ("engine: settings open");
     setCaptureCacheFile (ini.getFile().getSiblingFile ("Rigsmith.captures"));
     captures.getPaths = [this] (bool irs) { return getPaths (irs ? "irPaths" : "modelPaths"); };
     PluginBlock::autoCategorise = getSetting ("autoCategorise", true);
     knownPlugins.addChangeListener (this);
 
+    trace ("engine: loading default rig");
     loadDefaultRig();
     for (auto& s : scenes) s = captureScene();
     startTimerHz (100);
+    trace ("engine: done");
 }
 
 Engine::~Engine()

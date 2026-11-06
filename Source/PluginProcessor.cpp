@@ -7,12 +7,15 @@ RigsmithProcessor::RigsmithProcessor()
                         .withInput ("Input", juce::AudioChannelSet::stereo(), true)
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
+    rig::trace ("processor: start");
     sceneParam = new juce::AudioParameterChoice (juce::ParameterID { "scene", 1 }, "Scene",
                                                  juce::StringArray { "A", "B", "C", "D" }, 0);
     addParameter (sceneParam);
     sceneParam->addListener (this);
 
+    rig::trace ("processor: engine built");
     engine.setupPluginScanning (isStandalone());
+    rig::trace ("processor: scanning set up");
     engine.onLatencyChanged = [this] (int samples) { setLatencySamples (samples); };
     engine.onSceneChanged = [this] (int scene)
     {
@@ -47,7 +50,9 @@ bool RigsmithProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 
 void RigsmithProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    rig::trace ("prepareToPlay " + juce::String (sampleRate) + " " + juce::String (samplesPerBlock));
     engine.prepare (sampleRate, samplesPerBlock);
+    rig::trace ("prepareToPlay done");
     loadMeasurer.reset (sampleRate, samplesPerBlock);
     setLatencySamples (engine.getLatency());
 }
@@ -56,6 +61,8 @@ void RigsmithProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 {
     juce::ScopedNoDenormals noDenormals;
     juce::AudioProcessLoadMeasurer::ScopedTimer timer (loadMeasurer, buffer.getNumSamples());
+    static std::atomic<int> traced { 0 };
+    if (traced.load() < 3) { ++traced; rig::trace ("processBlock " + juce::String (buffer.getNumSamples())); }
 
     const int ins = getTotalNumInputChannels();
     for (int ch = ins; ch < buffer.getNumChannels(); ++ch)
@@ -93,6 +100,7 @@ void RigsmithProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
 juce::AudioProcessorEditor* RigsmithProcessor::createEditor()
 {
+    rig::trace ("createEditor");
     return new RigsmithEditor (*this);
 }
 

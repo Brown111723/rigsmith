@@ -19,6 +19,19 @@ namespace rig
 inline constexpr int kNumScenes = 4;
 inline constexpr int kMaxBranches = 6;
 
+/** RIGSMITH_TRACE=1: a timestamped startup trace in %TEMP%\rigsmith-trace.log (for chasing hangs). */
+inline void trace (const juce::String& what)
+{
+    static const bool on = juce::SystemStats::getEnvironmentVariable ("RIGSMITH_TRACE", {}).isNotEmpty();
+    if (! on) return;
+    static juce::CriticalSection cs;
+    const juce::ScopedLock sl (cs);
+    static const juce::File f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rigsmith-trace.log");
+    auto* mm = juce::MessageManager::getInstanceWithoutCreating();
+    f.appendText (juce::String (juce::Time::getMillisecondCounterHiRes(), 0) + " [" + (mm != nullptr && mm->isThisTheMessageThread() ? "msg" : "thr")
+                  + "] " + what + "\n");
+}
+
 inline float dbToGain (float db) { return db <= -100.0f ? 0.0f : std::pow (10.0f, db * 0.05f); }
 inline float gainToDb (float g) { return g <= 1.0e-5f ? -100.0f : 20.0f * std::log10 (g); }
 

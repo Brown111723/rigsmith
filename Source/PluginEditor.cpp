@@ -50,6 +50,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     : AudioProcessorEditor (p), processor (p), engine (p.engine),
       header (engine), graph (*this), inspector (*this), library (*this), tunerOverlay (engine)
 {
+    trace ("editor: start");
     setLookAndFeel (&lnf);
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
 
@@ -169,6 +170,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     setSize (1440, 900);
     updateTuner();
     startTimerHz (30);
+    trace ("editor: built");
 
     // once per run: pick up plug-ins installed since last time
     static bool scannedThisRun = false;
@@ -199,7 +201,12 @@ RigsmithEditor::~RigsmithEditor()
 }
 
 //==============================================================================
-void RigsmithEditor::paint (juce::Graphics& g) { g.fillAll (bg); }
+void RigsmithEditor::paint (juce::Graphics& g)
+{
+    static bool first = true;
+    if (first) { first = false; trace ("editor: first paint"); }
+    g.fillAll (bg);
+}
 
 void RigsmithEditor::setTooltipsEnabled (bool on)
 {
@@ -1395,6 +1402,7 @@ void RigsmithEditor::showSettings()
 
 void RigsmithEditor::scanForNewPlugins (bool always)
 {
+    trace ("scanForNewPlugins");
     const auto& blacklist = engine.knownPlugins.getBlacklistedFiles();
     for (auto* f : engine.formatManager.getFormats())
     {

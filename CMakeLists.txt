@@ -145,7 +145,9 @@ target_compile_definitions(Rigsmith PUBLIC
     $<$<PLATFORM_ID:Linux>:JUCE_JACK=1>)
 
 if(MSVC)
-    target_compile_options(Rigsmith PRIVATE /bigobj /MP)
+    target_compile_options(Rigsmith PRIVATE /bigobj /MP /Zi)
+    # symbols (a .pdb beside the build, not shipped) so a hang or crash can be traced
+    target_link_options(Rigsmith_Standalone PRIVATE /DEBUG /OPT:REF /OPT:ICF)
 endif()
 
 # TONE3000: the app's publishable key (t3k_pub_..., safe to ship). Create one at

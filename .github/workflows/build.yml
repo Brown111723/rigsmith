@@ -49,6 +49,28 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel --target Rigsmith_Standalone Rigsmith_VST3
 
+      - name: Smoke test (the app opens a window)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $env:RIGSMITH_TRACE = "1"
+          $log = Join-Path $env:TEMP "rigsmith-trace.log"
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $p = Start-Process build/Rigsmith_artefacts/Release/Standalone/Rigsmith.exe -PassThru
+          Start-Sleep -Seconds 30
+          $p.Refresh()
+          "Exited: $($p.HasExited)  Window: $($p.MainWindowHandle)  Title: '$($p.MainWindowTitle)'  Responding: $($p.Responding)"
+          "--- trace"
+          if (Test-Path $log) { Get-Content $log } else { "(no trace)" }
+          if (-not $p.HasExited) {
+            $cdb = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($cdb) {
+              "--- main thread stack"
+              & $cdb.FullName -p $p.Id -y "build/Rigsmith_artefacts/Release/Standalone" -c "~0s; kb 60; qd" 2>&1 | Select-Object -Last 90
+            } else { "(no cdb)" }
+            Stop-Process $p -Force
+          }
+
       - name: Version
         id: version
         shell: pwsh
