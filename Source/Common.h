@@ -19,17 +19,45 @@ namespace rig
 inline constexpr int kNumScenes = 4;
 inline constexpr int kMaxBranches = 6;
 
-/** RIGSMITH_TRACE=1: a timestamped startup trace in %TEMP%\rigsmith-trace.log (for chasing hangs). */
+/** A short log of what Rigsmith did while starting up (and when scanning or loading plug-ins), so a
+    start that never finishes can be traced. Rigsmith.exe writes Rigsmith.log beside Rigsmith.ini
+    (fresh each run); RIGSMITH_TRACE=1 also writes %TEMP%\rigsmith-trace.log. */
+struct TraceLog
+{
+    juce::CriticalSection lock;
+    juce::File file;
+    juce::String last;
+    int lines = 0;
+};
+inline TraceLog& traceLog() { static TraceLog t; return t; }
+
 inline void trace (const juce::String& what)
 {
-    static const bool on = juce::SystemStats::getEnvironmentVariable ("RIGSMITH_TRACE", {}).isNotEmpty();
-    if (! on) return;
-    static juce::CriticalSection cs;
-    const juce::ScopedLock sl (cs);
-    static const juce::File f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rigsmith-trace.log");
+    static const bool env = juce::SystemStats::getEnvironmentVariable ("RIGSMITH_TRACE", {}).isNotEmpty();
+    auto& t = traceLog();
+    const juce::ScopedLock sl (t.lock);
+    t.last = what;
     auto* mm = juce::MessageManager::getInstanceWithoutCreating();
-    f.appendText (juce::String (juce::Time::getMillisecondCounterHiRes(), 0) + " [" + (mm != nullptr && mm->isThisTheMessageThread() ? "msg" : "thr")
-                  + "] " + what + "\n");
+    const auto line = juce::Time::getCurrentTime().toString (false, true, true, true) + " [" + (mm != nullptr && mm->isThisTheMessageThread() ? "ui" : "bg")
+                      + "] " + what + "\n";
+    if (t.file != juce::File() && ++t.lines < 4000) t.file.appendText (line);
+    if (env) juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rigsmith-trace.log").appendText (line);
+}
+
+inline void startTraceLog (const juce::File& f, const juce::String& header)
+{
+    auto& t = traceLog();
+    const juce::ScopedLock sl (t.lock);
+    t.file = f;
+    t.lines = 0;
+    f.replaceWithText (header + "\n");
+}
+
+inline juce::String lastTrace()
+{
+    auto& t = traceLog();
+    const juce::ScopedLock sl (t.lock);
+    return t.last;
 }
 
 inline float dbToGain (float db) { return db <= -100.0f ? 0.0f : std::pow (10.0f, db * 0.05f); }

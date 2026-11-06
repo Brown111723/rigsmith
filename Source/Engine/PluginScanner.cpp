@@ -1,3 +1,4 @@
+#include "../Common.h"
 #include "PluginScanner.h"
 
 namespace rig
@@ -17,6 +18,7 @@ bool InProcessScanner::findPluginTypesFor (juce::AudioPluginFormat& format, juce
     if (isRigsmithPlugin (fileOrIdentifier)) return true;
     if (policy.isSkipped && policy.isSkipped (fileOrIdentifier)) return false;
     if (policy.onStarting) policy.onStarting (fileOrIdentifier);   // in the ini before we touch it
+    rig::trace ("scanning: " + fileOrIdentifier);
     format.findAllTypesForFile (result, fileOrIdentifier);
     if (policy.onFinished) policy.onFinished();
     return true;

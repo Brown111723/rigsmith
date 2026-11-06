@@ -648,6 +648,8 @@ void Inspector::setNode (Node* n)
     repaint();
 }
 
+static int knobPriority (const juce::String& id, const juce::String& name);
+
 void Inspector::buildBlock (Block& b)
 {
     const auto c = colourFor (b);
@@ -662,6 +664,12 @@ void Inspector::buildBlock (Block& b)
     builtOrder = order;
     if (order.empty())
         for (int i = 0; i < b.numParams(); ++i) order.push_back (i);
+    std::stable_sort (order.begin(), order.end(), [&b] (int x, int y)
+    {
+        const auto& sx = b.getSpecs()[(size_t) x];
+        const auto& sy = b.getSpecs()[(size_t) y];
+        return knobPriority (sx.id, sx.name) < knobPriority (sy.id, sy.name);
+    });
     for (int i : order)
     {
         const auto& sp = b.getSpecs()[(size_t) i];
@@ -1291,6 +1299,23 @@ void Inspector::showCaptureMenu()
     });
 }
 
+/** Where a knob goes in the panel, so every block reads the same way: the input / gain / drive
+    first, then the mix, then the rest in the block's own order, the output level last. */
+static int knobPriority (const juce::String& id, const juce::String& name)
+{
+    const auto i = id.toLowerCase(), n = name.toLowerCase().trim();
+    if (i == "gain" || i == "drive" || i == "fuzz" || i == "input"
+        || n == "gain" || n == "drive" || n == "input" || n == "boost" || n == "fuzz" || n == "pre gain" || n == "input gain"
+        || n.startsWith ("input ") || n == "in" || n == "in gain")
+        return 0;
+    if (i == "mix" || i == "blend" || n == "mix" || n == "blend" || n == "clean blend" || n == "dry/wet" || n == "wet/dry"
+        || n == "dry wet" || n == "dry / wet" || n == "mix %" || n.startsWith ("mix "))
+        return 1;
+    if (i == "level" || i == "output" || n == "output" || n == "level" || n == "out" || n.startsWith ("output ") || n == "master" || n == "volume")
+        return 3;
+    return 2;
+}
+
 void Inspector::buildPluginParams (PluginBlock& pb)
 {
     auto* inst = pb.getInstance();
@@ -1302,13 +1327,20 @@ void Inspector::buildPluginParams (PluginBlock& pb)
     pluginScope.setButtonText (showAllPluginParams ? "Showing all" : "Pinned only");
 
     const auto c = colourFor (pb);
-    int shown = 0;
-    for (int i = 0; i < params.size() && shown < 160; ++i)
+    std::vector<int> shownParams;
+    for (int i = 0; i < params.size() && (int) shownParams.size() < 160; ++i)
+    {
+        if (! params[i]->isAutomatable() && ! pb.isPinned (i)) continue;
+        if (! showAllPluginParams && ! pb.isPinned (i)) continue;
+        shownParams.push_back (i);
+    }
+    std::stable_sort (shownParams.begin(), shownParams.end(), [&params] (int a, int b)
+    {
+        return knobPriority ({}, params[a]->getName (64)) < knobPriority ({}, params[b]->getName (64));
+    });
+    for (int i : shownParams)
     {
         auto* p = params[i];
-        if (! p->isAutomatable() && ! pb.isPinned (i)) continue;
-        if (! showAllPluginParams && ! pb.isPinned (i)) continue;
-        ++shown;
 
         auto* k = pluginKnobs.add (new Knob (p->getName (24), pb.isPinned (i) ? accent : c));
         const int steps = p->getNumSteps();
@@ -1559,7 +1591,8 @@ void Inspector::layoutControls()
     {
         // read left to right, then the next row; smaller knobs when the space is short
         int r = juce::jmax (1, (availH + 6) / (96 + 6));
-        if (ks.size() <= 10) r = juce::jmin (r, 2);   // two rows read best for a handful of knobs
+        if (ks.size() <= 5) r = 1;                     // a few knobs: one row
+        else if (ks.size() <= 10) r = juce::jmin (r, 2);   // two rows read best for a handful of knobs
         const int kH = juce::jlimit (92, 128, (availH - (r - 1) * 6) / r);
         const int kW = kH < 104 ? 74 : kw;
         const int cols = juce::jmax (1, (ks.size() + r - 1) / r);

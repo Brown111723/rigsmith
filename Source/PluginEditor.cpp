@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "UI/Settings.h"
 #include "Engine/PluginScanner.h"
+#include "Engine/FactoryPresets.h"
 
 #if JucePlugin_Build_Standalone
  #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
@@ -63,10 +64,18 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     addAndMakeVisible (viewport);
     addChildComponent (rigMap);
     addAndMakeVisible (inspector);
-    addChildComponent (modPanel);
+    addAndMakeVisible (modPanel);
+    if (processor.isStandalone()) watchdog = std::make_unique<Watchdog>();
     if (juce::SystemStats::getEnvironmentVariable ("RIGSMITH_DEMO_AUDIO", {}).isNotEmpty())
         demoAudio = std::make_unique<DemoAudio> (processor);
-    modPanel.onClose = [this] { setModVisible (false); };
+    modPanel.onCollapsedChanged = [this] (bool c)
+    {
+        modVisible = ! c;
+        header.modButton.setToggleState (modVisible, juce::dontSendNotification);
+        engine.setSetting ("modVisible", modVisible);
+        resized();
+    };
+    modPanel.onSelectBlock = [this] (const juce::String& id) { select (id); };
     addChildComponent (ioPanel);
     ioPanel.onResetOvers = [this] { levels.inOvers = levels.outOvers = 0; };
     addAndMakeVisible (library);
@@ -94,8 +103,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
 
     libraryVisible = engine.getSetting ("libraryVisible", true);
     modVisible = engine.getSetting ("modVisible", false);
-    modPanel.setVisible (modVisible);
-    header.modButton.setToggleState (modVisible, juce::dontSendNotification);
+    modPanel.setCollapsed (! modVisible);
     inspectorHeight = getIntSetting ("inspectorHeight", 370);
     if (inspectorHeight == 330) inspectorHeight = 370;   // the old default: a little taller now
     randomiser.options.usePlugins = engine.getSetting ("randomUsePlugins", true);
@@ -175,7 +183,15 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     // once per run: pick up plug-ins installed since last time
     static bool scannedThisRun = false;
     // (the first run always looks; after that only if "scan on startup" is ticked)
-    if (! scannedThisRun && engine.shouldScanOnStartup())
+    if (engine.isSafeStart())
+        juce::Timer::callAfterDelay (1200, [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
+        {
+            if (sp != nullptr)
+                sp->showMessage ("Rigsmith didn't finish opening last time, so it started with a fresh rig and no plug-in scan. "
+                                 "Your last session was kept (Menu > Session state > Load a saved state: \"Rigsmith - session that didn't open\", "
+                                 "beside Rigsmith.ini), and Rigsmith.log there shows what it was doing");
+        });
+    if (! scannedThisRun && engine.shouldScanOnStartup() && ! engine.isSafeStart())
     {
         scannedThisRun = true;
         juce::Timer::callAfterDelay (1500, [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
@@ -188,6 +204,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
 RigsmithEditor::~RigsmithEditor()
 {
     demoAudio.reset();
+    watchdog.reset();
     stopTimer();
     setIntSetting ("inspectorHeight", inspectorHeight);
     if (juce::Desktop::getInstance().getKioskModeComponent() == getTopLevelComponent())
@@ -204,7 +221,16 @@ RigsmithEditor::~RigsmithEditor()
 void RigsmithEditor::paint (juce::Graphics& g)
 {
     static bool first = true;
-    if (first) { first = false; trace ("editor: first paint"); }
+    if (first)
+    {
+        first = false;
+        trace ("editor: first paint");
+        // the window is up: this start counts as finished (after a moment, in case something stalls straight after)
+        juce::Timer::callAfterDelay (4000, [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
+        {
+            if (sp != nullptr && sp->processor.isStandalone()) sp->engine.finishStartup();
+        });
+    }
     g.fillAll (bg);
 }
 
@@ -261,11 +287,11 @@ void RigsmithEditor::resized()
     header.setBounds (r.removeFromTop (64));
     library.setVisible (libraryVisible);
     if (libraryVisible) library.setBounds (r.removeFromRight (300));
-    const int modH = modVisible ? rig::ModPanel::preferredHeight : 0;
+    const int modH = modPanel.getPreferredHeight();
     const int ih = juce::jlimit (220, juce::jmax (220, r.getHeight() - 160 - modH), inspectorHeight);
     inspector.setBounds (r.removeFromBottom (ih));
     ioPanel.setBounds (inspector.getBounds());
-    if (modVisible) modPanel.setBounds (r.removeFromBottom (rig::ModPanel::preferredHeight));
+    modPanel.setBounds (r.removeFromBottom (modH));
     divider.setBounds (r.removeFromBottom (8));
     graphArea = r;
     layoutGraph (r);
@@ -343,6 +369,34 @@ struct RigsmithEditor::DemoAudio : private juce::Timer
     float hz = 110.0f, amp = 0.0f, phase = 0.0f;
 };
 
+struct RigsmithEditor::Watchdog : private juce::Thread
+{
+    Watchdog() : juce::Thread ("Rigsmith watchdog") { startThread (juce::Thread::Priority::low); }
+    ~Watchdog() override { stopThread (3000); }
+    std::atomic<juce::uint32> beat { 0 };
+    void run() override
+    {
+        juce::uint32 last = beat.load();
+        int still = 0;
+        bool reported = false;
+        while (! threadShouldExit())
+        {
+            wait (1000);
+            const auto b = beat.load();
+            if (b != last)
+            {
+                if (reported) trace ("the window is responding again");
+                last = b; still = 0; reported = false;
+            }
+            else if (++still >= 6 && ! reported)
+            {
+                trace ("the window has not responded for 6 s - last step: " + lastTrace());
+                reported = true;
+            }
+        }
+    }
+};
+
 void RigsmithEditor::hideStandaloneOptionsButton()
 {
     // the standalone window's own "Options" button: its items live in the menu instead
@@ -361,6 +415,7 @@ void RigsmithEditor::hideStandaloneOptionsButton()
 void RigsmithEditor::timerCallback()
 {
     ++tick;
+    if (watchdog != nullptr) ++watchdog->beat;
     if (tick % 15 == 1) hideStandaloneOptionsButton();
     {
         auto fall = [] (float& v, std::atomic<float>& src) { v = juce::jmax (src.exchange (0.0f), v * 0.86f); };
@@ -877,13 +932,7 @@ void RigsmithEditor::handleAdd (int r, const juce::String& chainId, int index)
             if (s == nullptr) return;
             if (r == addXover)  s->setMode (SplitMode::Crossover);
             if (r == addStereo) s->setMode (SplitMode::Stereo);
-            // pre-fill each path with an amp + cab so it makes sound straight away
-            if (r != addXover)
-                for (auto& b : s->branches)
-                {
-                    engine.insert (engine.createNode (NodeType::Nam), *b->chain, -1);
-                    engine.insert (engine.createNode (NodeType::Ir), *b->chain, -1);
-                }
+            // empty paths: drop amps, IRs or effects into them (an empty path passes the signal straight through)
             engine.storeScene();
             selectedId = s->id;
             return;
@@ -1038,8 +1087,11 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
     }
     else
     {
-        m.addItem (4, "Wrap in split (2 paths)");
-        m.addItem (5, "Wrap in split (3 paths)");
+        juce::PopupMenu sp;
+        sp.addItem (4, "2 paths: this on A, B empty");
+        sp.addItem (5, "3 paths: this on A, B and C empty");
+        sp.addItem (12, "2 paths: this on both (then change one)");
+        m.addSubMenu ("Split here", sp);
     }
     m.addItem (3, "Duplicate");
     m.addItem (6, "Move left", loc.index > 0);
@@ -1075,6 +1127,7 @@ void RigsmithEditor::showNodeMenu (Node& node, juce::Component* anchor)
             case 3: if (auto* d = engine.duplicate (id)) selectedId = d->id; break;
             case 4: engine.wrapInSplit (id, 2); break;
             case 5: engine.wrapInSplit (id, 3); break;
+            case 12: engine.wrapInSplit (id, 2, true); break;
             case 6: if (chain != nullptr) engine.move (id, *chain, index - 1); break;
             case 7: if (chain != nullptr) engine.move (id, *chain, index + 2); break;
             case 8: { MidiMapping mm; mm.target = MidiMapping::Target::Bypass; mm.nodeId = id; engine.startLearn (mm); break; }
@@ -1256,6 +1309,8 @@ void RigsmithEditor::showMainMenu()
         state.addItem (22, "Load a saved state...");
         state.addSeparator();
         state.addItem (23, "Reset to the default state");
+        state.addSeparator();
+        state.addItem (27, "Show Rigsmith.log (what happened while starting)");
         m.addSubMenu ("Session state", state);
     }
     m.addItem (17, "Settings & folders...");
@@ -1320,6 +1375,7 @@ void RigsmithEditor::showMainMenu()
             case 18: setFullScreen (! isFullScreen()); break;
             case 19: setLibraryVisible (! libraryVisible); break;
             case 20: setTooltipsEnabled (tooltips == nullptr); break;
+            case 27: engine.ini.getFile().getSiblingFile ("Rigsmith.log").revealToUser(); break;
             case 24: engine.clearSkippedPlugins(); showMessage ("They'll be scanned again next time you scan"); break;
             case 3: engine.limiterOn = ! engine.limiterOn.load(); break;
             case 4: engine.tunerActive = ! engine.tunerActive.load(); updateTuner(); break;
@@ -1500,7 +1556,7 @@ void RigsmithEditor::setIntSetting (const juce::String& key, int value)
 void RigsmithEditor::setModVisible (bool v)
 {
     modVisible = v;
-    modPanel.setVisible (v);
+    if (modPanel.isCollapsed() == v) { modPanel.setCollapsed (! v); return; }
     header.modButton.setToggleState (v, juce::dontSendNotification);
     engine.setSetting ("modVisible", v);
     resized();
@@ -1627,7 +1683,14 @@ void RigsmithEditor::showBlockPresetMenu (Node& n, juce::Component* anchor)
     m.addSectionHeader (n.getName() + " presets");
     m.addItem (1, "Save preset...");
     m.addItem (2, "Init (default settings)");
-    m.addSeparator();
+    const auto& factory = factoryPresets (n.getType());
+    if (! factory.empty())
+    {
+        m.addSectionHeader ("Starting points");
+        for (size_t i = 0; i < factory.size(); ++i)
+            m.addItem (1000 + (int) i, factory[i].name + "   -  " + factory[i].blurb);
+    }
+    m.addSectionHeader ("Yours");
     if (files.isEmpty()) m.addItem (-1, "No saved presets for this block yet", false);
     for (int i = 0; i < files.size(); ++i)
         m.addItem (100 + i, files[i].getFileNameWithoutExtension());
@@ -1651,6 +1714,7 @@ void RigsmithEditor::showBlockPresetMenu (Node& n, juce::Component* anchor)
             }), true);
         }
         else if (r == 2) { engine.initBlock (id); showMessage ("Reset " + node->getName() + " to its defaults"); }
+        else if (r >= 1000) { engine.applyFactoryPreset (id, r - 1000); inspector.setNode (engine.findNode (id)); }
         else if (r == 3)
         {
             auto folder = engine.getBlockPresetFolder (*node);

@@ -135,6 +135,9 @@ private:
     /** RIGSMITH_DEMO_AUDIO=1 (screenshots without an audio device): plays synthetic plucks through the rig. */
     struct DemoAudio;
     std::unique_ptr<DemoAudio> demoAudio;
+    /** Notes in Rigsmith.log if the window stops responding, and what it was doing. */
+    struct Watchdog;
+    std::unique_ptr<Watchdog> watchdog;
     bool modVisible = false;
     void setModVisible (bool);
     rig::IoPanel ioPanel { *this };

@@ -104,6 +104,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **Add anywhere**: a small **+** sits on the wire before every block, as well as the big one at the end of each chain.
 - **Remembered folders**: several NAM, IR and plug-in folders, set once in **Menu → Settings & folders**.
 - **`Rigsmith.ini`** holds your folders, preferences and randomise ticks, and is read every time Rigsmith starts. Rigsmith looks for it next to `Rigsmith.exe` first (a **portable** copy), then in `%APPDATA%\Rigsmith\`, and creates it there if neither exists. Settings has **Show Rigsmith.ini** and **Make this copy portable** buttons. It's plain text, so it's safe to edit or back up. Older settings are brought across automatically.
+- **Safe start**: if Rigsmith ever fails to open (a plug-in or session that hangs), the next start opens with a fresh rig and no plug-in scan, keeps the last session so you can load it again (**Menu > Session state**), and `Rigsmith.log` beside `Rigsmith.ini` shows what it was doing (**Menu > Session state > Show Rigsmith.log**).
 - **Crash-safe plug-in scanning, one exe**: plug-ins are scanned inside Rigsmith (no second process, nothing for antivirus to object to). Each one is written in `Rigsmith.ini` (`[Plug-ins] Scanning=`) before it's touched, so if one crashes Rigsmith (or the DAW), the next start finds it, moves it to `[Skipped Plug-ins]` and never scans it again (menu > **Retry skipped plug-ins** to try again). Rigsmith never scans, loads or lists itself.
 - **Plug-in scanning**: the first run scans for plug-ins. After that, Rigsmith opens straight away with the remembered list, unless you tick **Look for new plug-ins every time Rigsmith opens** (or click **Scan**).
 - Every dB readout is shown to one decimal place.
@@ -113,17 +114,23 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **More room**: drag the bar above the bottom panel to make it taller (double-click toggles), hide the library (`L`), and go **full screen** (`F11`, or open full screen every time in Settings).
 - **Init** is always the first preset; Page Up / Down steps from Init through your presets.
 
-**Modulation** (the wave button in the top bar, or `M`)
+**Modulation** (the bar under the rig: click it, the wave button in the top bar, or `M`)
+- **Out of the way until you want it**: closed, it's a slim bar that still shows which sources are busy, with a live meter each.
 - **Nine sources**: three **LFOs** (sine, triangle, saws, square, sample & hold, smooth drift; free in Hz or synced from 4 bars to 1/16 triplets; bipolar or unipolar; restart on every pick), three **envelopes** (ADSR, triggered by your picking, with a threshold), a 16-step **sequencer** (draw the steps, glide, synced or free), **LEVEL** (follows how hard you play, between a floor and a ceiling) and **PITCH** (follows the note you play, between a low and a high note).
 - **Drag a source onto any knob** of any built-in block, an amp's Capture sweep (an envelope morphing clean into crunch as you dig in), or another source's knob: an envelope can speed up an LFO, an LFO can sweep the sequencer's glide. Right-click any knob for **Modulate with** and the routes into it.
 - **The knob stays where you put it**: rings round it show how far each source can move it, and a dot shows where the sound is right now. Presets, the dice and undo all keep the knob's own setting.
-- **The analyzer**: each source's chip has a live trace; the big scope shows the last five seconds of the selected source (and the others in use, or all of them), with its destinations underneath and a depth slider (-100..100%) for each.
+- **Where it goes**: each source's chip has a live trace, and the editor shows what it's doing right now. On the right, every knob the selected source moves, with a depth bar (-100..+100%, drag; the white line is what it's adding right now) and a remove button; click one to jump to that block. **All** lists every modulation in the rig, grouped by source (nine sources for the whole rig, each driving as many knobs as you like, on any blocks).
 - Synced sources follow the DAW's tempo and bar position in the plug-in; in the app they use the tempo set in the MOD panel. Routes and source settings are saved with the preset. (Hosted VST3 parameters can't be modulated yet; MIDI-learn them instead.)
 
 **Noise gate** (Basic / Advanced, after Boz Digital's Gatey Watey)
 - **Basic**: Threshold, Release, Range.
 - **Advanced**: attack, hold and hysteresis (separate open and close thresholds); a **key filter** (low cut so palm-mutes don't hold it open, high cut so hiss doesn't); key from **this signal** or the **rig input** (put the gate after a high-gain amp and key it from your clean guitar, like a Decimator); up to 10 ms **lookahead** so it opens before the pick; and **dual band**: a crossover, with separate ranges so the highs (hiss) close further than the lows; **key listen** to hear what the gate hears.
 - A scrolling scope shows the key level, the open and close thresholds (drag the threshold line), the gain, and a lane lit while the gate is open.
+
+**Starting points**
+- Every built-in block has **factory presets** (5 to 13 each, around 200 in all) from classic, well-known settings: a slapback, the Edge's dotted eighth, a Tube Screamer push into a dirty amp, a Big Muff, a Phase 90, a Leslie on slow, a surf spring, a shimmer, a Decimator-style keyed gate... Open them from the bookmark icon in the panel (or **Block presets...** on the right-click menu). They change the block in place, so modulation and MIDI mappings stay, and Ctrl+Z undoes them.
+- **Panels read the same way on every block**: the input / gain / drive knob first, then the mix, the output level last (built-in effects, NAM, IRs and hosted plug-ins alike).
+- **Split here** (right-click a block): wraps it in a split with the block on path A and the other paths empty, or copies it onto both paths so you can change one. Adding a split from the **+** menu gives empty paths to fill however you like; the dice still build full dual-amp splits.
 
 **Hosting & live use**
 - Hosts any **VST3** effect (and VST2 in builds made with the VST2 SDK; see below). Plug-in state is saved in your presets, and a missing plug-in keeps its settings until you reinstall it.

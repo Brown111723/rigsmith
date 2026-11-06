@@ -350,87 +350,79 @@ struct ModPanel::Display : public juce::Component
 };
 
 //==============================================================================
-/** Every source's last five seconds; the selected one bold. */
-struct ModPanel::Scope : public juce::Component
+/** How far a source moves a knob: -100..+100%, filled from the middle; the thin line is what it's
+    adding right now. Drag sideways, double-click for +50%. */
+struct ModPanel::DepthBar : public juce::Component, public juce::SettableTooltipClient
 {
-    explicit Scope (ModPanel& o) : owner (o) {}
-
+    DepthBar (ModPanel& o, int routeIndex) : owner (o), index (routeIndex)
+    {
+        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+        setRepaintsOnMouseActivity (true);
+    }
+    const ModRoute* route() const
+    {
+        return juce::isPositiveAndBelow (index, (int) owner.engine.mods.routes.size()) ? &owner.engine.mods.routes[(size_t) index] : nullptr;
+    }
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour (0xff111215));
-        g.setColour (border);
-        g.drawRect (getLocalBounds());
-        auto r = getLocalBounds().toFloat().reduced (8.0f, 8.0f);
-        auto plot = r.withTrimmedBottom (12.0f);
-        g.setColour (juce::Colour (0xff1c1d22));
-        for (float f : { 0.25f, 0.5f, 0.75f })
-            g.drawHorizontalLine ((int) (plot.getY() + plot.getHeight() * f), plot.getX(), plot.getRight());
-        for (int s = 1; s < 5; ++s)
-            g.drawVerticalLine ((int) (plot.getX() + plot.getWidth() * s / 5.0f), plot.getY(), plot.getBottom());
-
-        auto& mods = owner.engine.mods;
-        const bool all = owner.showAll.getToggleState();
-        for (int i = 0; i < ModMatrix::numSources; ++i)
-        {
-            if (i == owner.selected) continue;
-            bool used = false;
-            for (auto& rt : mods.routes) used |= rt.source == i;
-            if (! all && ! used) continue;
-            mods.source (i).readHistory (hist);
-            drawTrace (g, hist, plot, Modulator::historySize, mods.source (i).getColour().withAlpha (0.35f), 1.0f, false);
-        }
-        auto& sel = mods.source (owner.selected);
-        sel.readHistory (hist);
-        drawTrace (g, hist, plot, Modulator::historySize, sel.getColour(), 2.0f, true);
-
-        auto tag = [&] (const juce::String& t, juce::Font f, bool right)
-        {
-            const int w = juce::GlyphArrangement::getStringWidthInt (f, t) + 10;
-            auto row = plot.toNearestInt().removeFromTop (16).reduced (2, 1);
-            auto box = right ? row.removeFromRight (w) : row.removeFromLeft (w);
-            g.setColour (juce::Colour (0xff111215).withAlpha (0.85f));
-            g.fillRoundedRectangle (box.toFloat(), 3.0f);
-            g.setColour (sel.getColour());
-            g.setFont (f);
-            g.drawText (t, box, juce::Justification::centred);
-        };
-        const float v = sel.value();
-        tag (sel.getName(), font (11.0f, true), false);
-        tag ((v >= 0 ? "+" : "") + juce::String (v, 2), mono (11.0f), true);
+        auto* r = route();
+        if (r == nullptr) return;
+        auto& src = owner.engine.mods.source (r->source);
+        auto b = getLocalBounds().toFloat().reduced (0.5f, 3.0f);
+        g.setColour (juce::Colour (0xff111215));
+        g.fillRoundedRectangle (b, 4.0f);
+        g.setColour (isMouseOverOrDragging() ? borderHi : border);
+        g.drawRoundedRectangle (b, 4.0f, 1.0f);
+        const float mid = b.getCentreX();
+        const float x = mid + r->amount * b.getWidth() * 0.5f;
+        g.setColour (src.getColour().withAlpha (0.55f));
+        g.fillRoundedRectangle (juce::Rectangle<float>::leftTopRightBottom (juce::jmin (mid, x), b.getY() + 2.0f, juce::jmax (mid, x), b.getBottom() - 2.0f), 3.0f);
+        // what it adds right now
+        const float live = mid + r->amount * src.value() * b.getWidth() * 0.5f;
+        g.setColour (text);
+        g.fillRect (live - 1.0f, b.getY() + 1.0f, 2.0f, b.getHeight() - 2.0f);
         g.setColour (dim);
-        g.setFont (mono (9.5f));
-        g.drawText ("-5 s", r.removeFromBottom (11.0f), juce::Justification::centredLeft);
-        g.drawText ("now", juce::Rectangle<float> (r.getX(), r.getBottom() + 0.0f, r.getWidth(), 11.0f), juce::Justification::centredRight);
+        g.drawVerticalLine ((int) mid, b.getY() + 2.0f, b.getBottom() - 2.0f);
+        const int pct = juce::roundToInt (r->amount * 100.0f);
+        g.setColour (text);
+        g.setFont (mono (10.5f));
+        g.drawText ((pct > 0 ? "+" : "") + juce::String (pct) + "%", b.reduced (5.0f, 0.0f), pct >= 0 ? juce::Justification::centredLeft : juce::Justification::centredRight);
     }
-
+    void mouseDown (const juce::MouseEvent&) override { if (auto* r = route()) start = r->amount; }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const float sens = e.mods.isShiftDown() ? 0.25f : 1.0f;
+        set (start + (float) e.getDistanceFromDragStartX() / (getWidth() * 0.5f) * sens);
+    }
+    void mouseDoubleClick (const juce::MouseEvent&) override { set (0.5f); }
+    void set (float a)
+    {
+        a = juce::jlimit (-1.0f, 1.0f, std::round (a * 100.0f) / 100.0f);
+        owner.engine.mods.setAmount (index, a);
+        owner.engine.markDirty();
+        repaint();
+    }
     ModPanel& owner;
-    std::vector<float> hist;
+    const int index;
+    float start = 0.0f;
 };
 
-//==============================================================================
-/** One destination of the selected source: what, how far (drag), remove. */
+/** One knob a source moves: what it is (click to go to that block), how far, remove. */
 struct ModPanel::RouteRow : public juce::Component
 {
-    RouteRow (ModPanel& o, int routeIndex) : owner (o), index (routeIndex)
+    RouteRow (ModPanel& o, int routeIndex, bool showSource) : owner (o), index (routeIndex), depth (o, routeIndex), withSource (showSource)
     {
         auto& r = owner.engine.mods.routes[(size_t) index];
+        target = r.target;
+        auto& src = owner.engine.mods.source (r.source);
         name.setText (owner.engine.describeModTarget (r.target, r.param), juce::dontSendNotification);
-        name.setFont (font (11.5f));
+        name.setFont (font (11.5f, true));
         name.setMinimumHorizontalScale (0.7f);
+        name.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (name);
-        amount.setSliderStyle (juce::Slider::LinearBar);
-        amount.setRange (-100.0, 100.0, 1.0);
-        amount.setValue (r.amount * 100.0, juce::dontSendNotification);
-        amount.setDoubleClickReturnValue (true, 50.0);
-        amount.setTextValueSuffix ("%");
-        amount.setColour (juce::Slider::trackColourId, owner.engine.mods.source (r.source).getColour().withAlpha (0.55f));
-        amount.setTooltip ("How far " + owner.engine.mods.source (r.source).getName() + " moves this knob (negative: the other way)");
-        amount.onValueChange = [this]
-        {
-            owner.engine.mods.setAmount (index, (float) amount.getValue() * 0.01f);
-            owner.engine.markDirty();
-        };
-        addAndMakeVisible (amount);
+        depth.setTooltip ("How far " + src.getName() + " moves this knob: drag sideways (Shift: finer), double-click for +50%. "
+                          "Negative moves it the other way. The white line is what it's adding right now");
+        addAndMakeVisible (depth);
         remove.onClick = [this]
         {
             auto& e = owner.engine;
@@ -442,56 +434,141 @@ struct ModPanel::RouteRow : public juce::Component
             });
         };
         addAndMakeVisible (remove);
+        setMouseCursor (target.startsWith ("mod:") ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
+        setRepaintsOnMouseActivity (true);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        if (isMouseOver (true))
+        {
+            g.setColour (cardHi.withAlpha (0.6f));
+            g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+        }
+        auto& r = owner.engine.mods.routes[(size_t) juce::jmin (index, (int) owner.engine.mods.routes.size() - 1)];
+        // the target block's colour
+        if (auto* b = owner.engine.findModTarget (target))
+        {
+            g.setColour (dynamic_cast<Modulator*> (b) != nullptr ? dynamic_cast<Modulator*> (b)->getColour() : colourFor (*b));
+            g.fillRoundedRectangle (4.0f, (float) getHeight() * 0.5f - 6.0f, 3.0f, 12.0f, 1.5f);
+        }
+        juce::ignoreUnused (r);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! e.mouseWasDraggedSinceMouseDown() && ! target.startsWith ("mod:") && owner.onSelectBlock) owner.onSelectBlock (target);
+        else if (target.startsWith ("mod:")) owner.select (target.substring (4).getIntValue());
     }
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (0, 2);
-        remove.setBounds (r.removeFromRight (r.getHeight()));
+        auto r = getLocalBounds().reduced (0, 1);
+        r.removeFromLeft (12);
+        remove.setBounds (r.removeFromRight (r.getHeight()).reduced (2));
         r.removeFromRight (4);
-        amount.setBounds (r.removeFromRight (juce::jmin (120, r.getWidth() / 2)));
-        r.removeFromRight (6);
+        depth.setBounds (r.removeFromRight (juce::jlimit (90, 150, r.getWidth() * 2 / 5)));
+        r.removeFromRight (8);
         name.setBounds (r);
     }
 
     ModPanel& owner;
     const int index;
+    juce::String target;
     juce::Label name;
-    juce::Slider amount;
+    DepthBar depth;
     IconButton remove { Icon::Close, "Remove this modulation" };
+    bool withSource;
+};
+
+/** In the All view: a source heading (click to edit that source). */
+struct ModPanel::GroupRow : public juce::Component
+{
+    GroupRow (ModPanel& o, int s) : owner (o), source (s)
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        setRepaintsOnMouseActivity (true);
+    }
+    void paint (juce::Graphics& g) override
+    {
+        auto& m = owner.engine.mods.source (source);
+        auto r = getLocalBounds().toFloat().reduced (0.0f, 2.0f);
+        g.setColour (isMouseOver() ? cardHi : card);
+        g.fillRoundedRectangle (r, 4.0f);
+        auto row = r.reduced (8.0f, 0.0f);
+        g.setColour (m.getColour());
+        g.fillEllipse (row.removeFromLeft (8.0f).withSizeKeepingCentre (8.0f, 8.0f));
+        row.removeFromLeft (6.0f);
+        g.setFont (font (11.5f, true));
+        g.drawText (m.getName(), row.removeFromLeft (52.0f), juce::Justification::centredLeft);
+        // a live meter and the source's speed / time
+        auto meter = row.removeFromRight (60.0f).withSizeKeepingCentre (60.0f, 5.0f);
+        g.setColour (juce::Colour (0xff111215));
+        g.fillRoundedRectangle (meter, 2.0f);
+        const float v = m.value();
+        const float x0 = m.isBipolar() ? meter.getCentreX() : meter.getX();
+        const float x1 = m.isBipolar() ? meter.getCentreX() + v * meter.getWidth() * 0.5f : meter.getX() + v * meter.getWidth();
+        g.setColour (m.getColour());
+        g.fillRoundedRectangle (juce::Rectangle<float>::leftTopRightBottom (juce::jmin (x0, x1), meter.getY(), juce::jmax (x0, x1) + 1.0f, meter.getBottom()), 2.0f);
+        g.setColour (muted);
+        g.setFont (mono (10.0f));
+        g.drawText (summary (m), row.reduced (4.0f, 0.0f), juce::Justification::centredLeft);
+    }
+    static juce::String summary (Modulator& m)
+    {
+        switch (m.getKind())
+        {
+            case ModKind::Lfo:   return m.getSpecs()[LfoMod::pShape].choices[m.getChoice (LfoMod::pShape)] + "  " + m.formatValue (LfoMod::pRate);
+            case ModKind::Env:   return "A " + m.formatValue (EnvMod::pAttack) + "  R " + m.formatValue (EnvMod::pRelease);
+            case ModKind::Seq:   return juce::String (dynamic_cast<SeqMod&> (m).numSteps()) + " steps  " + m.formatValue (SeqMod::pRate);
+            case ModKind::Level: return m.formatValue (LevelMod::pFloor) + " .. " + m.formatValue (LevelMod::pCeiling);
+            case ModKind::Pitch: return "glide " + m.formatValue (PitchMod::pGlide);
+        }
+        return {};
+    }
+    void mouseUp (const juce::MouseEvent&) override { owner.select (source); }
+    ModPanel& owner;
+    const int source;
 };
 
 //==============================================================================
 ModPanel::ModPanel (Engine& e) : engine (e)
 {
     for (int i = 0; i < ModMatrix::numSources; ++i)
-        addAndMakeVisible (chips.add (new Chip (*this, i)));
+        addChildComponent (chips.add (new Chip (*this, i)));
     display = std::make_unique<Display> (*this);
-    addAndMakeVisible (*display);
-    scope = std::make_unique<Scope> (*this);
-    addAndMakeVisible (*scope);
-    addAndMakeVisible (editor);
+    addChildComponent (*display);
+    addChildComponent (editor);
 
     editorTitle.setFont (font (14.0f, true));
     editorBlurb.setFont (font (11.5f));
     editorBlurb.setColour (juce::Label::textColourId, muted);
     editorBlurb.setMinimumHorizontalScale (0.8f);
-    addAndMakeVisible (editorTitle);
-    addAndMakeVisible (editorBlurb);
+    addChildComponent (editorTitle);
+    addChildComponent (editorBlurb);
 
-    routesTitle.setFont (font (11.0f, true));
-    routesTitle.setColour (juce::Label::textColourId, muted);
-    addAndMakeVisible (routesTitle);
+    for (auto* t : { &thisTab, &allTab })
+    {
+        t->setClickingTogglesState (false);
+        t->setColour (juce::TextButton::buttonOnColourId, purple.withAlpha (0.28f));
+        t->setColour (juce::TextButton::textColourOnId, text);
+        t->setColour (juce::TextButton::textColourOffId, muted);
+        addChildComponent (t);
+    }
+    thisTab.setRadioGroupId (77);
+    allTab.setRadioGroupId (77);
+    thisTab.onClick = [this] { showAllRoutes (false); };
+    allTab.onClick = [this] { showAllRoutes (true); };
+    allTab.setTooltip ("Every modulation in this rig, by source: change how far each one goes, jump to the block, or remove it");
     routesView.setViewedComponent (&routesHolder, false);
     routesView.setScrollBarsShown (true, false);
     routesView.setScrollBarThickness (6);
-    addAndMakeVisible (routesView);
-
-    showAll.setClickingTogglesState (true);
-    showAll.setToggleState (false, juce::dontSendNotification);
-    showAll.setTooltip ("Show every source in the analyzer, or only the selected one and those in use");
-    showAll.setColour (juce::TextButton::buttonOnColourId, teal.withAlpha (0.35f));
-    addAndMakeVisible (showAll);
+    addChildComponent (routesView);
+    routesHint.setFont (font (11.5f));
+    routesHint.setColour (juce::Label::textColourId, dim);
+    routesHint.setJustificationType (juce::Justification::centred);
+    routesHint.setInterceptsMouseClicks (false, false);
+    routesHolder.addChildComponent (routesHint);
 
     tempo.setSliderStyle (juce::Slider::LinearBar);
     tempo.setRange (40.0, 240.0, 1.0);
@@ -500,16 +577,15 @@ ModPanel::ModPanel (Engine& e) : engine (e)
     tempo.setValue (engine.mods.bpm.load(), juce::dontSendNotification);
     tempo.setTooltip ("Tempo for synced LFOs and the sequencer. In a DAW the host's tempo is used instead");
     tempo.onValueChange = [this] { engine.mods.bpm = (float) tempo.getValue(); engine.markDirty(); };
-    addAndMakeVisible (tempo);
+    addChildComponent (tempo);
     tempoLabel.setFont (font (11.0f, true));
     tempoLabel.setColour (juce::Label::textColourId, muted);
     tempoLabel.setJustificationType (juce::Justification::centredRight);
-    addAndMakeVisible (tempoLabel);
+    addChildComponent (tempoLabel);
 
-    closeButton.onClick = [this] { if (onClose) onClose(); };
-    addAndMakeVisible (closeButton);
-
+    setRepaintsOnMouseActivity (true);
     buildEditor();
+    startTimerHz (30);
 }
 
 ModPanel::~ModPanel()
@@ -518,11 +594,30 @@ ModPanel::~ModPanel()
     engine.mods.watching = false;
 }
 
-void ModPanel::visibilityChanged()
+void ModPanel::updateWatching()
 {
-    engine.mods.watching = isVisible();
-    if (isVisible()) { startTimerHz (30); rebuildRoutes(); }
-    else stopTimer();
+    // the sources only run when something uses them, or when you're looking at them
+    engine.mods.watching = isShowing() && ! collapsed;
+}
+
+void ModPanel::setCollapsed (bool c)
+{
+    collapsed = c;
+    for (auto* ch : chips) ch->setVisible (! c);
+    for (auto* comp : std::initializer_list<juce::Component*> { display.get(), &editor, &editorTitle, &editorBlurb, &thisTab, &allTab,
+                                                                &routesView, &tempo, &tempoLabel })
+        comp->setVisible (! c);
+    if (! c) rebuildRoutes();
+    updateWatching();
+    resized();
+    repaint();
+    if (onCollapsedChanged) onCollapsedChanged (c);
+}
+
+void ModPanel::showAllRoutes (bool all)
+{
+    allRoutes = all;
+    rebuildRoutes();
 }
 
 float ModPanel::tempoNow() const
@@ -606,10 +701,10 @@ void ModPanel::buildEditor()
 
 juce::String ModPanel::routesSignature() const
 {
-    juce::String s (selected);
+    juce::String s;
+    s << selected << (allRoutes ? "A" : "S");
     for (auto& r : engine.mods.routes)
-        if (r.source == selected) s << "|" << r.target << ":" << r.param;
-    s << "#" << (int) engine.mods.routes.size();
+        s << "|" << r.source << r.target << ":" << r.param;
     return s;
 }
 
@@ -617,25 +712,75 @@ void ModPanel::rebuildRoutes()
 {
     routeRows.clear();
     shownRoutes = routesSignature();
-    for (size_t i = 0; i < engine.mods.routes.size(); ++i)
-        if (engine.mods.routes[i].source == selected)
-            routesHolder.addAndMakeVisible (routeRows.add (new RouteRow (*this, (int) i)));
+    auto& routes = engine.mods.routes;
     const auto& m = engine.mods.source (selected);
-    routesTitle.setText (routeRows.isEmpty() ? "Drag " + m.getName() + " onto any knob: a block's, or another source's"
-                                             : m.getName() + juce::String (juce::CharPointer_UTF8 (" \xe2\x86\x92 ")) + juce::String (routeRows.size())
-                                                 + (routeRows.size() == 1 ? " knob" : " knobs"),
-                         juce::dontSendNotification);
-    const int rowH = 26;
-    routesHolder.setSize (juce::jmax (10, routesView.getWidth() - (routeRows.size() * rowH > routesView.getHeight() ? 8 : 0)), routeRows.size() * rowH);
-    for (int i = 0; i < routeRows.size(); ++i)
-        routeRows[i]->setBounds (0, i * rowH, routesHolder.getWidth(), rowH);
+
+    thisTab.setButtonText (m.getName() + " goes to");
+    allTab.setButtonText ("All (" + juce::String ((int) routes.size()) + ")");
+    thisTab.setToggleState (! allRoutes, juce::dontSendNotification);
+    allTab.setToggleState (allRoutes, juce::dontSendNotification);
+
+    const int rowH = 26, headH = 26;
+    int y = 0;
+    const int w = juce::jmax (10, routesView.getWidth() - 8);
+    if (allRoutes)
+    {
+        for (int s = 0; s < ModMatrix::numSources; ++s)
+        {
+            bool any = false;
+            for (auto& r : routes) any |= r.source == s;
+            if (! any) continue;
+            auto* g = routeRows.add (new GroupRow (*this, s));
+            g->setBounds (0, y, w, headH);
+            routesHolder.addAndMakeVisible (g);
+            y += headH;
+            for (size_t i = 0; i < routes.size(); ++i)
+                if (routes[i].source == s)
+                {
+                    auto* row = routeRows.add (new RouteRow (*this, (int) i, false));
+                    row->setBounds (0, y, w, rowH);
+                    routesHolder.addAndMakeVisible (row);
+                    y += rowH;
+                }
+            y += 4;
+        }
+    }
+    else
+        for (size_t i = 0; i < routes.size(); ++i)
+            if (routes[i].source == selected)
+            {
+                auto* row = routeRows.add (new RouteRow (*this, (int) i, false));
+                row->setBounds (0, y, w, rowH);
+                routesHolder.addAndMakeVisible (row);
+                y += rowH;
+            }
+
+    const bool empty = routeRows.isEmpty();
+    routesHint.setVisible (empty);
+    routesHint.setText (allRoutes ? "Nothing is modulated yet.\nDrag a source on the left onto any knob."
+                                  : "Drag " + m.getName() + " onto any knob to make it move:\na block's knob below, or another source's knob here.",
+                        juce::dontSendNotification);
+    const int h = empty ? routesView.getHeight() : y;
+    routesHolder.setSize (w + 8, juce::jmax (h, 10));
+    routesHint.setBounds (0, 0, w, juce::jmax (40, routesView.getHeight()));
 }
 
 void ModPanel::timerCallback()
 {
+    updateWatching();
+    if (engine.mods.pickedFlash.exchange (false)) pickGlow = 1.0f;
+    else pickGlow *= 0.8f;
+
+    if (collapsed)
+    {
+        // the bar shows the busy sources' meters
+        if (engine.mods.hasRoutes.load()) repaint (headerArea);
+        return;
+    }
+
     for (auto* c : chips) c->repaint();
     display->repaint();
-    scope->repaint();
+    for (auto* r : routeRows) r->repaint();
     if (routesSignature() != shownRoutes) rebuildRoutes();
 
     // knobs follow MIDI, presets, undo
@@ -653,14 +798,25 @@ void ModPanel::timerCallback()
         toggles[(int) i]->setToggleState (m.getBase (toggleParam[i]) > 0.5f, juce::dontSendNotification);
 
     const double host = engine.mods.hostBpm.load();
-    tempo.setVisible (host <= 0.0);
+    if (tempo.isVisible() != (host <= 0.0)) { tempo.setVisible (host <= 0.0); resized(); }
     tempoLabel.setText (host > 0.0 ? "Host tempo " + juce::String (host, 1) + " BPM" : juce::String ("Tempo"), juce::dontSendNotification);
     if (! tempo.isMouseButtonDown() && std::abs (tempo.getValue() - engine.mods.bpm.load()) > 0.01)
         tempo.setValue (engine.mods.bpm.load(), juce::dontSendNotification);
-
-    if (engine.mods.pickedFlash.exchange (false)) pickGlow = 1.0f;
-    else pickGlow *= 0.8f;
     repaint (headerArea);
+}
+
+void ModPanel::mouseUp (const juce::MouseEvent& e)
+{
+    // the header bar opens / closes the section
+    if (headerArea.contains (e.getPosition()) && ! e.mouseWasDraggedSinceMouseDown())
+        setCollapsed (! collapsed);
+}
+
+void ModPanel::mouseMove (const juce::MouseEvent& e)
+{
+    const bool over = headerArea.contains (e.getPosition());
+    if (over != headerHover) { headerHover = over; repaint (headerArea); }
+    setMouseCursor (over ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
 void ModPanel::paint (juce::Graphics& g)
@@ -668,15 +824,75 @@ void ModPanel::paint (juce::Graphics& g)
     g.fillAll (panel);
     g.setColour (border);
     g.drawHorizontalLine (0, 0.0f, (float) getWidth());
+    if (headerHover && isMouseOver())
+    {
+        g.setColour (cardHi.withAlpha (0.35f));
+        g.fillRect (headerArea.withX (0).withWidth (getWidth()));
+    }
 
     auto h = headerArea;
+    // open / closed chevron
+    {
+        auto c = h.removeFromLeft (16).toFloat().withSizeKeepingCentre (10.0f, 10.0f);
+        juce::Path p;
+        if (collapsed) { p.startNewSubPath (c.getX() + 2.5f, c.getY()); p.lineTo (c.getRight() - 1.5f, c.getCentreY()); p.lineTo (c.getX() + 2.5f, c.getBottom()); }
+        else           { p.startNewSubPath (c.getX(), c.getY() + 2.5f); p.lineTo (c.getCentreX(), c.getBottom() - 1.5f); p.lineTo (c.getRight(), c.getY() + 2.5f); }
+        g.setColour (headerHover ? text : muted);
+        g.strokePath (p, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+    h.removeFromLeft (4);
+    drawIcon (g, Icon::Mod, h.removeFromLeft (22).toFloat().withSizeKeepingCentre (18.0f, 18.0f), purple);
+    h.removeFromLeft (6);
     g.setColour (text);
     g.setFont (font (12.0f, true).withExtraKerningFactor (0.12f));
     const int tw = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), "MODULATION") + 6;
-    drawIcon (g, Icon::Mod, h.removeFromLeft (22).toFloat().withSizeKeepingCentre (18.0f, 18.0f), purple);
-    h.removeFromLeft (6);
     g.drawText ("MODULATION", h.removeFromLeft (tw), juce::Justification::centredLeft);
     h.removeFromLeft (12);
+
+    auto& routes = engine.mods.routes;
+    if (collapsed)
+    {
+        if (routes.empty())
+        {
+            g.setColour (dim);
+            g.setFont (font (11.5f));
+            g.drawText ("LFOs, envelopes, a step sequencer, your playing level and pitch - drag them onto any knob. Click to open",
+                        h, juce::Justification::centredLeft);
+            return;
+        }
+        // each busy source: a dot, its name, a live meter, how many knobs it moves
+        for (int s = 0; s < ModMatrix::numSources; ++s)
+        {
+            int n = 0;
+            for (auto& r : routes) n += r.source == s;
+            if (n == 0) continue;
+            auto& m = engine.mods.source (s);
+            auto cell = h.removeFromLeft (128);
+            h.removeFromLeft (8);
+            if (cell.getRight() > headerArea.getRight()) break;
+            auto cf = cell.toFloat().reduced (0.0f, 6.0f);
+            g.setColour (card);
+            g.fillRoundedRectangle (cf, 5.0f);
+            auto row = cf.reduced (8.0f, 0.0f);
+            g.setColour (m.getColour());
+            g.fillEllipse (row.removeFromLeft (7.0f).withSizeKeepingCentre (7.0f, 7.0f));
+            row.removeFromLeft (5.0f);
+            g.setFont (font (11.0f, true));
+            g.drawText (m.getName(), row.removeFromLeft (44.0f), juce::Justification::centredLeft);
+            g.setColour (muted);
+            g.setFont (mono (10.0f));
+            g.drawText (juce::String (n) + juce::String (juce::CharPointer_UTF8 ("\xe2\x86\x92")), row.removeFromRight (24.0f), juce::Justification::centredRight);
+            auto meter = row.reduced (2.0f, 0.0f).withSizeKeepingCentre (row.getWidth() - 4.0f, 4.0f);
+            g.setColour (juce::Colour (0xff111215));
+            g.fillRoundedRectangle (meter, 2.0f);
+            const float v = m.value();
+            const float x0 = m.isBipolar() ? meter.getCentreX() : meter.getX();
+            const float x1 = m.isBipolar() ? meter.getCentreX() + v * meter.getWidth() * 0.5f : meter.getX() + v * meter.getWidth();
+            g.setColour (m.getColour());
+            g.fillRoundedRectangle (juce::Rectangle<float>::leftTopRightBottom (juce::jmin (x0, x1), meter.getY(), juce::jmax (x0, x1) + 1.0f, meter.getBottom()), 2.0f);
+        }
+        return;
+    }
 
     // the pick light: flashes on every note the envelopes see
     auto light = h.removeFromLeft (12).toFloat().withSizeKeepingCentre (8.0f, 8.0f);
@@ -688,22 +904,21 @@ void ModPanel::paint (juce::Graphics& g)
     g.drawText ("pick", h.removeFromLeft (30), juce::Justification::centredLeft);
     h.removeFromLeft (14);
     g.setColour (dim);
-    g.drawText ("Drag a source onto any knob to modulate it. Right-click a knob for more", h.withTrimmedRight (300), juce::Justification::centredLeft);
+    g.drawText ("Drag a source onto any knob to modulate it. Right-click a knob for more. Click here to close",
+                h.withTrimmedRight (240), juce::Justification::centredLeft);
 
-    // section frames
     g.setColour (border);
     g.drawVerticalLine (chipsArea.getRight() + 9, (float) chipsArea.getY(), (float) chipsArea.getBottom());
-    g.drawVerticalLine (scopeArea.getX() - 10, (float) scopeArea.getY(), (float) scopeArea.getBottom());
+    g.drawVerticalLine (routesArea.getX() - 10, (float) routesArea.getY(), (float) routesArea.getBottom());
 }
 
 void ModPanel::resized()
 {
     auto r = getLocalBounds().reduced (12, 0);
-    headerArea = r.removeFromTop (32).withTrimmedTop (2);
+    headerArea = r.removeFromTop (collapsed ? collapsedHeight : 32).withTrimmedTop (collapsed ? 0 : 2);
+    if (collapsed) return;
     {
         auto h = headerArea;
-        closeButton.setBounds (h.removeFromRight (26).withSizeKeepingCentre (24, 24));
-        h.removeFromRight (10);
         tempo.setBounds (h.removeFromRight (96).withSizeKeepingCentre (96, 22));
         h.removeFromRight (6);
         tempoLabel.setBounds (h.removeFromRight (tempo.isVisible() ? 50 : 170));
@@ -720,16 +935,15 @@ void ModPanel::resized()
     }
     r.removeFromLeft (20);
 
-    // right: analyzer and destinations
-    scopeArea = r.removeFromRight (juce::jlimit (260, 380, getWidth() / 4));
+    // right: where it goes
+    routesArea = r.removeFromRight (juce::jlimit (300, 420, getWidth() * 3 / 10));
     {
-        auto s = scopeArea;
-        auto sc = s.removeFromTop (s.getHeight() * 52 / 100);
-        scope->setBounds (sc);
-        showAll.setBounds (sc.getRight() - 50, sc.getBottom() - 24, 44, 18);
-        showAll.toFront (false);
-        s.removeFromTop (4);
-        routesTitle.setBounds (s.removeFromTop (18));
+        auto s = routesArea;
+        auto tabs = s.removeFromTop (24);
+        allTab.setBounds (tabs.removeFromRight (70));
+        tabs.removeFromRight (4);
+        thisTab.setBounds (tabs);
+        s.removeFromTop (6);
         routesView.setBounds (s);
         rebuildRoutes();
     }
@@ -743,7 +957,7 @@ void ModPanel::resized()
     editorBlurb.setBounds (titleRow);
     e.removeFromTop (6);
     auto& m = engine.mods.source (selected);
-    const int dw = juce::jlimit (170, m.getKind() == ModKind::Seq ? 300 : 230, e.getWidth() * 2 / 5);
+    const int dw = juce::jlimit (170, m.getKind() == ModKind::Seq ? 300 : 240, e.getWidth() * 2 / 5);
     display->setBounds (e.removeFromLeft (dw));
     e.removeFromLeft (14);
     editor.setBounds (e);

@@ -4,15 +4,17 @@
 
 namespace rig
 {
-/** The MOD section, shown between the rig and the block panel (the wave button in the header, or M).
+/** The MOD section, between the rig and the block panel.
 
-    Left: the nine sources (3 LFOs, 3 envelopes, the step sequencer, the input level and the input
-    pitch), each a chip with a live trace - drag one onto any knob to route it there.
-    Middle: the selected source's editor - a picture of what it does (waveform, ADSR, steps you can
-    draw, level window, note range) and its knobs. Those knobs take sources too, so an envelope can
-    speed up an LFO or an LFO can sweep the sequencer's glide.
-    Right: the analyzer - the last five seconds of every source, the selected one bold - and where
-    the selected source goes, with a depth slider per destination. */
+    Collapsed (the default) it's a slim bar: click it (or the wave button in the top bar, or M)
+    to open it. The bar still shows which sources are busy, with a live meter for each.
+
+    Open - left: the nine sources (3 LFOs, 3 envelopes, the step sequencer, the input level, the
+    input pitch), each a chip with a live trace; drag one onto any knob to route it there.
+    Middle: the selected source's editor - a live picture of what it does and its knobs, which take
+    sources too (an envelope speeding up an LFO...). Right: where it goes - every knob it moves,
+    with a depth bar, a live meter and a remove button - or, under "All", every routing in the
+    rig grouped by source. */
 class ModPanel : public juce::Component,
                  private juce::Timer
 {
@@ -22,13 +24,23 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
-    void visibilityChanged() override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
 
     void select (int source);
     int getSelected() const noexcept { return selected; }
-    std::function<void()> onClose;
 
-    static constexpr int preferredHeight = 262;
+    void setCollapsed (bool);
+    bool isCollapsed() const noexcept { return collapsed; }
+    int getPreferredHeight() const noexcept { return collapsed ? collapsedHeight : expandedHeight; }
+    /** Show every routing (the top bar's button does this when there are some). */
+    void showAllRoutes (bool);
+
+    std::function<void (bool collapsed)> onCollapsedChanged;
+    /** A destination was clicked: select that block in the rig. */
+    std::function<void (const juce::String& nodeId)> onSelectBlock;
+
+    static constexpr int collapsedHeight = 34, expandedHeight = 262;
 
 private:
     void timerCallback() override;
@@ -37,17 +49,19 @@ private:
     juce::String routesSignature() const;
     float tempoNow() const;
     float levelNow() const;
+    void updateWatching();
 
     Engine& engine;
     int selected = 0;
+    bool collapsed = true, allRoutes = false;
 
     struct Chip;
     struct Display;
-    struct Scope;
+    struct DepthBar;
     struct RouteRow;
+    struct GroupRow;
     juce::OwnedArray<Chip> chips;
     std::unique_ptr<Display> display;
-    std::unique_ptr<Scope> scope;
 
     // the selected source's controls
     juce::Component editor;
@@ -61,20 +75,20 @@ private:
     juce::Label editorTitle, editorBlurb;
 
     // where it goes
-    juce::Label routesTitle;
+    juce::TextButton thisTab, allTab;
     juce::Viewport routesView;
     juce::Component routesHolder;
-    juce::OwnedArray<RouteRow> routeRows;
+    juce::OwnedArray<juce::Component> routeRows;
+    juce::Label routesHint;
     juce::String shownRoutes;
-    juce::TextButton showAll { "All" };
 
     // tempo
     juce::Slider tempo;
     juce::Label tempoLabel;
-    IconButton closeButton { Icon::Close, "Hide the MOD section (M)" };
 
-    juce::Rectangle<int> headerArea, chipsArea, editorArea, scopeArea;
+    juce::Rectangle<int> headerArea, chipsArea, editorArea, routesArea;
     float pickGlow = 0.0f;
+    bool headerHover = false;
 };
 
 } // namespace rig

@@ -3,6 +3,7 @@
 #include "Engine/Randomiser.h"
 #include "T3K/Tone3000.h"
 #include "Engine/PluginScanner.h"
+#include "Engine/FactoryPresets.h"
 #include <cstdio>
 
 using namespace rig;
@@ -1517,6 +1518,59 @@ int main (int argc, char** argv)
             const float lowDb = level (100.0f), highDb = level (8000.0f);
             CHECK (lowDb > -9.0f && lowDb < -3.0f && highDb < -40.0f, "dual band: closed, the lows drop by their range, the highs by theirs");
         }
+    }
+
+    //==========================================================================
+    std::printf ("--- v0.11.1: factory presets, splits\n");
+    {
+        Engine e;
+        e.prepare (48000.0, 256);
+        int types = 0, presets = 0;
+        juce::StringArray bad;
+        for (auto& [group, list] : builtInGroups())
+            for (auto t : list)
+            {
+                auto n = e.createNode (t);
+                auto* b = dynamic_cast<Block*> (n.get());
+                if (b == nullptr || t == NodeType::Tuner) continue;
+                const auto& fp = factoryPresets (t);
+                ++types;
+                if (fp.size() < 5) bad.add (builtInShortName (t) + ": only " + juce::String ((int) fp.size()));
+                for (auto& p : fp)
+                {
+                    ++presets;
+                    for (auto& [pid, v] : p.values)
+                    {
+                        const int i = b->indexOf (pid);
+                        if (i < 0) { bad.add (builtInShortName (t) + " / " + p.name + ": no parameter '" + pid + "'"); continue; }
+                        const auto& sp = b->getSpecs()[(size_t) i];
+                        if (v < sp.min || v > sp.max) bad.add (builtInShortName (t) + " / " + p.name + ": " + pid + " out of range");
+                    }
+                }
+            }
+        for (auto& b : bad) std::printf ("    %s\n", b.toRawUTF8());
+        CHECK (bad.isEmpty() && types >= 20 && presets >= 150, "every built-in has at least 5 factory presets, all valid");
+
+        auto* delay = dynamic_cast<Block*> (e.insert (e.createNode (NodeType::Delay), e.getRoot(), 0));
+        e.addModRoute (0, delay->id, delay->indexOf ("mix"), 0.3f);
+        CHECK (e.applyFactoryPreset (delay->id, 0) && std::abs (delay->getBase (delay->indexOf ("time")) - 110.0f) < 0.01f
+               && e.findNode (delay->id) == delay && e.mods.routes.size() == 1, "a factory preset changes the block in place, keeping its modulation");
+        const auto delayId = delay->id;
+        const int timeParam = delay->indexOf ("time");
+        e.undo();
+        auto* undone = dynamic_cast<Block*> (e.findNode (delayId));
+        CHECK (undone != nullptr && std::abs (undone->getBase (timeParam) - 400.0f) < 0.01f, "and undoes");
+
+        // split here: the block on path A (or on both), nothing else added
+        auto* amp = e.insert (e.createNode (NodeType::Gain), e.getRoot(), 0);
+        const auto ampId = amp->id;
+        auto* s = e.wrapInSplit (ampId, 2);
+        CHECK (s != nullptr && s->branches.size() == 2 && s->branches[0]->chain->nodes.size() == 1
+               && s->branches[0]->chain->nodes[0]->id == ampId && s->branches[1]->chain->nodes.empty(), "split here keeps the block on path A, B empty");
+        auto* g2 = e.insert (e.createNode (NodeType::Gain), e.getRoot(), 0);
+        auto* s2 = e.wrapInSplit (g2->id, 2, true);
+        CHECK (s2 != nullptr && s2->branches[1]->chain->nodes.size() == 1 && s2->branches[1]->chain->nodes[0]->id != g2->id
+               && s2->branches[1]->chain->nodes[0]->getType() == NodeType::Gain, "or copies it onto both paths");
     }
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);

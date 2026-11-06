@@ -1,5 +1,6 @@
 #include "Engine.h"
 #include "PluginScanner.h"
+#include "FactoryPresets.h"
 
 namespace rig
 {
@@ -316,6 +317,31 @@ void Engine::setupPluginScanning (bool standalone)
     if (ini.get ("Plug-ins", "ScannerApp").isNotEmpty()) ini.set ("Plug-ins", "ScannerApp", "");   // from v0.10
     juce::ignoreUnused (standalone);
     knownPlugins.setCustomScanner (std::make_unique<InProcessScanner> (policy));
+}
+
+bool Engine::beginStartup()
+{
+   #ifdef JucePlugin_VersionString
+    const juce::String version (JucePlugin_VersionString);
+   #else
+    const juce::String version ("dev");
+   #endif
+    startTraceLog (ini.getFile().getSiblingFile ("Rigsmith.log"),
+                   "Rigsmith " + version + " - " + juce::Time::getCurrentTime().toString (true, true)
+                   + " - " + juce::SystemStats::getOperatingSystemName());
+    safeStart = ini.get ("General", "Starting") == "1";
+    if (safeStart) trace ("the last start never finished: starting safe (fresh rig, no plug-in scan)");
+    ini.set ("General", "Starting", "1");
+    return safeStart;
+}
+
+void Engine::finishStartup()
+{
+    if (ini.get ("General", "Starting") == "1")
+    {
+        ini.set ("General", "Starting", "0");
+        trace ("started");
+    }
 }
 
 juce::StringArray Engine::getSkippedPlugins() const
@@ -1121,7 +1147,9 @@ std::unique_ptr<Node> Engine::createNode (NodeType type) const
 
 std::unique_ptr<Node> Engine::createPlugin (const juce::PluginDescription& desc, juce::String& error)
 {
+    trace ("loading plug-in: " + desc.name + " (" + desc.fileOrIdentifier + ")");
     auto inst = formatManager.createPluginInstance (desc, sampleRate, blockSize, error);
+    trace (inst != nullptr ? "  loaded" : "  failed: " + error);
     if (inst == nullptr)
         return nullptr;
     return std::make_unique<PluginBlock> (std::move (inst), desc);
@@ -1300,11 +1328,17 @@ Split* Engine::addSplit (Chain& target, int index, int numBranches)
     return static_cast<Split*> (insert (std::move (s), target, index));
 }
 
-Split* Engine::wrapInSplit (const juce::String& id, int numBranches)
+Split* Engine::wrapInSplit (const juce::String& id, int numBranches, bool copyToEveryPath)
 {
     Location loc;
     auto n = extract (id, &loc);
     if (n == nullptr) return nullptr;
+    juce::ValueTree copy;
+    if (copyToEveryPath)
+    {
+        copy = n->toState().createCopy();
+        stripIds (copy);
+    }
     auto s = std::make_unique<Split>();
     for (int i = 0; i < numBranches; ++i)
     {
@@ -1312,6 +1346,13 @@ Split* Engine::wrapInSplit (const juce::String& id, int numBranches)
         s->branches.back()->level = 1.0f / (float) numBranches;
     }
     s->branches[0]->chain->nodes.push_back (std::move (n));
+    if (copy.isValid())
+        for (size_t i = 1; i < s->branches.size(); ++i)
+            if (auto c = buildNode (copy.createCopy()))
+            {
+                c->prepare (sampleRate, blockSize);
+                s->branches[i]->chain->nodes.push_back (std::move (c));
+            }
     return static_cast<Split*> (insert (std::move (s), *loc.chain, loc.index));
 }
 
@@ -2086,6 +2127,29 @@ Node* Engine::loadBlockPreset (const juce::String& id, const juce::File& f)
     auto* r = replace (id, std::move (n), true);
     if (r != nullptr) message ("Loaded " + f.getFileNameWithoutExtension());
     return r;
+}
+
+bool Engine::applyFactoryPreset (const juce::String& id, int index)
+{
+    auto* b = dynamic_cast<Block*> (findNode (id));
+    if (b == nullptr || dynamic_cast<PluginBlock*> (b) != nullptr) return false;
+    const auto& presets = factoryPresets (b->getType());
+    if (! juce::isPositiveAndBelow (index, (int) presets.size())) return false;
+    const auto& p = presets[(size_t) index];
+    checkpoint();
+    const bool nam = b->getType() == NodeType::Nam;
+    for (int i = 0; i < b->numParams(); ++i)
+    {
+        const auto& sid = b->getSpecs()[(size_t) i].id;
+        // what's loaded and the level trims stay as they are
+        if (sid == "capture" || sid == "normalize" || (nam && (sid == "input" || sid == "output"))) continue;
+        b->set (i, b->getSpecs()[(size_t) i].def);
+    }
+    for (auto& [pid, v] : p.values)
+        if (const int i = b->indexOf (pid); i >= 0) b->set (i, v);
+    markDirty();
+    message (b->getName() + ": " + p.name);
+    return true;
 }
 
 Node* Engine::initBlock (const juce::String& id)

@@ -112,7 +112,7 @@ public:
     void remove (const juce::String& id);
     bool move (const juce::String& id, Chain& target, int index);
     Node* duplicate (const juce::String& id);
-    Split* wrapInSplit (const juce::String& id, int numBranches = 2);
+    Split* wrapInSplit (const juce::String& id, int numBranches = 2, bool copyToEveryPath = false);
     Split* addSplit (Chain& target, int index, int numBranches);
     void addBranch (Split& split);
     void removeBranch (Split& split, int branchIndex);
@@ -172,6 +172,8 @@ public:
     Node* loadBlockPreset (const juce::String& nodeId, const juce::File&);
     /** Back to the block's default settings (keeps the loaded model / IR). */
     Node* initBlock (const juce::String& nodeId);
+    /** One of the block's built-in presets (FactoryPresets.h), applied in place (undoable). */
+    bool applyFactoryPreset (const juce::String& nodeId, int index);
 
     //--- MIDI -------------------------------------------------------------------
     std::vector<MidiMapping> mappings;
@@ -231,6 +233,11 @@ public:
         one that crashes is found there on the next start, listed under [Skipped Plug-ins] and
         never scanned again. Rigsmith itself is never scanned. */
     void setupPluginScanning (bool standalone);
+    /** Rigsmith.exe: marks a start in the ini. Returns true if the last start never finished
+        (the window never appeared): then Rigsmith starts safe - fresh rig, no plug-in scan. */
+    bool beginStartup();
+    void finishStartup();
+    bool isSafeStart() const noexcept { return safeStart; }
     juce::StringArray getSkippedPlugins() const;
     void clearSkippedPlugins();
     /** A plug-in that crashed Rigsmith during the last scan (once, then empty). */
@@ -315,6 +322,7 @@ private:
     int blockSize = 512;
     std::vector<float> keyBuffer;   // the rig's input, for keyed gates and the modulators
     double hostPpq = -1.0;
+    bool safeStart = false;
     void pruneModRoutes();
     juce::SmoothedValue<float> inGain, outGain, inPanL, inPanR, outPanL, outPanR, outWidth;
     float limGain = 1.0f;   // zero-latency brickwall limiter state

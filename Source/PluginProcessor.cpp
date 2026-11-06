@@ -15,6 +15,7 @@ RigsmithProcessor::RigsmithProcessor()
 
     rig::trace ("processor: engine built");
     engine.setupPluginScanning (isStandalone());
+    if (isStandalone()) engine.beginStartup();
     rig::trace ("processor: scanning set up");
     engine.onLatencyChanged = [this] (int samples) { setLatencySamples (samples); };
     engine.onSceneChanged = [this] (int scene)
@@ -30,6 +31,7 @@ RigsmithProcessor::RigsmithProcessor()
 
 RigsmithProcessor::~RigsmithProcessor()
 {
+    if (isStandalone()) engine.finishStartup();   // a normal quit is a finished start too
     alive->store (false);
     sceneParam->removeListener (this);
 }
@@ -117,9 +119,19 @@ void RigsmithProcessor::setStateInformation (const void* data, int size)
         return;
 
     auto tree = juce::ValueTree::fromXml (*xml);
+    if (isStandalone() && engine.isSafeStart())
+    {
+        // the last start hung or crashed: keep the session to one side and start with a fresh rig
+        const auto keep = engine.ini.getFile().getSiblingFile ("Rigsmith - session that didn't open.rigsession");
+        keep.replaceWithData (data, (size_t) size);   // Menu > Session state > Load a saved state... reads it
+        rig::trace ("skipped restoring the last session (saved as " + keep.getFileName() + ")");
+        return;
+    }
+    rig::trace ("restoring session");
     if (juce::MessageManager::getInstance()->isThisTheMessageThread())
     {
         engine.setState (tree, true);
+        rig::trace ("session restored");
     }
     else
     {
