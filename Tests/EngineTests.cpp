@@ -125,12 +125,6 @@ static float runNoise (Engine& e, int blocks, int blockSize, bool* finite, float
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
-    {
-        // the tests run themselves as the scanner process, like Rigsmith.exe does
-        juce::StringArray args;
-        for (int i = 1; i < argc; ++i) args.add (juce::String (juce::CharPointer_UTF8 (argv[i])));
-        if (args.contains (rig::scanSwitch)) return rig::runScanCommand (args);
-    }
     // keep the tests' settings away from the real Rigsmith.ini
     const auto testDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rigsmith-tests");
     testDir.deleteRecursively();
@@ -1211,38 +1205,27 @@ int main (int argc, char** argv)
         CHECK (e.loadGear (gear, crunch, err) && gear.getNumCaptures() == 3 && gear.getFile() == crunch,
                "loading one capture brings its gear's other captures into the sweep, on the one chosen");
 
-        // plug-in scanning in a separate process (this same program): a crash only skips that plug-in
+        // plug-in scanning in this process: what's being scanned is written down first, then cleared
         {
-            const auto self = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
             juce::VST3PluginFormat vst3;
             const auto notAPlugin = testDir.getChildFile ("Fake.vst3");
             notAPlugin.replaceWithText ("not a plug-in");
-            juce::StringArray crashed;
+            juce::StringArray skipped, log;
             ScanPolicy policy;
-            policy.isSkipped = [&] (const juce::String& f) { return crashed.contains (f); };
-            policy.onCrashed = [&] (const juce::String& f) { crashed.addIfNotAlreadyThere (f); };
-            {
-                OutOfProcessScanner sc (self, policy);
-                juce::OwnedArray<juce::PluginDescription> found;
-                CHECK (sc.findPluginTypesFor (vst3, found, notAPlugin.getFullPathName()) && found.isEmpty() && crashed.isEmpty(),
-                       "a second copy of the program looks inside a file and reports nothing found");
-            }
-            {
-                juce::KnownPluginList list;
-                auto crashy = std::make_unique<OutOfProcessScanner> (self, policy);
-                crashy->argsPrefix = { rig::scanSwitch, "--crash-test", "x", "y" };   // the child aborts
-                list.setCustomScanner (std::move (crashy));
-                juce::OwnedArray<juce::PluginDescription> found;
-                list.scanAndAddFile (notAPlugin.getFullPathName(), false, found, vst3);
-                CHECK (list.getBlacklistedFiles().contains (notAPlugin.getFullPathName()) && crashed.contains (notAPlugin.getFullPathName()),
-                       "a plug-in that crashes the scan is skipped and written down; Rigsmith keeps running");
-            }
-            {
-                // written down: never scanned again (no second process is even started)
-                OutOfProcessScanner sc (juce::File ("/no/such/program"), policy);
-                juce::OwnedArray<juce::PluginDescription> found;
-                CHECK (! sc.findPluginTypesFor (vst3, found, notAPlugin.getFullPathName()), "a plug-in that crashed before is not scanned again");
-            }
+            policy.isSkipped = [&] (const juce::String& f) { return skipped.contains (f); };
+            policy.onStarting = [&] (const juce::String& f) { log.add ("start " + f); };
+            policy.onFinished = [&] { log.add ("done"); };
+            InProcessScanner sc (policy);
+            juce::OwnedArray<juce::PluginDescription> found;
+            CHECK (sc.findPluginTypesFor (vst3, found, notAPlugin.getFullPathName()) && found.isEmpty()
+                   && log.size() == 2 && log[0].endsWith ("Fake.vst3") && log[1] == "done",
+                   "an in-process scan writes the plug-in down before touching it and clears it after");
+            skipped.add (notAPlugin.getFullPathName());
+            log.clear();
+            CHECK (! sc.findPluginTypesFor (vst3, found, notAPlugin.getFullPathName()) && log.isEmpty(),
+                   "a plug-in that crashed before is not scanned again");
+            log.clear();
+            CHECK (sc.findPluginTypesFor (vst3, found, "C:\\VST3\\Rigsmith.vst3") && log.isEmpty(), "Rigsmith is never loaded by a scan");
         }
         {
             // in the DAW: the plug-in being scanned is in Rigsmith.ini until it's done, so a crash is found next start
@@ -1267,8 +1250,8 @@ int main (int argc, char** argv)
             for (auto* f : fm.getFormats()) names &= ! f->fileMightContainThisPluginType ("C:\\Program Files\\Common Files\\VST3\\Rigsmith.vst3");
             CHECK (names, "Rigsmith.vst3 is never even looked at by a scan");
         }
-        CHECK (OutOfProcessScanner::isRigsmith ("C:\\Program Files\\Common Files\\VST3\\Rigsmith.vst3")
-               && ! OutOfProcessScanner::isRigsmith ("C:\\Program Files\\Common Files\\VST3\\ValhallaRoom.vst3"), "Rigsmith never scans itself");
+        CHECK (isRigsmithPlugin ("C:\\Program Files\\Common Files\\VST3\\Rigsmith.vst3")
+               && ! isRigsmithPlugin ("C:\\Program Files\\Common Files\\VST3\\ValhallaRoom.vst3"), "Rigsmith never scans itself");
     }
 
     //==========================================================================
@@ -1343,6 +1326,197 @@ int main (int argc, char** argv)
         CHECK (folder.size() == 2 && folder[0] == irA && folder[1] == irB, "a folder brings all its IRs, in order");
         const auto lib = Engine::capturesInFolder (testDir.getChildFile ("Captures/Lib"), false);
         CHECK (lib.size() == 6, "and all its .nam captures, sub-folders included");
+    }
+
+    //==========================================================================
+    std::printf ("--- v0.11: modulation, the new gate\n");
+    {
+        auto feed = [] (Engine& e, int blocks, std::function<float (int)> sig)
+        {
+            juce::AudioBuffer<float> buf (2, 256);
+            juce::MidiBuffer midi;
+            static int t = 0;
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int i = 0; i < 256; ++i) { const float x = sig (t++); buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                e.process (buf, midi);
+            }
+        };
+
+        // a knob's own value vs what the sound uses
+        {
+            GainBlock g;
+            const int p = 0;
+            const float base = g.getBase (p);
+            g.modulate (p, 0.25f);
+            CHECK (g.get (p) != base && g.getBase (p) == base && g.isModulated (p), "modulation moves the sound, not the knob");
+            g.set (p, g.getSpecs()[0].min);
+            CHECK (g.getBase (p) == g.getSpecs()[0].min && g.get (p) != g.getBase (p), "turning a modulated knob keeps the modulation on top");
+            g.unmodulate (p);
+            CHECK (g.get (p) == g.getBase (p) && ! g.isModulated (p), "removing it puts the sound back on the knob");
+            CHECK ((float) g.toState().getProperty ("p_" + g.getSpecs()[0].id) == g.getBase (p), "presets save the knob, not the modulated value");
+        }
+
+        Engine e;
+        e.prepare (48000.0, 256);
+        auto* eq = dynamic_cast<Block*> (e.insert (e.createNode (NodeType::Eq), e.getRoot(), 0));
+        const int mid = EqBlock::pMid;
+        {
+            // LFO 1 (sine, 1 Hz) on the EQ's mid
+            auto& lfo = e.mods.source (0);
+            lfo.set (LfoMod::pRate, 5.0f);
+            e.addModRoute (0, eq->id, mid, 0.5f);
+            float lo = 1e9f, hi = -1e9f;
+            for (int k = 0; k < 60; ++k)
+            {
+                feed (e, 2, [] (int) { return 0.0f; });
+                lo = juce::jmin (lo, eq->get (mid)); hi = juce::jmax (hi, eq->get (mid));
+            }
+            CHECK (hi - lo > 10.0f && eq->getBase (mid) == 0.0f, "an LFO sweeps a block's knob while the knob stays put");
+            CHECK (e.mods.routesTo (eq->id, mid).size() == 1 && e.mods.reach (eq->id, mid).getLength() > 0.99f, "the route is listed, with its reach");
+            e.addModRoute (0, eq->id, mid, 0.2f);
+            CHECK (e.mods.routes.size() == 1 && std::abs (e.mods.routes[0].amount - 0.2f) < 1e-6f, "dropping the same source again just changes the amount");
+
+            // saved with the preset, and back
+            const auto state = e.getState (false);
+            e.removeModRoute (0);
+            CHECK (e.mods.routes.empty() && eq->get (mid) == eq->getBase (mid), "removing a route returns the knob to normal");
+            lfo.set (LfoMod::pRate, 1.0f);
+            e.setState (state, false);
+            auto* eq2 = dynamic_cast<Block*> (e.findNode (eq->id));
+            CHECK (eq2 != nullptr && e.mods.routes.size() == 1 && e.mods.routes[0].target == eq2->id
+                   && std::abs (e.mods.source (0).getBase (LfoMod::pRate) - 5.0f) < 1e-4f, "routes and source settings are saved with the preset");
+            eq = eq2;
+        }
+        {
+            // an envelope speeding up an LFO: modulators modulate each other
+            auto& env = e.mods.source (3);
+            env.set (EnvMod::pAttack, 0.0f);
+            env.set (EnvMod::pSustain, 100.0f);
+            env.set (EnvMod::pThreshold, -40.0f);
+            auto& lfo2 = e.mods.source (1);
+            e.addModRoute (3, ModMatrix::targetFor (1), LfoMod::pRate, 0.6f);
+            feed (e, 40, [] (int) { return 0.0f; });
+            const float quiet = lfo2.get (LfoMod::pRate);
+            feed (e, 40, [] (int t) { return 0.5f * std::sin (t * 0.05f); });
+            const float playing = lfo2.get (LfoMod::pRate);
+            CHECK (playing > quiet * 3.0f && std::abs (lfo2.getBase (LfoMod::pRate) - quiet) < 1.0e-3f, "playing opens the envelope, which speeds up the LFO");
+            CHECK (env.value() > 0.9f, "the envelope sustains while the note rings");
+            feed (e, 200, [] (int) { return 0.0f; });
+            CHECK (env.value() < 0.05f, "and releases when it stops");
+            CHECK (e.describeModTarget (ModMatrix::targetFor (1), LfoMod::pRate) == "LFO 2 > Rate", "routes describe where they go");
+        }
+        {
+            // the sequencer steps through its values in time
+            auto& seq = dynamic_cast<SeqMod&> (e.mods.source (6));
+            seq.set (SeqMod::pSteps, 4.0f);
+            seq.set (SeqMod::pSync, 0.0f);   // free, 8 steps a second
+            seq.set (SeqMod::pRate, 8.0f);
+            for (int i = 0; i < 4; ++i) seq.set (SeqMod::pStep1 + i, (float) i / 3.0f);
+            e.addModRoute (6, eq->id, EqBlock::pLow, 0.5f);
+            std::set<int> seen;
+            for (int k = 0; k < 60; ++k) { feed (e, 1, [] (int) { return 0.0f; }); seen.insert (juce::roundToInt (seq.value() * 3.0f)); }
+            CHECK (seen.size() == 4, "the sequencer plays all its steps");
+        }
+        {
+            // the input level, and the pitch you play
+            auto& lvl = e.mods.source (7);
+            feed (e, 40, [] (int t) { return 0.3f * std::sin (t * 0.02f); });
+            const float loud = lvl.value();
+            feed (e, 300, [] (int t) { return 0.003f * std::sin (t * 0.02f); });
+            CHECK (loud > 0.6f && lvl.value() < 0.2f, "LEVEL follows how hard you play");
+            e.mods.watching = true;
+            for (int k = 0; k < 20; ++k)
+            {
+                feed (e, 4, [] (int t) { return 0.4f * std::sin (juce::MathConstants<float>::twoPi * 220.0f * (float) t / 48000.0f); });
+                e.mods.analysePitch();
+            }
+            CHECK (std::abs (e.mods.pitchHz.load() - 220.0f) < 3.0f, "PITCH hears the note (220 Hz)");
+            auto& pm = dynamic_cast<PitchMod&> (e.mods.source (8));
+            const float expect = std::log (220.0f / pm.get (PitchMod::pLow)) / std::log (pm.get (PitchMod::pHigh) / pm.get (PitchMod::pLow));
+            CHECK (std::abs (pm.value() - expect) < 0.05f, "and maps it between its low and high notes");
+            e.mods.watching = false;
+        }
+        {
+            // a block that's deleted takes its routes with it
+            const auto id = eq->id;
+            e.remove (id);
+            for (int k = 0; k < 60; ++k) juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+            bool any = false;
+            for (auto& r : e.mods.routes) any |= r.target == id;
+            CHECK (! any, "routes to a deleted block are dropped");
+        }
+
+        // the gate: Basic and Advanced
+        {
+            GateBlock gate;
+            CHECK (gate.panelOrder().size() == 4, "Basic: View, Threshold, Release, Range");
+            gate.set (GateBlock::pView, 1.0f);
+            const auto adv = gate.panelOrder().size();
+            gate.set (GateBlock::pBands, 1.0f);
+            CHECK (adv > 10 && gate.panelOrder().size() == adv + 2, "Advanced shows the rest, and Dual adds the high band's range and crossover");
+            gate.set (GateBlock::pBands, 0.0f);
+
+            gate.prepare (48000.0, 256);
+            juce::AudioBuffer<float> buf (2, 256);
+            auto run = [&] (float amp, int blocks, const float* key = nullptr)
+            {
+                float pk = 0;
+                for (int b = 0; b < blocks; ++b)
+                {
+                    for (int i = 0; i < 256; ++i) { const float x = amp * std::sin ((float) i * 0.3f); buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                    RigKey::data = key; RigKey::length = key != nullptr ? 256 : 0;
+                    gate.process (buf, 256);
+                    RigKey::data = nullptr; RigKey::length = 0;
+                    if (b >= blocks - 5) pk = juce::jmax (pk, buf.getMagnitude (0, 0, 256));
+                }
+                return pk;
+            };
+            CHECK (run (0.0005f, 40) < 0.0001f, "quiet hiss is gated");
+            CHECK (run (0.3f, 20) > 0.25f, "playing opens it");
+
+            // keyed from the rig's input: a loud signal stays shut while the guitar is silent
+            gate.set (GateBlock::pKey, 1.0f);
+            std::vector<float> silent (256, 0.0f), loud (256, 0.5f);
+            CHECK (run (0.3f, 150, silent.data()) < 0.01f, "keyed from the rig input: closed while the guitar is silent");
+            CHECK (run (0.3f, 20, loud.data()) > 0.25f, "open while it plays");
+            gate.set (GateBlock::pKey, 0.0f);
+
+            gate.set (GateBlock::pLookahead, 5.0f);
+            run (0.3f, 1);
+            CHECK (gate.getLatency() == 240, "lookahead is reported as latency (5 ms at 48k)");
+            gate.set (GateBlock::pLookahead, 0.0f);
+            run (0.3f, 1);
+        }
+        {
+            // dual band: the highs shut further than the lows
+            GateBlock gate;
+            gate.set (GateBlock::pView, 1.0f);
+            gate.set (GateBlock::pBands, 1.0f);
+            gate.set (GateBlock::pRange, -6.0f);
+            gate.set (GateBlock::pHighRange, -60.0f);
+            gate.set (GateBlock::pCrossover, 1000.0f);
+            gate.prepare (48000.0, 256);
+            auto level = [&] (float hz)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                float pk = 0;
+                int t = 0;
+                for (int b = 0; b < 80; ++b)
+                {
+                    for (int i = 0; i < 256; ++i, ++t)
+                    {
+                        const float x = 0.0005f * std::sin (juce::MathConstants<float>::twoPi * hz * (float) t / 48000.0f);
+                        buf.setSample (0, i, x); buf.setSample (1, i, x);
+                    }
+                    gate.process (buf, 256);
+                    if (b > 60) pk = juce::jmax (pk, buf.getMagnitude (0, 0, 256));
+                }
+                return gainToDb (pk / 0.0005f);
+            };
+            const float lowDb = level (100.0f), highDb = level (8000.0f);
+            CHECK (lowDb > -9.0f && lowDb < -3.0f && highDb < -40.0f, "dual band: closed, the lows drop by their range, the highs by theirs");
+        }
     }
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);

@@ -128,6 +128,15 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> box, juce::C
             p.startNewSubPath (P (5.5f, 4.5f)); p.quadraticTo (P (4, 7), P (5.5f, 9.5f));
             p.startNewSubPath (P (18.5f, 4.5f)); p.quadraticTo (P (20, 7), P (18.5f, 9.5f));
             break;
+        case Icon::Mod:   // a wave with a knob riding on it
+            p.startNewSubPath (P (2.5f, 12));
+            p.cubicTo (P (5.5f, 3), P (8.5f, 3), P (11, 12));
+            p.cubicTo (P (13.5f, 21), P (16.5f, 21), P (19.5f, 12));
+            p.lineTo (P (21.5f, 8));
+            g.strokePath (p, stroke);
+            p.clear();
+            g.fillEllipse (R (17.2f, 9.7f, 4.6f, 4.6f));
+            break;
         case Icon::Tooltip:   // speech bubble with a question mark
         {
             p.addRoundedRectangle (R (3.5f, 4, 17, 12.5f), 3.0f * s);

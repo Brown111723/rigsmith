@@ -8,6 +8,7 @@
 #include "Tuner.h"
 #include "IniFile.h"
 #include "Captures.h"
+#include "Modulation.h"
 
 namespace rig
 {
@@ -51,6 +52,21 @@ public:
     std::atomic<bool> limiterOn { true }, tunerMute { false }, tunerActive { false };
     std::atomic<float> inPeak { 0.0f }, outPeak { 0.0f };
     Tuner tuner;
+
+    //--- Modulation (v0.11) -----------------------------------------------------
+    ModMatrix mods;
+    /** Route a source to a knob (a block's id, or ModMatrix::targetFor (n) for a modulator).
+        The same source on the same knob just gets the new amount. Returns the route's index. */
+    int addModRoute (int source, const juce::String& target, int param, float amount);
+    void removeModRoute (int index);
+    void removeModRoutesTo (const juce::String& target, int param);
+    void removeModRoutesFrom (int source);
+    /** The block (or modulator) a route's target names, or null. Message thread. */
+    Block* findModTarget (const juce::String& target);
+    /** "Delay > Mix", "LFO 2 > Rate" */
+    juce::String describeModTarget (const juce::String& target, int param);
+    /** Host tempo and position (audio thread, before process). ppq < 0: not playing. */
+    void setTransport (double bpm, double ppq) noexcept { hostPpq = ppq; mods.hostBpm.store (bpm); }
 
     // v0.4 input / output stage (session settings, shown when you click IN / OUT)
     std::atomic<float> inputPan { 0.0f };                    // -1..1 balance
@@ -211,9 +227,9 @@ public:
     bool addCaptures (Sweepable&, const juce::Array<juce::File>&, juce::String& error);
     /** Every .nam (or IR) in a folder and its sub-folders, in name order (at most maxSweep). */
     static juce::Array<juce::File> capturesInFolder (const juce::File& folder, bool irs);
-    /** Picks how plug-ins are scanned: in a second copy of Rigsmith.exe (standalone, or the plug-in when
-        Rigsmith.exe is installed), else in this process with a note in the ini while each one is
-        scanned. Either way a plug-in that crashes is listed under [Skipped Plug-ins] and never scanned again. */
+    /** Plug-ins are scanned in this process with a note in the ini while each one is scanned:
+        one that crashes is found there on the next start, listed under [Skipped Plug-ins] and
+        never scanned again. Rigsmith itself is never scanned. */
     void setupPluginScanning (bool standalone);
     juce::StringArray getSkippedPlugins() const;
     void clearSkippedPlugins();
@@ -297,6 +313,9 @@ private:
 
     double sampleRate = 48000.0;
     int blockSize = 512;
+    std::vector<float> keyBuffer;   // the rig's input, for keyed gates and the modulators
+    double hostPpq = -1.0;
+    void pruneModRoutes();
     juce::SmoothedValue<float> inGain, outGain, inPanL, inPanR, outPanL, outPanR, outWidth;
     float limGain = 1.0f;   // zero-latency brickwall limiter state
 

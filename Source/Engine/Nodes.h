@@ -13,7 +13,9 @@ enum class NodeType
     Wah, Chorus, Flanger, Phaser, Tremolo, Vibe, Rotary,
     Delay, Reverb, Pitch,
     // v0.4
-    Tuner
+    Tuner,
+    // v0.11: a modulation source (lives in the MOD section, not in the rig)
+    Modulator
 };
 
 juce::String nodeTypeToString (NodeType);
@@ -49,6 +51,15 @@ private:
         std::vector<float> data = std::vector<float> ((size_t) size, 0.0f);
     };
     Stream pre, post;
+};
+
+//==============================================================================
+/** The guitar as it came into the rig, for the stretch of audio being processed right now
+    (a gate later in the chain can be keyed from it). Set by the engine on the audio thread. */
+struct RigKey
+{
+    static inline thread_local const float* data = nullptr;
+    static inline thread_local int length = 0;
 };
 
 //==============================================================================
@@ -199,7 +210,7 @@ inline ParamSpec Choice (const juce::String& id, const juce::String& name, const
 
 //==============================================================================
 /** How a block's display draws what its knobs are doing. */
-enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope, Tuner };
+enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope, Tuner, Gate, Modulator };
 
 struct DelayTap { float timeSec, gain; int side; };   // side: -1 left, 0 centre, 1 right
 
@@ -210,14 +221,24 @@ public:
 
     const std::vector<ParamSpec>& getSpecs() const noexcept { return specs; }
     int numParams() const noexcept { return (int) specs.size(); }
-    float get (int i) const noexcept { return values[(size_t) i].load (std::memory_order_relaxed); }
+    /** The value the sound uses: the knob, moved by any modulation routed to it. */
+    float get (int i) const noexcept { return effective[(size_t) i].load (std::memory_order_relaxed); }
     float get (const char* pid) const noexcept { return get (indexOf (pid)); }
     int getChoice (int i) const noexcept { return juce::roundToInt (get (i)); }
+    /** Where the knob is (what's saved, shown and randomised), whatever modulation is doing. */
+    float getBase (int i) const noexcept { return values[(size_t) i].load (std::memory_order_relaxed); }
     void set (int i, float v) noexcept
     {
         const float c = juce::jlimit (specs[(size_t) i].min, specs[(size_t) i].max, v);
         if (values[(size_t) i].exchange (c) != c) touched();
+        if (! modulated[(size_t) i].load (std::memory_order_relaxed)) effective[(size_t) i].store (c, std::memory_order_relaxed);
     }
+
+    /** Audio thread: the knob moved by `offset` (in knob travel, -1..1) for now. */
+    void modulate (int i, float offset) noexcept;
+    /** Back to the knob (a route was removed). */
+    void unmodulate (int i) noexcept;
+    bool isModulated (int i) const noexcept { return modulated[(size_t) i].load (std::memory_order_relaxed); }
     int indexOf (const juce::String& pid) const;
     juce::String formatValue (int i) const;
     virtual juce::String formatValue (int i, float v) const;
@@ -255,7 +276,8 @@ protected:
     void updateMeters (float inPeak, float outPeak, float grDb) noexcept;
 
     std::vector<ParamSpec> specs;
-    std::unique_ptr<std::atomic<float>[]> values;
+    std::unique_ptr<std::atomic<float>[]> values, effective;
+    std::unique_ptr<std::atomic<bool>[]> modulated;
 };
 
 //==============================================================================

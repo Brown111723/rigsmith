@@ -62,6 +62,10 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     addAndMakeVisible (viewport);
     addChildComponent (rigMap);
     addAndMakeVisible (inspector);
+    addChildComponent (modPanel);
+    if (juce::SystemStats::getEnvironmentVariable ("RIGSMITH_DEMO_AUDIO", {}).isNotEmpty())
+        demoAudio = std::make_unique<DemoAudio> (processor);
+    modPanel.onClose = [this] { setModVisible (false); };
     addChildComponent (ioPanel);
     ioPanel.onResetOvers = [this] { levels.inOvers = levels.outOvers = 0; };
     addAndMakeVisible (library);
@@ -88,6 +92,9 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     divider.setTooltip ("Drag to resize the panel. Double-click to make it tall / normal");
 
     libraryVisible = engine.getSetting ("libraryVisible", true);
+    modVisible = engine.getSetting ("modVisible", false);
+    modPanel.setVisible (modVisible);
+    header.modButton.setToggleState (modVisible, juce::dontSendNotification);
     inspectorHeight = getIntSetting ("inspectorHeight", 370);
     if (inspectorHeight == 330) inspectorHeight = 370;   // the old default: a little taller now
     randomiser.options.usePlugins = engine.getSetting ("randomUsePlugins", true);
@@ -98,6 +105,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     header.onRandom = [this] { randomiseRig(); };
     header.onRandomMenu = [this] { showRigRandomMenu(); };
     header.onLibrary = [this] { setLibraryVisible (! libraryVisible); };
+    header.onMod = [this] { setModVisible (! modVisible); };
     header.onFullScreen = [this] { setFullScreen (! isFullScreen()); };
     header.showFullScreenButton = processor.isStandalone();
     header.library.setToggleState (libraryVisible, juce::dontSendNotification);
@@ -177,6 +185,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
 
 RigsmithEditor::~RigsmithEditor()
 {
+    demoAudio.reset();
     stopTimer();
     setIntSetting ("inspectorHeight", inspectorHeight);
     if (juce::Desktop::getInstance().getKioskModeComponent() == getTopLevelComponent())
@@ -245,9 +254,11 @@ void RigsmithEditor::resized()
     header.setBounds (r.removeFromTop (64));
     library.setVisible (libraryVisible);
     if (libraryVisible) library.setBounds (r.removeFromRight (300));
-    const int ih = juce::jlimit (220, juce::jmax (220, r.getHeight() - 160), inspectorHeight);
+    const int modH = modVisible ? rig::ModPanel::preferredHeight : 0;
+    const int ih = juce::jlimit (220, juce::jmax (220, r.getHeight() - 160 - modH), inspectorHeight);
     inspector.setBounds (r.removeFromBottom (ih));
     ioPanel.setBounds (inspector.getBounds());
+    if (modVisible) modPanel.setBounds (r.removeFromBottom (rig::ModPanel::preferredHeight));
     divider.setBounds (r.removeFromBottom (8));
     graphArea = r;
     layoutGraph (r);
@@ -288,6 +299,43 @@ void RigsmithEditor::updateTuner()
 }
 
 //==============================================================================
+struct RigsmithEditor::DemoAudio : private juce::Timer
+{
+    explicit DemoAudio (RigsmithProcessor& p) : proc (p)
+    {
+        proc.prepareToPlay (48000.0, 480);
+        buffer.setSize (2, 480);
+        startTimer (10);
+    }
+    ~DemoAudio() override { stopTimer(); }
+    void timerCallback() override
+    {
+        static const float notes[] { 82.4f, 110.0f, 146.8f, 196.0f, 329.6f, 220.0f, 164.8f, 123.5f };
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            if (--untilNext <= 0)
+            {
+                untilNext = 18000 + rng.nextInt (20000);
+                hz = notes[rng.nextInt (8)];
+                amp = 0.25f + rng.nextFloat() * 0.4f;
+            }
+            phase += hz / 48000.0f;
+            phase -= std::floor (phase);
+            const float x = amp * (2.0f * phase - 1.0f);
+            amp *= 0.99993f;
+            buffer.setSample (0, i, x);
+            buffer.setSample (1, i, x);
+        }
+        juce::MidiBuffer midi;
+        proc.processBlock (buffer, midi);
+    }
+    RigsmithProcessor& proc;
+    juce::AudioBuffer<float> buffer;
+    juce::Random rng;
+    int untilNext = 0;
+    float hz = 110.0f, amp = 0.0f, phase = 0.0f;
+};
+
 void RigsmithEditor::hideStandaloneOptionsButton()
 {
     // the standalone window's own "Options" button: its items live in the menu instead
@@ -1354,7 +1402,7 @@ void RigsmithEditor::scanForNewPlugins (bool always)
         const auto path = engine.getPluginPaths (*f);   // the folders in Rigsmith.ini
         juce::StringArray fresh;
         for (auto& file : f->searchPathsForPlugins (path, true, false))
-            if (! blacklist.contains (file) && ! OutOfProcessScanner::isRigsmith (file) && ! engine.knownPlugins.isListingUpToDate (file, *f))
+            if (! blacklist.contains (file) && ! isRigsmithPlugin (file) && ! engine.knownPlugins.isListingUpToDate (file, *f))
                 fresh.add (file);
         if (fresh.isEmpty()) continue;
         showMessage ("Found " + juce::String (fresh.size()) + " new " + f->getName() + " plug-in" + (fresh.size() == 1 ? "" : "s") + " - scanning");
@@ -1399,6 +1447,7 @@ bool RigsmithEditor::keyPressed (const juce::KeyPress& k)
     if (! k.getModifiers().isCommandDown())
     {
         if (c == 'l' || c == 'L') { setLibraryVisible (! libraryVisible); return true; }
+        if (c == 'm' || c == 'M') { setModVisible (! modVisible); return true; }
         if (auto* n = engine.findNode (selectedId))
         {
             if (c == 'r') { randomise (*n, RandomSettings); return true; }
@@ -1438,6 +1487,15 @@ int RigsmithEditor::getIntSetting (const juce::String& key, int def) const
 void RigsmithEditor::setIntSetting (const juce::String& key, int value)
 {
     engine.setIntSetting (key, value);
+}
+
+void RigsmithEditor::setModVisible (bool v)
+{
+    modVisible = v;
+    modPanel.setVisible (v);
+    header.modButton.setToggleState (v, juce::dontSendNotification);
+    engine.setSetting ("modVisible", v);
+    resized();
 }
 
 void RigsmithEditor::setLibraryVisible (bool v)

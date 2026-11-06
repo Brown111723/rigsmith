@@ -21,12 +21,13 @@ Header::Header (Engine& e) : engine (e)
     random.onClick = [this] { if (onRandom) onRandom(); };
     random.onRightClick = [this] { if (onRandomMenu) onRandomMenu(); };
     tunerButton.onClick = [this] { if (onTuner) onTuner(); };
+    modButton.onClick = [this] { if (onMod) onMod(); };
     library.onClick = [this] { if (onLibrary) onLibrary(); };
     fullScreen.onClick = [this] { if (onFullScreen) onFullScreen(); };
     tips.onClick = [this] { if (onTooltips) onTooltips(); };
     menu.setTooltip ("Menu: audio / MIDI settings, folders, plug-ins, MIDI mappings, shortcuts");
     for (auto* b : std::initializer_list<juce::Component*> { &prev, &next, &presetButton, &save, &menu, &undo, &redo,
-                                                             &random, &tunerButton, &library, &fullScreen, &tips })
+                                                             &random, &tunerButton, &modButton, &library, &fullScreen, &tips })
         addAndMakeVisible (b);
 
     for (int i = 0; i < kNumScenes; ++i)
@@ -183,6 +184,8 @@ void Header::resized()
     if (showFullScreenButton) { fullScreen.setBounds (r.removeFromRight (bh)); r.removeFromRight (gap); }
     library.setBounds (r.removeFromRight (bh));
     r.removeFromRight (gap);
+    modButton.setBounds (r.removeFromRight (bh));
+    r.removeFromRight (gap);
     tunerButton.setBounds (r.removeFromRight (bh));
     r.removeFromRight (gap);
     random.setBounds (r.removeFromRight (bh));
@@ -196,7 +199,7 @@ void Header::resized()
         sceneWidths[i] = juce::jlimit (44, 96, juce::GlyphArrangement::getStringWidthInt (font (13.0f, true), scenes[i].getButtonText()) + 22);
         sceneW += sceneWidths[i] + 5;
     }
-    const int statusW = 190;   // audio / CPU readout between the scenes and the dice
+    const int statusW = 190 - bh - 6;   // audio / CPU readout between the scenes and the dice
     const int fixed = bh + 4 + bh + 4 + 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + sceneW + statusW;
     const bool showName = r.getWidth() - (30 + textW + 10) - fixed >= 150;
     logoArea = r.removeFromLeft (showName ? 30 + textW : 30);

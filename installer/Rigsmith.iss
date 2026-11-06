@@ -23,6 +23,7 @@ SolidCompression=yes
 WizardStyle=modern
 LicenseFile=..\LICENSE
 UninstallDisplayIcon={app}\Rigsmith.exe
+SetupIconFile=..\Resources\Rigsmith.ico
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"

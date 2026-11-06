@@ -61,6 +61,18 @@ void RigsmithProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     for (int ch = ins; ch < buffer.getNumChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
 
+    {
+        // the host's tempo and position, for synced LFOs and the sequencer
+        double bpm = 0.0, ppq = -1.0;
+        if (auto* ph = getPlayHead())
+            if (const auto pos = ph->getPosition())
+            {
+                bpm = pos->getBpm().orFallback (0.0);
+                if (pos->getIsPlaying()) ppq = pos->getPpqPosition().orFallback (-1.0);
+            }
+        engine.setTransport (bpm, ppq);
+    }
+
     if (buffer.getNumChannels() >= 2)
     {
         engine.process (buffer, midi);
@@ -114,14 +126,5 @@ void RigsmithProcessor::setStateInformation (const void* data, int size)
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    // "Rigsmith.exe --rigsmith-scan <format> <plug-in> <out.xml>": Rigsmith scanning one plug-in for
-    // itself in a separate process (so a crash only loses that process). Scan, then quit at once.
-    if (juce::JUCEApplicationBase::isStandaloneApp())
-    {
-        const auto args = juce::JUCEApplicationBase::getCommandLineParameterArray();
-        for (auto& a : args)
-            if (a.unquoted() == rig::scanSwitch)
-                std::_Exit (rig::runScanCommand (args));
-    }
     return new RigsmithProcessor();
 }

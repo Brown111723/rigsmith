@@ -13,30 +13,13 @@ struct ScanPolicy
     std::function<void()> onFinished;
 };
 
-/** Scans each plug-in in a separate copy of Rigsmith.exe (started with --rigsmith-scan), so one that
-    crashes or hangs while being scanned is skipped, recorded in Rigsmith.ini and never scanned again,
-    instead of taking Rigsmith down with it. */
-class OutOfProcessScanner : public juce::KnownPluginList::CustomScanner
-{
-public:
-    OutOfProcessScanner (juce::File exe, ScanPolicy);
+/** Rigsmith's own plug-in: never scanned or listed (no reason to host Rigsmith inside Rigsmith,
+    and loading it during a scan is what used to crash). */
+bool isRigsmithPlugin (const juce::String& fileOrIdentifier);
 
-    bool findPluginTypesFor (juce::AudioPluginFormat&, juce::OwnedArray<juce::PluginDescription>& result,
-                             const juce::String& fileOrIdentifier) override;
-
-    /** Rigsmith's own plug-in: never scanned (no reason to host Rigsmith inside Rigsmith). */
-    static bool isRigsmith (const juce::String& fileOrIdentifier);
-
-    int timeoutMs = 60000;   // a plug-in that takes longer than this to scan is skipped
-    juce::StringArray argsPrefix;   // for tests
-
-private:
-    juce::File exe;
-    ScanPolicy policy;
-};
-
-/** Scans in this process (inside a DAW there's no other choice), writing the file being scanned to
-    Rigsmith.ini first: if it crashes, the next start finds it there and never scans it again. */
+/** Scans each plug-in in this process, writing the file being scanned to Rigsmith.ini first
+    (a dead-man's pedal): if it crashes, the next start finds it there, moves it to
+    [Skipped Plug-ins] and never scans it again. No second process, no command-line tricks. */
 class InProcessScanner : public juce::KnownPluginList::CustomScanner
 {
 public:
@@ -47,11 +30,6 @@ public:
 private:
     ScanPolicy policy;
 };
-
-/** The command-line switch that makes Rigsmith.exe scan one plug-in and quit. */
-static constexpr const char* scanSwitch = "--rigsmith-scan";
-/** Does the scan for "--rigsmith-scan <format> <file> <out.xml>": returns the exit code. */
-int runScanCommand (const juce::StringArray& args);
 
 /** VST3 (and VST2 if enabled), but never finding Rigsmith itself. */
 void addPluginFormats (juce::AudioPluginFormatManager&);

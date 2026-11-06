@@ -104,7 +104,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **Add anywhere**: a small **+** sits on the wire before every block, as well as the big one at the end of each chain.
 - **Remembered folders**: several NAM, IR and plug-in folders, set once in **Menu → Settings & folders**.
 - **`Rigsmith.ini`** holds your folders, preferences and randomise ticks, and is read every time Rigsmith starts. Rigsmith looks for it next to `Rigsmith.exe` first (a **portable** copy), then in `%APPDATA%\Rigsmith\`, and creates it there if neither exists. Settings has **Show Rigsmith.ini** and **Make this copy portable** buttons. It's plain text, so it's safe to edit or back up. Older settings are brought across automatically.
-- **Crash-proof plug-in scanning, one exe**: `Rigsmith.exe` scans each plug-in in a second copy of itself, so one that crashes or hangs is just skipped instead of taking Rigsmith down. It's written in `Rigsmith.ini` under `[Skipped Plug-ins]` and never scanned again (menu > **Retry skipped plug-ins** to try again). The VST3 borrows `Rigsmith.exe` for this when it's installed; otherwise it scans inside the DAW, noting each plug-in in the ini first, so if one crashes the DAW it's skipped from the next start. Rigsmith never scans (or lists) itself.
+- **Crash-safe plug-in scanning, one exe**: plug-ins are scanned inside Rigsmith (no second process, nothing for antivirus to object to). Each one is written in `Rigsmith.ini` (`[Plug-ins] Scanning=`) before it's touched, so if one crashes Rigsmith (or the DAW), the next start finds it, moves it to `[Skipped Plug-ins]` and never scans it again (menu > **Retry skipped plug-ins** to try again). Rigsmith never scans, loads or lists itself.
 - **Plug-in scanning**: the first run scans for plug-ins. After that, Rigsmith opens straight away with the remembered list, unless you tick **Look for new plug-ins every time Rigsmith opens** (or click **Scan**).
 - Every dB readout is shown to one decimal place.
 - **Rig map**: when the rig is longer than the window, a small miniature of it floats at the bottom of the graph; click or drag on it to jump anywhere.
@@ -112,6 +112,18 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - The standalone's audio settings and session save / load are in the menu (no separate Options button).
 - **More room**: drag the bar above the bottom panel to make it taller (double-click toggles), hide the library (`L`), and go **full screen** (`F11`, or open full screen every time in Settings).
 - **Init** is always the first preset; Page Up / Down steps from Init through your presets.
+
+**Modulation** (the wave button in the top bar, or `M`)
+- **Nine sources**: three **LFOs** (sine, triangle, saws, square, sample & hold, smooth drift; free in Hz or synced from 4 bars to 1/16 triplets; bipolar or unipolar; restart on every pick), three **envelopes** (ADSR, triggered by your picking, with a threshold), a 16-step **sequencer** (draw the steps, glide, synced or free), **LEVEL** (follows how hard you play, between a floor and a ceiling) and **PITCH** (follows the note you play, between a low and a high note).
+- **Drag a source onto any knob** of any built-in block, an amp's Capture sweep (an envelope morphing clean into crunch as you dig in), or another source's knob: an envelope can speed up an LFO, an LFO can sweep the sequencer's glide. Right-click any knob for **Modulate with** and the routes into it.
+- **The knob stays where you put it**: rings round it show how far each source can move it, and a dot shows where the sound is right now. Presets, the dice and undo all keep the knob's own setting.
+- **The analyzer**: each source's chip has a live trace; the big scope shows the last five seconds of the selected source (and the others in use, or all of them), with its destinations underneath and a depth slider (-100..100%) for each.
+- Synced sources follow the DAW's tempo and bar position in the plug-in; in the app they use the tempo set in the MOD panel. Routes and source settings are saved with the preset. (Hosted VST3 parameters can't be modulated yet; MIDI-learn them instead.)
+
+**Noise gate** (Basic / Advanced, after Boz Digital's Gatey Watey)
+- **Basic**: Threshold, Release, Range.
+- **Advanced**: attack, hold and hysteresis (separate open and close thresholds); a **key filter** (low cut so palm-mutes don't hold it open, high cut so hiss doesn't); key from **this signal** or the **rig input** (put the gate after a high-gain amp and key it from your clean guitar, like a Decimator); up to 10 ms **lookahead** so it opens before the pick; and **dual band**: a crossover, with separate ranges so the highs (hiss) close further than the lows; **key listen** to hear what the gate hears.
+- A scrolling scope shows the key level, the open and close thresholds (drag the threshold line), the gain, and a lane lit while the gate is open.
 
 **Hosting & live use**
 - Hosts any **VST3** effect (and VST2 in builds made with the VST2 SDK; see below). Plug-in state is saved in your presets, and a missing plug-in keeps its settings until you reinstall it.

@@ -6,6 +6,12 @@
 namespace rig
 {
 //==============================================================================
+/** Noise gate, two faces. Basic: Threshold, Release, Range - set and forget.
+    Advanced (after Boz Digital's Gatey Watey): attack, hold and hysteresis, a filtered key
+    (cut the lows so palm mutes don't hold it open, the highs so hiss doesn't), the key taken
+    from the guitar as it enters the rig (gate after a high-gain amp, keyed by the clean DI,
+    like an ISP Decimator), lookahead so fast attacks keep their pick, and dual-band range:
+    close the highs (hiss) further than the lows (body) with a crossover between them. */
 class GateBlock : public Block
 {
 public:
@@ -13,8 +19,20 @@ public:
     juce::String getName() const override { return "Noise Gate"; }
     juce::String getDetail() const override;
     float getReduction() const noexcept { return reductionDb.load(); }
-    Visual getVisual() const override { return Visual::Dynamics; }
+    Visual getVisual() const override { return Visual::Gate; }
     float transferDb (float inDb) const override;
+    std::vector<int> panelOrder() const override;
+    int getLatency() const noexcept override { return latency.load(); }
+
+    enum Params { pThreshold = 0, pRelease, pHold, pRange, pView, pAttack, pHysteresis, pLookahead,
+                  pKeyHpf, pKeyLpf, pKey, pBands, pCrossover, pHighRange, pListen };
+    bool isAdvanced() const noexcept { return getChoice (pView) == 1; }
+    bool isDual() const noexcept { return getChoice (pBands) == 1; }
+
+    /** For the scope: the loudest key level and the deepest gain since the last call (dB). */
+    float takeKeyPeakDb() noexcept { return gainToDb (keyPeak.exchange (0.0f)); }
+    float takeGainDb() noexcept { return gainToDb (minGainSeen.exchange (1.0f)); }
+    bool isOpen() const noexcept { return openNow.load(); }
 
 protected:
     void prepareImpl (double sr, int block) override;
@@ -24,7 +42,14 @@ private:
     float env = 0, gain = 0;
     int holdCounter = 0;
     bool open = false;
-    std::atomic<float> reductionDb { 0.0f };
+    Biquad keyHpf, keyLpf;
+    juce::dsp::LinkwitzRileyFilter<float> xover;
+    ChangeWatch watch;
+    juce::AudioBuffer<float> delay;
+    int delayPos = 0;
+    std::atomic<int> latency { 0 };
+    std::atomic<float> reductionDb { 0.0f }, keyPeak { 0.0f }, minGainSeen { 1.0f };
+    std::atomic<bool> openNow { false };
 };
 
 //==============================================================================

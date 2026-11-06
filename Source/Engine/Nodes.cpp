@@ -11,7 +11,7 @@ static const std::pair<NodeType, const char*> typeNames[] = {
     { NodeType::Chorus, "chorus" }, { NodeType::Flanger, "flanger" }, { NodeType::Phaser, "phaser" },
     { NodeType::Tremolo, "tremolo" }, { NodeType::Vibe, "vibe" }, { NodeType::Rotary, "rotary" },
     { NodeType::Delay, "delay" }, { NodeType::Reverb, "reverb" }, { NodeType::Pitch, "pitch" },
-    { NodeType::Tuner, "tuner" }
+    { NodeType::Tuner, "tuner" }, { NodeType::Modulator, "modulator" }
 };
 
 const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups()
@@ -68,7 +68,7 @@ juce::String builtInBlurb (NodeType t)
 {
     switch (t)
     {
-        case NodeType::Gate:      return "Cuts hiss and hum between notes";
+        case NodeType::Gate:      return "Cuts hiss and hum between notes. Advanced: keyed from the rig input, dual-band, lookahead";
         case NodeType::Comp:      return "Evens out your picking, adds sustain";
         case NodeType::Limiter:   return "Hard ceiling on peaks";
         case NodeType::Expander:  return "Gentle downward expansion";
@@ -164,7 +164,7 @@ Category categoryForBuiltIn (NodeType t)
         case NodeType::Eq:                                                       return Category::Eq;
         case NodeType::Wah:                                                      return Category::Filter;
         case NodeType::Chorus: case NodeType::Flanger: case NodeType::Phaser: case NodeType::Tremolo:
-        case NodeType::Vibe: case NodeType::Rotary:                              return Category::Modulation;
+        case NodeType::Vibe: case NodeType::Rotary: case NodeType::Modulator:    return Category::Modulation;
         case NodeType::Delay:                                                    return Category::Delay;
         case NodeType::Reverb:                                                   return Category::Reverb;
         case NodeType::Pitch:                                                    return Category::Pitch;
@@ -502,7 +502,7 @@ void Block::randomise (juce::Random& rng, float amount)
         if (full) p = lo + (hi - lo) * rng.nextFloat();
         else
         {
-            const float cur = s.toProportion (get ((int) i));
+            const float cur = s.toProportion (getBase ((int) i));
             p = juce::jlimit (juce::jmin (lo, cur), juce::jmax (hi, cur), cur + (rng.nextFloat() * 2.0f - 1.0f) * 0.35f * amount);
         }
         float v = s.fromProportion (p);
@@ -513,10 +513,30 @@ void Block::randomise (juce::Random& rng, float amount)
 
 //==============================================================================
 Block::Block (NodeType t, std::vector<ParamSpec> s)
-    : Node (t), specs (std::move (s)), values (new std::atomic<float>[specs.size()])
+    : Node (t), specs (std::move (s)), values (new std::atomic<float>[specs.size()]),
+      effective (new std::atomic<float>[specs.size()]), modulated (new std::atomic<bool>[specs.size()])
 {
     for (size_t i = 0; i < specs.size(); ++i)
+    {
         values[i].store (specs[i].def);
+        effective[i].store (specs[i].def);
+        modulated[i].store (false);
+    }
+}
+
+void Block::modulate (int i, float offset) noexcept
+{
+    const auto& s = specs[(size_t) i];
+    modulated[(size_t) i].store (true, std::memory_order_relaxed);
+    float v = s.fromProportion (juce::jlimit (0.0f, 1.0f, s.toProportion (getBase (i)) + offset));
+    if (s.isChoice() || s.toggle) v = (float) juce::roundToInt (v);
+    effective[(size_t) i].store (juce::jlimit (s.min, s.max, v), std::memory_order_relaxed);
+}
+
+void Block::unmodulate (int i) noexcept
+{
+    modulated[(size_t) i].store (false, std::memory_order_relaxed);
+    effective[(size_t) i].store (getBase (i), std::memory_order_relaxed);
 }
 
 int Block::indexOf (const juce::String& pid) const
@@ -561,7 +581,7 @@ juce::ValueTree Block::toState() const
 {
     auto v = Node::toState();
     for (size_t i = 0; i < specs.size(); ++i)
-        v.setProperty ("p_" + specs[i].id, get ((int) i), nullptr);
+        v.setProperty ("p_" + specs[i].id, getBase ((int) i), nullptr);
     return v;
 }
 

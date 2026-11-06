@@ -33,6 +33,166 @@ Knob::Knob (const juce::String& name, juce::Colour colour)
     slider.addMouseListener (this, false);
 }
 
+Knob::~Knob() { stopTimer(); }
+
+void Knob::setModTarget (Engine& e, Block& b, const juce::String& target, int param)
+{
+    modEngine = &e;
+    modBlock = &b;
+    modTarget = target;
+    modParam = param;
+    startTimerHz (30);
+}
+
+void Knob::timerCallback()
+{
+    if (modBlock == nullptr) return;
+    const size_t n = modEngine->mods.routesTo (modTarget, modParam).size();
+    const float live = modBlock->get (modParam);
+    if (n != lastRoutes || (n > 0 && live != lastLive))
+    {
+        lastRoutes = n;
+        lastLive = live;
+        repaint();
+    }
+}
+
+static bool isModSourceDrag (const juce::String& s) { return s.startsWith ("modsrc:"); }
+
+bool Knob::isInterestedInDragSource (const SourceDetails& d)
+{
+    if (modEngine == nullptr || ! isModSourceDrag (d.description.toString())) return false;
+    const int src = d.description.toString().fromFirstOccurrenceOf (":", false, false).getIntValue();
+    return juce::isPositiveAndBelow (src, ModMatrix::numSources) && &modEngine->mods.source (src) != modBlock;   // not onto its own knobs
+}
+
+void Knob::itemDragEnter (const SourceDetails& d)
+{
+    if (modEngine == nullptr) return;
+    const int src = d.description.toString().fromFirstOccurrenceOf (":", false, false).getIntValue();
+    if (! juce::isPositiveAndBelow (src, ModMatrix::numSources)) return;
+    dropHint = "+ " + modEngine->mods.source (src).getName();
+    dropColour = modEngine->mods.source (src).getColour();
+    repaint();
+}
+
+void Knob::itemDragExit (const SourceDetails&) { dropHint.clear(); repaint(); }
+
+void Knob::itemDropped (const SourceDetails& d)
+{
+    dropHint.clear();
+    repaint();
+    if (modEngine == nullptr || ! isModSourceDrag (d.description.toString())) return;
+    const int src = d.description.toString().fromFirstOccurrenceOf (":", false, false).getIntValue();
+    if (! juce::isPositiveAndBelow (src, ModMatrix::numSources)) return;
+    const bool bi = modEngine->mods.source (src).isBipolar();
+    // start where it's audible but not wild: half the travel (bipolar: a quarter each way)
+    const float base = modBlock->getSpecs()[(size_t) modParam].toProportion (modBlock->getBase (modParam));
+    float amount = bi ? 0.25f : 0.5f;
+    if (! bi && base > 0.6f) amount = -0.5f;   // near the top: modulate downwards
+    modEngine->addModRoute (src, modTarget, modParam, amount);
+    modEngine->message (modEngine->mods.source (src).getName() + " now moves " + modEngine->describeModTarget (modTarget, modParam)
+                        + ". Set how far in the MOD panel (or right-click the knob)");
+    lastRoutes = 0;
+    repaint();
+}
+
+void Knob::paintOverChildren (juce::Graphics& g)
+{
+    // modulation: a ring per source showing how far it can move the knob, and a dot where it is now
+    if (modEngine != nullptr && modBlock != nullptr)
+    {
+        const auto routes = modEngine->mods.routesTo (modTarget, modParam);
+        if (! routes.empty())
+        {
+            const auto& sp = modBlock->getSpecs()[(size_t) modParam];
+            const auto b = slider.getBounds().toFloat();
+            const auto c = b.getCentre();
+            const float a0 = juce::degreesToRadians (225.0f), a1 = juce::degreesToRadians (495.0f);
+            const float base = sp.toProportion (modBlock->getBase (modParam));
+            float rad = b.getWidth() * 0.5f - 1.5f;
+            for (auto* r : routes)
+            {
+                const auto& src = modEngine->mods.source (r->source);
+                const float amt = r->amount;
+                const float lo = juce::jlimit (0.0f, 1.0f, src.isBipolar() ? base - std::abs (amt) : base + juce::jmin (0.0f, amt));
+                const float hi = juce::jlimit (0.0f, 1.0f, src.isBipolar() ? base + std::abs (amt) : base + juce::jmax (0.0f, amt));
+                juce::Path arc;
+                arc.addCentredArc (c.x, c.y, rad, rad, 0.0f, a0 + (a1 - a0) * lo, a0 + (a1 - a0) * juce::jmax (hi, lo + 0.004f), true);
+                g.setColour (src.getColour().withAlpha (0.85f));
+                g.strokePath (arc, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                rad += 3.2f;
+            }
+            const float live = sp.toProportion (modBlock->get (modParam));
+            const auto p = c.getPointOnCircumference (b.getWidth() * 0.5f - 1.5f, a0 + (a1 - a0) * live);
+            g.setColour (theme::text);
+            g.fillEllipse (p.x - 3.0f, p.y - 3.0f, 6.0f, 6.0f);
+            g.setColour (modEngine->mods.source (routes.front()->source).getColour());
+            g.drawEllipse (p.x - 3.0f, p.y - 3.0f, 6.0f, 6.0f, 1.2f);
+        }
+    }
+
+    if (dropHint.isNotEmpty())
+    {
+        g.setColour (dropColour);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (2.0f), 10.0f, 2.0f);
+        g.setFont (theme::font (11.0f, true));
+        g.drawText (dropHint, getLocalBounds().removeFromBottom (18), juce::Justification::centred);
+    }
+}
+
+//==============================================================================
+void showKnobMenu (Engine& engine, Block& block, const juce::String& target, int param, juce::Component* anchor, std::function<void()> learn)
+{
+    juce::PopupMenu m, with;
+    const auto routes = engine.mods.routesTo (target, param);
+    const auto name = block.getSpecs()[(size_t) param].name;
+    m.addSectionHeader (name);
+    if (learn) m.addItem (1, "MIDI learn...");
+    for (int s = 0; s < ModMatrix::numSources; ++s)
+    {
+        auto& src = engine.mods.source (s);
+        if (&src == &block) continue;   // a modulator can't usefully drive its own knobs from here
+        bool on = false;
+        for (auto* r : routes) on |= r->source == s;
+        with.addColouredItem (100 + s, src.getName() + "  -  " + src.describe(), src.getColour(), true, on);
+    }
+    m.addSubMenu ("Modulate with", with);
+    if (! routes.empty())
+    {
+        m.addSeparator();
+        for (auto* r : routes)
+        {
+            const int pct = juce::roundToInt (r->amount * 100.0f);
+            m.addItem (200 + r->source, "Remove " + engine.mods.source (r->source).getName() + " (" + (pct > 0 ? "+" : "") + juce::String (pct) + "%)");
+        }
+        if (routes.size() > 1) m.addItem (300, "Remove all modulation");
+    }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor),
+                     [&engine, &block, target, param, learn, sp = juce::Component::SafePointer<juce::Component> (anchor)] (int r)
+    {
+        if (r == 1 && learn) learn();
+        else if (r >= 100 && r < 100 + ModMatrix::numSources)
+        {
+            const int s = r - 100;
+            const bool bi = engine.mods.source (s).isBipolar();
+            engine.addModRoute (s, target, param, bi ? 0.25f : 0.5f);
+            engine.message (engine.mods.source (s).getName() + " now moves " + engine.describeModTarget (target, param));
+            juce::ignoreUnused (block);
+        }
+        else if (r >= 200 && r < 200 + ModMatrix::numSources)
+        {
+            for (int i = (int) engine.mods.routes.size(); --i >= 0;)
+            {
+                const auto& rt = engine.mods.routes[(size_t) i];
+                if (rt.source == r - 200 && rt.target == target && rt.param == param) engine.removeModRoute (i);
+            }
+        }
+        else if (r == 300) engine.removeModRoutesTo (target, param);
+        if (sp != nullptr) sp->repaint();
+    });
+}
+
 void Knob::refreshText()
 {
     valueLabel.setText (formatValue ? formatValue() : juce::String (slider.getValue(), 1), juce::dontSendNotification);
@@ -430,6 +590,7 @@ void Inspector::clearControls()
     knobParam.clear();
     toggleParam.clear();
     choiceParam.clear();
+    builtOrder.clear();
     pluginKnobs.clear();
     pluginParamIndex.clear();
     modeButtons.clear();
@@ -498,6 +659,7 @@ void Inspector::buildBlock (Block& b)
 
     // the parameters, in the block's panel order (NAM: Gain first; Input / Output are the meters)
     std::vector<int> order = b.panelOrder();
+    builtOrder = order;
     if (order.empty())
         for (int i = 0; i < b.numParams(); ++i) order.push_back (i);
     for (int i : order)
@@ -514,7 +676,7 @@ void Inspector::buildBlock (Block& b)
         if (sp.isChoice())
         {
             auto* ch = choices.add (new ChoiceControl (sp.name, sp.choices, c));
-            ch->setSelected (b.getChoice (i));
+            ch->setSelected (juce::roundToInt (b.getBase (i)));
             ch->onChange = [this, &b, i] (int v) { b.set (i, (float) v); host.getEngine().markDirty(); };
             controls.addAndMakeVisible (ch);
             choiceParam.push_back (i);
@@ -526,25 +688,30 @@ void Inspector::buildBlock (Block& b)
         if (sp.hasCentre && sp.centre > sp.min && sp.centre < sp.max)
             k->slider.setSkewFactorFromMidPoint (sp.centre);
         k->slider.setDoubleClickReturnValue (true, sp.def);
-        k->slider.setValue (b.get (i), juce::dontSendNotification);
-        k->formatValue = [&b, i] { return b.formatValue (i); };
+        k->slider.setValue (b.getBase (i), juce::dontSendNotification);
+        k->formatValue = [&b, i] { return b.formatValue (i, b.getBase (i)); };
+        k->setModTarget (host.getEngine(), b, b.id, i);
         k->slider.onValueChange = [this, &b, i, k]
         {
             b.set (i, (float) k->slider.getValue());
             k->refreshText();
-            if (display) display->setHighlight (b.getSpecs()[(size_t) i].name + "  " + b.formatValue (i));
+            if (display) display->setHighlight (b.getSpecs()[(size_t) i].name + "  " + b.formatValue (i, b.getBase (i)));
             host.getEngine().markDirty();
         };
         k->onHover = [this, &b, i] (bool over)
         {
-            if (display) display->setHighlight (over ? b.getSpecs()[(size_t) i].name + "  " + b.formatValue (i) : juce::String());
+            if (display) display->setHighlight (over ? b.getSpecs()[(size_t) i].name + "  " + b.formatValue (i, b.getBase (i)) : juce::String());
         };
-        k->onRightClick = [this, &b, i] { if (onLearnParam) onLearnParam (b, i); };
+        k->onRightClick = [this, &b, i, k]
+        {
+            showKnobMenu (host.getEngine(), b, b.id, i, k, [this, &b, i] { if (onLearnParam) onLearnParam (b, i); });
+        };
         k->slider.setTooltip (b.getType() == NodeType::Nam && i == NamBlock::pGain
                                   ? juce::String ("Gain: drives the amp harder, like the gain knob on the real thing. "
                                                   "Rigsmith measured this capture when it loaded and trims the output, so mostly the drive changes, not the volume. "
                                                   "Double-click: 5 (as captured). Right-click: MIDI learn")
-                                  : sp.name + ": drag up / down (Shift for fine). Double-click: default. Right-click: MIDI learn");
+                                  : sp.name + ": drag up / down (Shift for fine). Double-click: default. "
+                                    "Drop a MOD source here to modulate it. Right-click: MIDI learn, modulation");
         k->refreshText();
         knobParam.push_back (i);
     }
@@ -604,9 +771,9 @@ void Inspector::buildMeters (Block& b)
     if (auto* nb = dynamic_cast<NamBlock*> (&b))
     {
         // NAM: the handles are its Input / Output trims (scene- and MIDI-learnable parameters)
-        meters->in.getTrim = [nb] { return nb->get (NamBlock::pInput); };
+        meters->in.getTrim = [nb] { return nb->getBase (NamBlock::pInput); };
         meters->in.setTrim = [nb, &eng] (float v) { nb->set (NamBlock::pInput, v); eng.markDirty(); };
-        meters->out.getTrim = [nb] { return nb->get (NamBlock::pOutput); };
+        meters->out.getTrim = [nb] { return nb->getBase (NamBlock::pOutput); };
         meters->out.setTrim = [nb, &eng] (float v) { nb->set (NamBlock::pOutput, v); eng.markDirty(); };
         meters->in.onRightClick = [this, nb] { if (onLearnParam) onLearnParam (*nb, NamBlock::pInput); };
         meters->out.onRightClick = [this, nb] { if (onLearnParam) onLearnParam (*nb, NamBlock::pOutput); };
@@ -1038,6 +1205,8 @@ void Inspector::buildCaptureKnob (Block& b)
         updateCaptureText();
     };
     k->onRightClick = [this] { showCaptureMenu(); };
+    if (auto* blk = dynamic_cast<Block*> (node))
+        k->setModTarget (host.getEngine(), *blk, blk->id, sw->getCaptureParam());
     k->slider.setTooltip ("Sweeps through the captures, morphing smoothly from one to the next. Drop captures (from any gear) here to add them. "
                           "Right-click to jump to one, MIDI-learn it (an expression pedal works well) or edit the list");
     k->refreshText();
@@ -1098,12 +1267,21 @@ void Inspector::showCaptureMenu()
     m.addSeparator();
     m.addItem (1001, "Edit captures...");
     m.addItem (1002, "MIDI learn (expression pedal)");
+    m.addItem (1003, "Modulate (an envelope morphing clean to crunch as you dig in...)");
     juce::Component::SafePointer<Inspector> sp (this);
     auto* block = node;
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (captureKnob.get()), [sp, block] (int r)
     {
         if (sp == nullptr || sp->node != block) return;
         if (r == 1001) { sp->showCaptureEditor(); return; }
+        if (r == 1003)
+        {
+            if (auto* s = dynamic_cast<Sweepable*> (block))
+                if (auto* blk = dynamic_cast<Block*> (block))
+                    showKnobMenu (sp->host.getEngine(), *blk, blk->id, s->getCaptureParam(), sp->captureKnob.get(),
+                                  [sp, block, p = s->getCaptureParam()] { if (sp != nullptr && sp->onLearnParam) sp->onLearnParam (*block, p); });
+            return;
+        }
         if (r == 1002)
         {
             if (auto* s = dynamic_cast<Sweepable*> (block); s != nullptr && sp->onLearnParam) sp->onLearnParam (*block, s->getCaptureParam());
@@ -1224,14 +1402,23 @@ void Inspector::timerCallback()
         meters->in.setLevel (in);
         meters->out.setLevel (out);
     }
+    if (auto* blk = dynamic_cast<Block*> (node); blk != nullptr && blk->panelOrder() != builtOrder)
+    {
+        needsRebuild = true;   // e.g. the gate switched to Advanced: different controls
+        return;
+    }
     if (auto* sw = dynamic_cast<Sweepable*> (node))
     {
         // the sweep changed somewhere else (the card's knob, MIDI, a scene, the dice, a drop...)
         if (sw->getCaptureFiles() != namCaptureFiles) { needsRebuild = true; return; }
+        // where the knob is set (modulation moves the sound, not the knob)
+        float basePos = sw->getCapturePosition();
+        if (auto* blk = dynamic_cast<Block*> (node); blk != nullptr && sw->getNumCaptures() > 1)
+            basePos = blk->getBase (sw->getCaptureParam()) * (float) (sw->getNumCaptures() - 1);
         if (captureKnob != nullptr && ! captureKnob->slider.isMouseButtonDown()
-            && std::abs (captureKnob->slider.getValue() - sw->getCapturePosition()) > 1.0e-4)
+            && std::abs (captureKnob->slider.getValue() - basePos) > 1.0e-4)
         {
-            captureKnob->slider.setValue (sw->getCapturePosition(), juce::dontSendNotification);
+            captureKnob->slider.setValue (basePos, juce::dontSendNotification);
             captureKnob->refreshText();
             updateCaptureText();
         }
@@ -1338,14 +1525,14 @@ void Inspector::timerCallback()
         for (size_t k = 0; k < knobParam.size(); ++k)
             if (knobParam[k] >= 0 && ! knobs[(int) k]->slider.isMouseButtonDown())
             {
-                knobs[(int) k]->slider.setValue (b->get (knobParam[k]), juce::dontSendNotification);
+                knobs[(int) k]->slider.setValue (b->getBase (knobParam[k]), juce::dontSendNotification);
                 knobs[(int) k]->refreshText();
             }
         for (size_t t = 0; t < toggleParam.size(); ++t)
             if (toggleParam[t] >= 0)
-                toggles[(int) t]->setToggleState (b->get (toggleParam[t]) > 0.5f, juce::dontSendNotification);
+                toggles[(int) t]->setToggleState (b->getBase (toggleParam[t]) > 0.5f, juce::dontSendNotification);
         for (size_t c = 0; c < choiceParam.size(); ++c)
-            choices[(int) c]->setSelected (b->getChoice (choiceParam[c]));
+            choices[(int) c]->setSelected (juce::roundToInt (b->getBase (choiceParam[c])));
     }
 }
 

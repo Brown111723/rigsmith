@@ -8,54 +8,134 @@ GateBlock::GateBlock()
         P ("threshold", "Threshold", -90.0f, 0.0f, -58.0f, "dB").rand (-72.0f, -48.0f),
         P ("release", "Release", 5.0f, 500.0f, 90.0f, "ms").mid (80.0f).rand (30.0f, 200.0f),
         P ("hold", "Hold", 0.0f, 250.0f, 20.0f, "ms").mid (40.0f).rand (5.0f, 60.0f),
-        P ("range", "Range", -90.0f, 0.0f, -80.0f, "dB").rand (-90.0f, -55.0f) })
+        P ("range", "Range", -90.0f, 0.0f, -80.0f, "dB").rand (-90.0f, -55.0f),
+        Choice ("view", "View", { "Basic", "Advanced" }).fixed(),
+        P ("attack", "Attack", 0.05f, 50.0f, 0.8f, "ms").mid (3.0f).dec (2).rand (0.2f, 4.0f),
+        P ("hysteresis", "Hysteresis", 0.0f, 20.0f, 6.0f, "dB").rand (3.0f, 10.0f),
+        P ("lookahead", "Lookahead", 0.0f, 10.0f, 0.0f, "ms").dec (1).fixed(),
+        P ("keyhpf", "Key Low Cut", 20.0f, 2000.0f, 20.0f, "Hz").mid (150.0f).rand (20.0f, 200.0f),
+        P ("keylpf", "Key High Cut", 1000.0f, 20000.0f, 20000.0f, "Hz").mid (6000.0f).fixed(),
+        Choice ("key", "Key", { "This signal", "Rig input" }).fixed(),
+        Choice ("bands", "Bands", { "Full", "Dual" }).fixed(),
+        P ("crossover", "Crossover", 80.0f, 5000.0f, 500.0f, "Hz").mid (500.0f).rand (200.0f, 1500.0f),
+        P ("highrange", "High Range", -90.0f, 0.0f, -80.0f, "dB").rand (-90.0f, -40.0f),
+        Toggle ("listen", "Key listen", false).fixed() })
 {
+}
+
+std::vector<int> GateBlock::panelOrder() const
+{
+    if (! isAdvanced())
+        return { pView, pThreshold, pRelease, pRange };
+    std::vector<int> o { pView, pKey, pBands, pThreshold, pHysteresis, pAttack, pHold, pRelease, pRange };
+    if (isDual()) { o.push_back (pHighRange); o.push_back (pCrossover); }
+    for (int p : { (int) pKeyHpf, (int) pKeyLpf, (int) pLookahead, (int) pListen }) o.push_back (p);
+    return o;
 }
 
 float GateBlock::transferDb (float in) const
 {
-    return in >= get (0) ? in : in + get (3);
+    return in >= get (pThreshold) ? in : in + get (pRange);
 }
 
-juce::String GateBlock::getDetail() const { return formatValue (0); }
+juce::String GateBlock::getDetail() const
+{
+    auto d = formatValue (pThreshold);
+    if (getChoice (pKey) == 1) d << "  keyed";
+    if (isDual()) d << "  dual";
+    return d;
+}
 
-void GateBlock::prepareImpl (double, int) { env = 0; gain = 0; open = false; holdCounter = 0; }
+void GateBlock::prepareImpl (double sr, int)
+{
+    env = 0; gain = 0; open = false; holdCounter = 0;
+    xover.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+    xover.prepare ({ sr, 512u, 2u });
+    keyHpf.reset(); keyLpf.reset();
+    watch.invalidate();
+    delay.setSize (2, (int) std::ceil (0.0105 * sr) + 2);
+    delay.clear();
+    delayPos = 0;
+}
 
 void GateBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 {
-    const float thr = dbToGain (get (0));
-    const float closeThr = thr * 0.5f;  // 6 dB hysteresis
     const float sr = (float) sampleRate;
-    const float envRel = std::exp (-1.0f / (0.05f * sr));
-    const float openCoef = std::exp (-1.0f / (0.0008f * sr));
-    const float closeCoef = std::exp (-1.0f / (get (1) * 0.001f * sr));
-    const int holdSamples = (int) (get (2) * 0.001f * sr);
-    const float floorGain = dbToGain (get (3));
+    const float thr = dbToGain (get (pThreshold));
+    const float closeThr = dbToGain (get (pThreshold) - get (pHysteresis));
+    const float envRel = std::exp (-1.0f / (0.03f * sr));
+    const float openCoef = std::exp (-1.0f / (juce::jmax (0.02f, get (pAttack)) * 0.001f * sr));
+    const float closeCoef = std::exp (-1.0f / (get (pRelease) * 0.001f * sr));
+    const int holdSamples = (int) (get (pHold) * 0.001f * sr);
+    const bool dual = isDual();
+    const float floorLow = dbToGain (get (pRange));
+    const float floorHigh = dual ? dbToGain (get (pHighRange)) : floorLow;
+    const bool listen = get (pListen) > 0.5f;
+
+    const float hpHz = get (pKeyHpf), lpHz = get (pKeyLpf);
+    const bool useHp = hpHz > 21.0f, useLp = lpHz < 19900.0f;
+    if (watch.changed ({ hpHz, lpHz, get (pCrossover), sr }))
+    {
+        keyHpf.setHighPass (sampleRate, hpHz);
+        keyLpf.setLowPass (sampleRate, lpHz);
+        xover.setCutoffFrequency (get (pCrossover));
+    }
+
+    const int dsize = delay.getNumSamples();
+    const int la = juce::jlimit (0, dsize - 2, juce::roundToInt (get (pLookahead) * 0.001f * sr));
+    latency.store (la);
+
+    // the key: this block's own input, or the guitar as it came into the rig
+    const float* rigKey = getChoice (pKey) == 1 && RigKey::data != nullptr && RigKey::length >= n ? RigKey::data : nullptr;
 
     auto* l = b.getWritePointer (0);
     auto* r = b.getWritePointer (1);
-    float minGain = 1.0f;
-    float inPk = 0;
-    for (int i = 0; i < n; ++i) inPk = juce::jmax (inPk, std::abs (l[i]), std::abs (r[i]));
+    auto* dl = delay.getWritePointer (0);
+    auto* dr = delay.getWritePointer (1);
+    float minGain = 1.0f, inPk = 0.0f, outPk = 0.0f, kPk = 0.0f;
 
     for (int i = 0; i < n; ++i)
     {
-        const float x = juce::jmax (std::abs (l[i]), std::abs (r[i]));
+        inPk = juce::jmax (inPk, std::abs (l[i]), std::abs (r[i]));
+        float k = rigKey != nullptr ? rigKey[i] : 0.5f * (l[i] + r[i]);
+        if (useHp) k = keyHpf.process (k, 0);
+        if (useLp) k = keyLpf.process (k, 0);
+        const float x = std::abs (rigKey != nullptr || useHp || useLp ? k : juce::jmax (std::abs (l[i]), std::abs (r[i])));
+        kPk = juce::jmax (kPk, x);
         env = x > env ? x : env * envRel + x * (1.0f - envRel);
 
         if (env > thr) { open = true; holdCounter = holdSamples; }
         else if (env < closeThr) { if (holdCounter > 0) --holdCounter; else open = false; }
 
-        const float target = open ? 1.0f : floorGain;
-        const float coef = target > gain ? openCoef : closeCoef;
-        gain = target + (gain - target) * coef;
+        const float target = open ? 1.0f : 0.0f;
+        gain = target + (gain - target) * (target > gain ? openCoef : closeCoef);
 
-        l[i] *= gain;
-        r[i] *= gain;
-        minGain = juce::jmin (minGain, gain);
+        // the audio, delayed by the lookahead so the gate opens just before the pick
+        dl[delayPos] = l[i];
+        dr[delayPos] = r[i];
+        int rp = delayPos - la; if (rp < 0) rp += dsize;
+        float sl = dl[rp], srr = dr[rp];
+        if (++delayPos >= dsize) delayPos = 0;
+
+        const float gLow = floorLow + (1.0f - floorLow) * gain;
+        if (listen) { sl = srr = k; }
+        else if (dual)
+        {
+            const float gHigh = floorHigh + (1.0f - floorHigh) * gain;
+            float lo, hi;
+            xover.processSample (0, sl, lo, hi);  sl = lo * gLow + hi * gHigh;
+            xover.processSample (1, srr, lo, hi); srr = lo * gLow + hi * gHigh;
+        }
+        else { sl *= gLow; srr *= gLow; }
+        l[i] = sl; r[i] = srr;
+        outPk = juce::jmax (outPk, std::abs (sl), std::abs (srr));
+        minGain = juce::jmin (minGain, gLow);
     }
     reductionDb.store (gainToDb (minGain));
-    updateMeters (inPk, inPk * minGain, gainToDb (minGain));
+    openNow.store (open);
+    if (kPk > keyPeak.load()) keyPeak.store (kPk);
+    if (minGain < minGainSeen.load()) minGainSeen.store (minGain);
+    updateMeters (inPk, outPk, gainToDb (minGain));
 }
 
 //==============================================================================

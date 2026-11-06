@@ -51,6 +51,10 @@ private:
     void drawReverb (juce::Graphics&);
     void drawEnvelope (juce::Graphics&);
     void drawTuner (juce::Graphics&);
+    void drawGate (juce::Graphics&);
+    float gateY (float db) const;
+    bool draggingThreshold = false;
+    std::vector<char> gateOpen;   // per history column
 
     struct Handle { int freqParam, gainParam; juce::Point<float> pos; };
     std::vector<Handle> eqHandles() const;

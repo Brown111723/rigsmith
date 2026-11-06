@@ -31,7 +31,7 @@ public:
 
     void refresh (const Tuner::Reading&, const juce::String& status);
 
-    std::function<void()> onPresetMenu, onSave, onMenu, onTuner, onUndo, onRedo, onRandom, onRandomMenu, onLibrary, onFullScreen, onTooltips;
+    std::function<void()> onPresetMenu, onSave, onMenu, onTuner, onUndo, onRedo, onRandom, onRandomMenu, onLibrary, onFullScreen, onTooltips, onMod;
     std::function<void (int)> onSceneRightClick;
 
     juce::TextButton presetButton;
@@ -40,6 +40,7 @@ public:
                undo { Icon::Undo, "Undo (Ctrl+Z)" }, redo { Icon::Redo, "Redo (Ctrl+Y)" },
                random { Icon::Dice, "Randomise the whole rig: amps, cabs and effects (locked blocks stay). Ctrl+Z undoes it. Right-click for options" },
                tunerButton { Icon::TuningFork, "Tuner (T)", theme::teal },
+               modButton { Icon::Mod, "Modulation (M): 3 LFOs, 3 envelopes, a step sequencer, input level and pitch - drag them onto any knob", theme::purple },
                library { Icon::Library, "Show / hide the library (L)", theme::teal },
                fullScreen { Icon::FullScreen, "Full screen (F11)", theme::teal },
                tips { Icon::Tooltip, "Tooltips on / off: hover anything for a hint", theme::teal },

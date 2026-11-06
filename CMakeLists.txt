@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.10.1 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.11.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -80,6 +80,8 @@ juce_add_plugin(Rigsmith
     COMPANY_WEBSITE "https://github.com/brown111723/rigsmith"
     BUNDLE_ID "com.rigsmith.rigsmith"
     PRODUCT_NAME "Rigsmith"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon-small.png"
     VERSION ${PROJECT_VERSION}
     PLUGIN_MANUFACTURER_CODE Rgsm
     PLUGIN_CODE Rgs1
@@ -99,6 +101,7 @@ target_sources(Rigsmith PRIVATE
     Source/PluginEditor.cpp
     Source/Engine/Nodes.cpp
     Source/Engine/Blocks.cpp
+    Source/Engine/Modulation.cpp
     Source/Engine/NamBlock.cpp
     Source/Engine/PluginBlock.cpp
     Source/Engine/Engine.cpp
@@ -114,6 +117,7 @@ target_sources(Rigsmith PRIVATE
     Source/UI/Icons.cpp
     Source/UI/GraphView.cpp
     Source/UI/Inspector.cpp
+    Source/UI/ModPanel.cpp
     Source/UI/IoPanel.cpp
     Source/UI/Library.cpp
     Source/UI/Header.cpp
@@ -188,6 +192,7 @@ if(RIGSMITH_TESTS)
         Tests/EngineTests.cpp
         Source/Engine/Nodes.cpp
         Source/Engine/Blocks.cpp
+        Source/Engine/Modulation.cpp
         Source/Engine/NamBlock.cpp
         Source/Engine/PluginBlock.cpp
         Source/Engine/Engine.cpp

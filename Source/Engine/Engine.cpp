@@ -46,6 +46,7 @@ namespace
         { "autoCategorise",   "Plug-ins",  "AutoCategorise" },
         { "fullScreen",       "Window",    "FullScreen" },
         { "libraryVisible",   "Window",    "ShowLibrary" },
+        { "modVisible",       "Window",    "ShowModulation" },
         { "tooltips",         "Window",    "Tooltips" },
         { "inspectorHeight",  "Window",    "PanelHeight" },
         { "randomUsePlugins", "Randomise", "UsePlugins" },
@@ -137,7 +138,7 @@ Engine::Engine() : root (std::make_unique<Chain>())
             knownPlugins.recreateFromXml (*xml);
     // the editor / processor picks the scanner (setupPluginScanning); never list Rigsmith itself
     for (auto& d : knownPlugins.getTypes())
-        if (OutOfProcessScanner::isRigsmith (d.fileOrIdentifier)) knownPlugins.removeType (d);
+        if (isRigsmithPlugin (d.fileOrIdentifier)) knownPlugins.removeType (d);
 
     openSettings();
     setCaptureCacheFile (ini.getFile().getSiblingFile ("Rigsmith.captures"));
@@ -305,19 +306,11 @@ void Engine::setupPluginScanning (bool standalone)
     policy.onStarting = [this] (const juce::String& f) { ini.set ("Plug-ins", "Scanning", f); };
     policy.onFinished = [this] { ini.set ("Plug-ins", "Scanning", ""); };
 
-    // Rigsmith.exe scans each plug-in in a second copy of itself (a crash only skips that plug-in).
-    // The plug-in version borrows Rigsmith.exe for that when it's installed; otherwise it scans in
-    // the DAW, with the dead-man's-pedal above.
-    juce::File exe;
-    if (standalone)
-    {
-        exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-        ini.set ("Plug-ins", "ScannerApp", exe.getFullPathName());
-    }
-    else if (const juce::File app (ini.get ("Plug-ins", "ScannerApp")); juce::File::isAbsolutePath (app.getFullPathName()) && app.existsAsFile())
-        exe = app;
-    if (exe.existsAsFile()) knownPlugins.setCustomScanner (std::make_unique<OutOfProcessScanner> (exe, policy));
-    else                    knownPlugins.setCustomScanner (std::make_unique<InProcessScanner> (policy));
+    // scanned here, in this process (a second copy of Rigsmith.exe looked like malware to antivirus);
+    // the dead-man's pedal above skips anything that crashed, and Rigsmith itself is never scanned
+    if (ini.get ("Plug-ins", "ScannerApp").isNotEmpty()) ini.set ("Plug-ins", "ScannerApp", "");   // from v0.10
+    juce::ignoreUnused (standalone);
+    knownPlugins.setCustomScanner (std::make_unique<InProcessScanner> (policy));
 }
 
 juce::StringArray Engine::getSkippedPlugins() const
@@ -606,6 +599,11 @@ void Engine::prepare (double sr, int block)
         root->prepare (sampleRate, blockSize);
     }
     tuner.prepare (sr);
+    keyBuffer.assign ((size_t) blockSize, 0.0f);
+    {
+        const juce::ScopedLock sl (lock);
+        mods.prepare (sr, blockSize);
+    }
     for (auto* v : { &inGain, &outGain, &inPanL, &inPanR, &outPanL, &outPanR, &outWidth })
         v->reset (sr, 0.02);
     limGain = 1.0f;
@@ -665,15 +663,31 @@ void Engine::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) 
         tuner.push (L, total);
 
     // --- the rig, in chunks no larger than prepared
+    // (with modulation running, in steps of 64 samples so the knobs move smoothly)
     {
         const juce::ScopedTryLock tl (lock);
-        for (int off = 0; off < total; off += blockSize)
+        const bool modOn = tl.isLocked() && mods.isActive();
+        if (modOn) mods.resolve (*root);
+        const int step = modOn ? juce::jmin (blockSize, 64) : blockSize;
+        const double beatsPerSample = mods.hostBpm.load() / 60.0 / sampleRate;
+        for (int off = 0; off < total; off += step)
         {
-            const int len = juce::jmin (blockSize, total - off);
+            const int len = juce::jmin (step, total - off);
             float* ptrs[2] = { L + off, R + off };
             juce::AudioBuffer<float> view (ptrs, 2, len);
-            if (tl.isLocked()) root->process (view, len);
-            else view.clear();
+            if (! tl.isLocked()) { view.clear(); continue; }
+            const bool keyed = (int) keyBuffer.size() >= len;
+            if (keyed)
+            {
+                for (int i = 0; i < len; ++i) keyBuffer[(size_t) i] = 0.5f * (ptrs[0][i] + ptrs[1][i]);
+                RigKey::data = keyBuffer.data();
+                RigKey::length = len;
+            }
+            if (modOn && keyed)
+                mods.process (keyBuffer.data(), len, hostPpq >= 0.0 ? hostPpq + off * beatsPerSample : -1.0);
+            root->process (view, len);
+            RigKey::data = nullptr;
+            RigKey::length = 0;
         }
     }
 
@@ -760,6 +774,8 @@ void Engine::timerCallback()
         setScene (hs);
 
     if (tick % 20 == 0) updateAutoSkips();   // models loaded, blocks bypassed...
+    if (tick % 3 == 0 && mods.isActive()) mods.analysePitch();
+    if (tick % 50 == 0) pruneModRoutes();
     if (++tick % 10 == 0)
     {
         const int lat = getLatency();
@@ -769,6 +785,84 @@ void Engine::timerCallback()
             if (onLatencyChanged) onLatencyChanged (lat);
         }
     }
+}
+
+//==============================================================================
+int Engine::addModRoute (int source, const juce::String& target, int param, float amount)
+{
+    if (! juce::isPositiveAndBelow (source, ModMatrix::numSources) || target.isEmpty()) return -1;
+    int index = -1;
+    {
+        const juce::ScopedLock sl (lock);
+        for (size_t i = 0; i < mods.routes.size(); ++i)
+            if (mods.routes[i].source == source && mods.routes[i].target == target && mods.routes[i].param == param)
+            {
+                mods.routes[i].amount = amount;
+                index = (int) i;
+            }
+        if (index < 0 && (int) mods.routes.size() < ModMatrix::maxRoutes)
+        {
+            mods.routes.push_back ({ source, target, param, juce::jlimit (-1.0f, 1.0f, amount) });
+            index = (int) mods.routes.size() - 1;
+        }
+        mods.routesChanged();
+    }
+    markDirty();
+    return index;
+}
+
+void Engine::removeModRoute (int index)
+{
+    if (! juce::isPositiveAndBelow (index, (int) mods.routes.size())) return;
+    {
+        const juce::ScopedLock sl (lock);
+        const auto r = mods.routes[(size_t) index];
+        mods.routes.erase (mods.routes.begin() + index);
+        if (mods.routesTo (r.target, r.param).empty())
+            if (auto* b = findModTarget (r.target)) b->unmodulate (r.param);
+        mods.routesChanged();
+    }
+    markDirty();
+}
+
+void Engine::removeModRoutesTo (const juce::String& target, int param)
+{
+    for (int i = (int) mods.routes.size(); --i >= 0;)
+        if (mods.routes[(size_t) i].target == target && mods.routes[(size_t) i].param == param) removeModRoute (i);
+}
+
+void Engine::removeModRoutesFrom (int source)
+{
+    for (int i = (int) mods.routes.size(); --i >= 0;)
+        if (mods.routes[(size_t) i].source == source) removeModRoute (i);
+}
+
+Block* Engine::findModTarget (const juce::String& target)
+{
+    if (auto* m = mods.sourceFromTarget (target)) return m;
+    return dynamic_cast<Block*> (findNode (target));
+}
+
+juce::String Engine::describeModTarget (const juce::String& target, int param)
+{
+    auto* b = findModTarget (target);
+    if (b == nullptr) return "(gone)";
+    const auto pname = juce::isPositiveAndBelow (param, b->numParams()) ? b->getSpecs()[(size_t) param].name : juce::String ("?");
+    auto name = b->getName();
+    if (auto* nb = dynamic_cast<NamBlock*> (b)) name = nb->getInfo().loaded ? juce::String ("Amp") : name;
+    return name + " > " + pname;
+}
+
+void Engine::pruneModRoutes()
+{
+    // routes to blocks that have been deleted (the dice, a replace...)
+    for (int i = (int) mods.routes.size(); --i >= 0;)
+        if (findModTarget (mods.routes[(size_t) i].target) == nullptr)
+        {
+            const juce::ScopedLock sl (lock);
+            mods.routes.erase (mods.routes.begin() + i);
+            mods.routesChanged();
+        }
 }
 
 void Engine::handleMidi (int type, int channel, int number, int value)
@@ -1513,6 +1607,7 @@ juce::ValueTree Engine::getState (bool includeSession) const
         if (includeSession || ! m.isGlobal())
             mm.appendChild (m.toState(), nullptr);
     v.appendChild (mm, nullptr);
+    v.appendChild (mods.toState(), nullptr);
 
     if (includeSession)
     {
@@ -1557,6 +1652,7 @@ void Engine::setState (const juce::ValueTree& v, bool includeSession)
     {
         const juce::ScopedLock sl (lock);
         std::swap (root, newRoot);
+        mods.fromState (v.getChildWithName ("Modulation"));
     }
     announceDeletion (*newRoot);
     newRoot.reset();

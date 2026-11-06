@@ -7,6 +7,7 @@
 #include "UI/IoPanel.h"
 #include "UI/Library.h"
 #include "UI/Header.h"
+#include "UI/ModPanel.h"
 #include "Engine/Randomiser.h"
 
 class PluginWindow;
@@ -130,6 +131,12 @@ private:
     void layoutGraph (juce::Rectangle<int> area);
     juce::Rectangle<int> graphArea;
     rig::Inspector inspector;
+    rig::ModPanel modPanel { engine };
+    /** RIGSMITH_DEMO_AUDIO=1 (screenshots without an audio device): plays synthetic plucks through the rig. */
+    struct DemoAudio;
+    std::unique_ptr<DemoAudio> demoAudio;
+    bool modVisible = false;
+    void setModVisible (bool);
     rig::IoPanel ioPanel { *this };
     std::unique_ptr<rig::t3k::Client> tone3000;   // before the library, which shows it
     rig::Library library;

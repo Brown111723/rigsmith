@@ -103,6 +103,21 @@ void FxDisplay::timerCallback()
     }
     if (visual == Visual::Spectrum || visual == Visual::Response)
         pullSpectrum();
+    if (visual == Visual::Gate)
+        if (auto* gb = dynamic_cast<GateBlock*> (&block))
+        {
+            if (gateOpen.size() != envIn.size())
+            {
+                gateOpen.assign (envIn.size(), 0);
+                std::fill (envGain.begin(), envGain.end(), gb->get (GateBlock::pRange));
+            }
+            std::move (envIn.begin() + 1, envIn.end(), envIn.begin());
+            std::move (envGain.begin() + 1, envGain.end(), envGain.begin());
+            std::move (gateOpen.begin() + 1, gateOpen.end(), gateOpen.begin());
+            envIn.back() = gb->takeKeyPeakDb();
+            envGain.back() = gb->takeGainDb();
+            gateOpen.back() = gb->isOpen() ? 1 : 0;
+        }
     if (visual == Visual::Envelope || visual == Visual::Dynamics)
     {
         std::move (envIn.begin() + 1, envIn.end(), envIn.begin());
@@ -487,6 +502,107 @@ void FxDisplay::drawEnvelope (juce::Graphics& g)
     g.drawText ("input (grey)  gain change (line)", p.toNearestInt().removeFromBottom (14).translated (0, 12), juce::Justification::centredRight);
 }
 
+float FxDisplay::gateY (float db) const
+{
+    const auto p = plot();
+    return p.getY() + juce::jlimit (0.0f, 1.0f, -db / 90.0f) * p.getHeight();
+}
+
+void FxDisplay::drawGate (juce::Graphics& g)
+{
+    // a scrolling picture: the key level, the open / close thresholds, and the gate itself
+    auto* gb = dynamic_cast<GateBlock*> (&block);
+    if (gb == nullptr) return;
+    auto p = plot();
+    const auto lane = juce::Rectangle<float> (p.getX(), p.getBottom() + 3.0f, p.getWidth(), 6.0f);
+    const float thr = gb->get (GateBlock::pThreshold), hyst = gb->get (GateBlock::pHysteresis);
+    const size_t n = envIn.size();
+    auto xAt = [&] (size_t i) { return p.getX() + p.getWidth() * (float) i / (float) (n - 1); };
+
+    g.setColour (juce::Colour (0xff1c1d22));
+    for (float d = -15.0f; d > -90.0f; d -= 15.0f)
+        g.drawHorizontalLine ((int) gateY (d), p.getX(), p.getRight());
+    g.setFont (mono (9.0f));
+    g.setColour (dim);
+    for (float d : { -15.0f, -45.0f, -75.0f })
+        g.drawText (juce::String ((int) d), juce::Rectangle<float> (p.getRight() - 28.0f, gateY (d) - 11.0f, 26.0f, 10.0f), juce::Justification::centredRight);
+
+    // the key level, filled from the bottom
+    juce::Path key;
+    key.startNewSubPath (p.getX(), p.getBottom());
+    for (size_t i = 0; i < n; ++i) key.lineTo (xAt (i), gateY (juce::jmax (-90.0f, envIn[i])));
+    key.lineTo (p.getRight(), p.getBottom());
+    key.closeSubPath();
+    juce::ColourGradient grad (colour.withAlpha (0.35f), 0.0f, p.getY(), juce::Colour (0xff3a3d46).withAlpha (0.25f), 0.0f, p.getBottom(), false);
+    g.setGradientFill (grad);
+    g.fillPath (key);
+    g.setColour (colour.withAlpha (0.55f));
+    juce::Path keyLine;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const float y = gateY (juce::jmax (-90.0f, envIn[i]));
+        if (i == 0) keyLine.startNewSubPath (xAt (i), y); else keyLine.lineTo (xAt (i), y);
+    }
+    g.strokePath (keyLine, juce::PathStrokeType (1.0f));
+
+    // the gain: 0 dB at the top, down to the range when closed (same scale as the level)
+    juce::Path gainLine;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const float y = gateY (juce::jmax (-90.0f, envGain[i]));
+        if (i == 0) gainLine.startNewSubPath (xAt (i), y); else gainLine.lineTo (xAt (i), y);
+    }
+    g.setColour (text.withAlpha (0.85f));
+    g.strokePath (gainLine, juce::PathStrokeType (1.6f));
+
+    // open (threshold) and close (threshold - hysteresis) lines; drag the threshold
+    const float ty = gateY (thr), cy = gateY (thr - hyst);
+    if (hyst > 0.1f)
+    {
+        g.setColour (accent.withAlpha (0.07f));
+        g.fillRect (juce::Rectangle<float> (p.getX(), ty, p.getWidth(), cy - ty));
+        const float dash[] = { 4.0f, 4.0f };
+        g.setColour (accent.withAlpha (0.55f));
+        g.drawDashedLine ({ p.getX(), cy, p.getRight(), cy }, dash, 2, 1.0f);
+    }
+    g.setColour (draggingThreshold ? accent.brighter (0.3f) : accent);
+    g.drawLine (p.getX(), ty, p.getRight(), ty, draggingThreshold ? 2.5f : 1.6f);
+    g.setFont (mono (10.0f));
+    g.drawText ("OPEN " + juce::String (thr, 0), juce::Rectangle<float> (p.getX() + 4.0f, ty - 14.0f, 90.0f, 12.0f), juce::Justification::centredLeft);
+    if (hyst > 0.1f)
+    {
+        g.setColour (accent.withAlpha (0.7f));
+        g.drawText ("CLOSE " + juce::String (thr - hyst, 0), juce::Rectangle<float> (p.getX() + 4.0f, cy + 2.0f, 90.0f, 12.0f), juce::Justification::centredLeft);
+    }
+
+    // the state lane underneath: lit where the gate was open
+    g.setColour (juce::Colour (0xff1c1d22));
+    g.fillRoundedRectangle (lane, 2.0f);
+    g.setColour (green.withAlpha (0.8f));
+    for (size_t i = 0; i + 1 < n && i < gateOpen.size(); ++i)
+        if (gateOpen[i]) g.fillRect (juce::Rectangle<float> (xAt (i), lane.getY(), xAt (i + 1) - xAt (i) + 0.5f, lane.getHeight()));
+
+    // badges
+    auto badges = p.toNearestInt().removeFromTop (16).withTrimmedRight (34);
+    auto badge = [&] (const juce::String& t, juce::Colour c)
+    {
+        const int w = juce::GlyphArrangement::getStringWidthInt (font (9.5f, true), t) + 12;
+        auto r = badges.removeFromRight (w).toFloat();
+        badges.removeFromRight (4);
+        g.setColour (c.withAlpha (0.18f));
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (c);
+        g.setFont (font (9.5f, true));
+        g.drawText (t, r, juce::Justification::centred);
+    };
+    const bool isOpen = gb->isOpen();
+    badge (isOpen ? "OPEN" : "CLOSED", isOpen ? green : red);
+    if (gb->getChoice (GateBlock::pKey) == 1) badge ("KEY: RIG IN", teal);
+    if (gb->isDual()) badge ("DUAL", purple);
+    if (gb->get (GateBlock::pListen) > 0.5f) badge ("LISTEN", accent);
+    if (gb->getLatency() > 0) badge ("LOOKAHEAD", muted);
+}
+
 void FxDisplay::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff111215));
@@ -503,6 +619,8 @@ void FxDisplay::paint (juce::Graphics& g)
         case Visual::Reverb:   drawReverb (g); break;
         case Visual::Envelope: drawEnvelope (g); break;
         case Visual::Tuner:    drawTuner (g); break;
+        case Visual::Gate:     drawGate (g); break;
+        case Visual::Modulator:
         case Visual::Spectrum: drawGrid (g, true, 18.0f); drawSpectrum (g); break;
         case Visual::None:     break;
     }
@@ -653,14 +771,34 @@ int FxDisplay::hitHandle (juce::Point<float> pt) const
 
 void FxDisplay::mouseMove (const juce::MouseEvent& e)
 {
+    if (visual == Visual::Gate)
+    {
+        setMouseCursor (std::abs (e.position.y - gateY (block.getBase (GateBlock::pThreshold))) < 10.0f ? juce::MouseCursor::UpDownResizeCursor
+                                                                                                        : juce::MouseCursor::NormalCursor);
+        return;
+    }
     const int h = hitHandle (e.position);
     if (h != hoverHandle) { hoverHandle = h; setMouseCursor (h >= 0 ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor); repaint(); }
 }
 
-void FxDisplay::mouseDown (const juce::MouseEvent& e) { dragHandle = hitHandle (e.position); }
+void FxDisplay::mouseDown (const juce::MouseEvent& e)
+{
+    dragHandle = hitHandle (e.position);
+    draggingThreshold = visual == Visual::Gate && std::abs (e.position.y - gateY (block.getBase (GateBlock::pThreshold))) < 10.0f;
+    if (draggingThreshold) mouseDrag (e);
+}
 
 void FxDisplay::mouseDrag (const juce::MouseEvent& e)
 {
+    if (draggingThreshold)
+    {
+        const auto p = plot();
+        block.set (GateBlock::pThreshold, (float) juce::roundToInt (-90.0f * (e.position.y - p.getY()) / p.getHeight()));
+        highlight = "Threshold " + block.formatValue (GateBlock::pThreshold);
+        if (onEdited) onEdited();
+        repaint();
+        return;
+    }
     if (dragHandle < 0) return;
     const auto h = eqHandles()[(size_t) dragHandle];
     block.set (h.freqParam, hzForX (e.position.x));
@@ -673,8 +811,9 @@ void FxDisplay::mouseDrag (const juce::MouseEvent& e)
 
 void FxDisplay::mouseUp (const juce::MouseEvent&)
 {
-    if (dragHandle >= 0) { highlight.clear(); repaint(); }
+    if (dragHandle >= 0 || draggingThreshold) { highlight.clear(); repaint(); }
     dragHandle = -1;
+    draggingThreshold = false;
 }
 
 void FxDisplay::mouseDoubleClick (const juce::MouseEvent& e)
@@ -690,7 +829,7 @@ void FxDisplay::mouseDoubleClick (const juce::MouseEvent& e)
 void FxDisplay::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
 {
     if (block.getType() != NodeType::Eq || hitHandle (e.position) != 2) return;
-    block.set (EqBlock::pMidQ, block.get (EqBlock::pMidQ) * (w.deltaY > 0 ? 1.12f : 0.89f));
+    block.set (EqBlock::pMidQ, block.getBase (EqBlock::pMidQ) * (w.deltaY > 0 ? 1.12f : 0.89f));
     highlight = "Mid Q " + block.formatValue (EqBlock::pMidQ);
     if (onEdited) onEdited();
 }

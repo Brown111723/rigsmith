@@ -7,10 +7,13 @@
 namespace rig
 {
 /** Rotary knob with its name above and value below; right-click for options. */
-class Knob : public juce::Component
+class Knob : public juce::Component,
+             public juce::DragAndDropTarget,
+             private juce::Timer
 {
 public:
     Knob (const juce::String& name, juce::Colour colour);
+    ~Knob() override;
     juce::Slider slider;
     juce::Label nameLabel, valueLabel;
     std::function<juce::String()> formatValue;
@@ -20,11 +23,35 @@ public:
     int detents = 0;
     juce::Colour detentColour;
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseEnter (const juce::MouseEvent&) override { if (onHover) onHover (true); }
     void mouseExit (const juce::MouseEvent&) override { if (onHover) onHover (false); }
     void refreshText();
+
+    /** This knob is a block parameter: modulation sources can be dropped on it, and it draws
+        a ring for each source routed to it plus a dot where the sound actually is right now.
+        target: the block's id, or "mod:N" for a modulator's own knob. */
+    void setModTarget (Engine&, Block&, const juce::String& target, int param);
+
+    bool isInterestedInDragSource (const SourceDetails&) override;
+    void itemDragEnter (const SourceDetails&) override;
+    void itemDragExit (const SourceDetails&) override;
+    void itemDropped (const SourceDetails&) override;
+
+protected:
+    juce::String dropHint;   // shown while something is dragged over
+    juce::Colour dropColour;
+
+private:
+    void timerCallback() override;
+    Engine* modEngine = nullptr;
+    Block* modBlock = nullptr;
+    juce::String modTarget;
+    int modParam = -1;
+    float lastLive = -1.0f;
+    size_t lastRoutes = 0;
 };
 
 /** A level meter with a trim handle: the bar shows the signal (dBFS), the handle sets the trim
@@ -54,7 +81,6 @@ private:
 
 /** A knob things can be dropped on (the Capture knob: drop captures to add them to the sweep). */
 class DropKnob : public Knob,
-                 public juce::DragAndDropTarget,
                  public juce::FileDragAndDropTarget
 {
 public:
@@ -62,30 +88,33 @@ public:
     std::function<void (const juce::String& description)> onDrop;
     std::function<void (const juce::StringArray& paths)> onFilesDrop;
 
-    bool isInterestedInDragSource (const SourceDetails& d) override
+    static bool isCaptureDrag (const juce::String& s)
     {
-        const auto s = d.description.toString();
         return s.startsWith ("file:") || s.startsWith ("files:") || s.startsWith ("folder:");
     }
-    void itemDragEnter (const SourceDetails&) override { hover = true; repaint(); }
-    void itemDragExit (const SourceDetails&) override { hover = false; repaint(); }
-    void itemDropped (const SourceDetails& d) override { hover = false; repaint(); if (onDrop) onDrop (d.description.toString()); }
-    bool isInterestedInFileDrag (const juce::StringArray&) override { return true; }
-    void fileDragEnter (const juce::StringArray&, int, int) override { hover = true; repaint(); }
-    void fileDragExit (const juce::StringArray&) override { hover = false; repaint(); }
-    void filesDropped (const juce::StringArray& f, int, int) override { hover = false; repaint(); if (onFilesDrop) onFilesDrop (f); }
-    void paintOverChildren (juce::Graphics& g) override
+    bool isInterestedInDragSource (const SourceDetails& d) override
     {
-        if (! hover) return;
-        g.setColour (theme::teal);
-        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (2.0f), 10.0f, 2.0f);
-        g.setFont (theme::font (11.0f, true));
-        g.drawText ("Add to the sweep", getLocalBounds().removeFromBottom (18), juce::Justification::centred);
+        return isCaptureDrag (d.description.toString()) || Knob::isInterestedInDragSource (d);
     }
-
-private:
-    bool hover = false;
+    void itemDragEnter (const SourceDetails& d) override
+    {
+        if (! isCaptureDrag (d.description.toString())) { Knob::itemDragEnter (d); return; }
+        dropHint = "Add to the sweep"; dropColour = theme::teal; repaint();
+    }
+    void itemDropped (const SourceDetails& d) override
+    {
+        if (! isCaptureDrag (d.description.toString())) { Knob::itemDropped (d); return; }
+        dropHint.clear(); repaint();
+        if (onDrop) onDrop (d.description.toString());
+    }
+    bool isInterestedInFileDrag (const juce::StringArray&) override { return true; }
+    void fileDragEnter (const juce::StringArray&, int, int) override { dropHint = "Add to the sweep"; dropColour = theme::teal; repaint(); }
+    void fileDragExit (const juce::StringArray&) override { dropHint.clear(); repaint(); }
+    void filesDropped (const juce::StringArray& f, int, int) override { dropHint.clear(); repaint(); if (onFilesDrop) onFilesDrop (f); }
 };
+
+/** Right-click on any modulatable knob: MIDI learn, "Modulate with", and the routes into it. */
+void showKnobMenu (Engine&, Block&, const juce::String& target, int param, juce::Component* anchor, std::function<void()> learn);
 
 /** A small segmented selector for choice parameters (delay mode, reverb type...). */
 class ChoiceControl : public juce::Component
@@ -158,6 +187,7 @@ private:
     juce::OwnedArray<juce::ToggleButton> toggles;
     juce::OwnedArray<ChoiceControl> choices;
     std::vector<int> knobParam, toggleParam, choiceParam;
+    std::vector<int> builtOrder;   // the block's panelOrder() when built (the gate's View changes it)
 
     // NAM / IR: every capture of the loaded gear on one knob
     std::unique_ptr<Knob> captureKnob;
