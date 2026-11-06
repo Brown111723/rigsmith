@@ -30,7 +30,6 @@ Name: "vst3"; Description: "Install the VST3 plug-in (Common Files\VST3)"; Group
 
 [Files]
 Source: "..\build\Rigsmith_artefacts\Release\Standalone\Rigsmith.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\build\Rigsmith_artefacts\Release\Standalone\RigsmithScanner.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\Rigsmith_artefacts\Release\VST3\Rigsmith.vst3\*"; DestDir: "{commoncf64}\VST3\Rigsmith.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: vst3
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 

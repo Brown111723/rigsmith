@@ -4,6 +4,7 @@ namespace rig
 {
 void IniFile::setFile (const juce::File& f)
 {
+    const juce::ScopedLock sl (lock);
     file = f;
     sections.clear();
     existedAtLoad = file.existsAsFile();
@@ -16,6 +17,7 @@ void IniFile::setFile (const juce::File& f)
 
 void IniFile::reloadIfChanged()
 {
+    const juce::ScopedLock sl (lock);
     // the file is small, so just compare its text (timestamps can be too coarse)
     if (! file.existsAsFile()) return;
     auto text = file.loadFileAsString();
@@ -28,6 +30,7 @@ void IniFile::reloadIfChanged()
 
 void IniFile::parse (const juce::String& text)
 {
+    const juce::ScopedLock sl (lock);
     sections.clear();
     Section* current = nullptr;
     for (auto line : juce::StringArray::fromLines (text))
@@ -55,6 +58,7 @@ void IniFile::parse (const juce::String& text)
 
 juce::String IniFile::toString() const
 {
+    const juce::ScopedLock sl (lock);
     juce::String s;
     for (auto& h : header)
         s << (h.isEmpty() ? juce::String (";") : "; " + h) << "\r\n";
@@ -70,6 +74,7 @@ juce::String IniFile::toString() const
 
 bool IniFile::save()
 {
+    const juce::ScopedLock sl (lock);
     pending = false;
     if (file == juce::File()) return false;
     file.getParentDirectory().createDirectory();
@@ -111,6 +116,7 @@ IniFile::Section& IniFile::getOrAdd (const juce::String& name)
 
 juce::String IniFile::get (const juce::String& section, const juce::String& key, const juce::String& def) const
 {
+    const juce::ScopedLock sl (lock);
     if (auto* s = find (section))
         for (auto& kv : s->values)
             if (kv.first.equalsIgnoreCase (key)) return kv.second;
@@ -119,6 +125,7 @@ juce::String IniFile::get (const juce::String& section, const juce::String& key,
 
 bool IniFile::has (const juce::String& section, const juce::String& key) const
 {
+    const juce::ScopedLock sl (lock);
     if (auto* s = find (section))
         for (auto& kv : s->values)
             if (kv.first.equalsIgnoreCase (key)) return true;
@@ -140,6 +147,7 @@ int IniFile::getInt (const juce::String& section, const juce::String& key, int d
 
 void IniFile::set (const juce::String& section, const juce::String& key, const juce::String& value)
 {
+    const juce::ScopedLock sl (lock);
     if (batchDepth == 0) reloadIfChanged();
     auto& s = getOrAdd (section);
     for (auto& kv : s.values)
@@ -156,6 +164,7 @@ void IniFile::set (const juce::String& section, const juce::String& key, const j
 
 juce::StringArray IniFile::getList (const juce::String& section) const
 {
+    const juce::ScopedLock sl (lock);
     juce::StringArray out;
     if (auto* s = find (section))
         for (auto& kv : s->values)
@@ -165,6 +174,7 @@ juce::StringArray IniFile::getList (const juce::String& section) const
 
 void IniFile::setList (const juce::String& section, const juce::String& prefix, const juce::StringArray& values)
 {
+    const juce::ScopedLock sl (lock);
     if (batchDepth == 0) reloadIfChanged();
     auto& s = getOrAdd (section);
     std::vector<std::pair<juce::String, juce::String>> fresh;

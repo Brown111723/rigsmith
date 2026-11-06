@@ -125,6 +125,12 @@ static float runNoise (Engine& e, int blocks, int blockSize, bool* finite, float
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
+    {
+        // the tests run themselves as the scanner process, like Rigsmith.exe does
+        juce::StringArray args;
+        for (int i = 1; i < argc; ++i) args.add (juce::String (juce::CharPointer_UTF8 (argv[i])));
+        if (args.contains (rig::scanSwitch)) return rig::runScanCommand (args);
+    }
     // keep the tests' settings away from the real Rigsmith.ini
     const auto testDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rigsmith-tests");
     testDir.deleteRecursively();
@@ -1205,28 +1211,62 @@ int main (int argc, char** argv)
         CHECK (e.loadGear (gear, crunch, err) && gear.getNumCaptures() == 3 && gear.getFile() == crunch,
                "loading one capture brings its gear's other captures into the sweep, on the one chosen");
 
-        // plug-in scanning in a separate process: a crash only skips that plug-in
-       #ifdef RIGSMITH_SCANNER_EXE
-        const juce::File scannerExe (RIGSMITH_SCANNER_EXE);
-        juce::VST3PluginFormat vst3;
-        const auto notAPlugin = testDir.getChildFile ("Fake.vst3");
-        notAPlugin.replaceWithText ("not a plug-in");
+        // plug-in scanning in a separate process (this same program): a crash only skips that plug-in
         {
-            OutOfProcessScanner sc (scannerExe);
-            juce::OwnedArray<juce::PluginDescription> found;
-            CHECK (sc.findPluginTypesFor (vst3, found, notAPlugin.getFullPathName()) && found.isEmpty(),
-                   "the scanner helper looks inside a file and reports nothing found");
+            const auto self = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+            juce::VST3PluginFormat vst3;
+            const auto notAPlugin = testDir.getChildFile ("Fake.vst3");
+            notAPlugin.replaceWithText ("not a plug-in");
+            juce::StringArray crashed;
+            ScanPolicy policy;
+            policy.isSkipped = [&] (const juce::String& f) { return crashed.contains (f); };
+            policy.onCrashed = [&] (const juce::String& f) { crashed.addIfNotAlreadyThere (f); };
+            {
+                OutOfProcessScanner sc (self, policy);
+                juce::OwnedArray<juce::PluginDescription> found;
+                CHECK (sc.findPluginTypesFor (vst3, found, notAPlugin.getFullPathName()) && found.isEmpty() && crashed.isEmpty(),
+                       "a second copy of the program looks inside a file and reports nothing found");
+            }
+            {
+                juce::KnownPluginList list;
+                auto crashy = std::make_unique<OutOfProcessScanner> (self, policy);
+                crashy->argsPrefix = { rig::scanSwitch, "--crash-test", "x", "y" };   // the child aborts
+                list.setCustomScanner (std::move (crashy));
+                juce::OwnedArray<juce::PluginDescription> found;
+                list.scanAndAddFile (notAPlugin.getFullPathName(), false, found, vst3);
+                CHECK (list.getBlacklistedFiles().contains (notAPlugin.getFullPathName()) && crashed.contains (notAPlugin.getFullPathName()),
+                       "a plug-in that crashes the scan is skipped and written down; Rigsmith keeps running");
+            }
+            {
+                // written down: never scanned again (no second process is even started)
+                OutOfProcessScanner sc (juce::File ("/no/such/program"), policy);
+                juce::OwnedArray<juce::PluginDescription> found;
+                CHECK (! sc.findPluginTypesFor (vst3, found, notAPlugin.getFullPathName()), "a plug-in that crashed before is not scanned again");
+            }
         }
         {
-            juce::KnownPluginList list;
-            auto crashy = std::make_unique<OutOfProcessScanner> (scannerExe);
-            crashy->argsPrefix = { "--crash-test" };
-            list.setCustomScanner (std::move (crashy));
-            juce::OwnedArray<juce::PluginDescription> found;
-            list.scanAndAddFile (notAPlugin.getFullPathName(), false, found, vst3);
-            CHECK (list.getBlacklistedFiles().contains (notAPlugin.getFullPathName()), "a plug-in that crashes the scan is skipped (blacklisted), Rigsmith keeps running");
+            // in the DAW: the plug-in being scanned is in Rigsmith.ini until it's done, so a crash is found next start
+            Engine pedal;
+            pedal.setupPluginScanning (false);
+            const auto victim = testDir.getChildFile ("Crashy.vst3").getFullPathName();
+            {
+                IniFile direct (testDir.getChildFile ("Rigsmith.ini"));
+                direct.set ("Plug-ins", "Scanning", victim);   // as if the DAW died mid-scan
+            }
+            Engine next;
+            next.setupPluginScanning (false);
+            CHECK (next.getSkippedPlugins().contains (victim) && next.takeScanCrashNotice() == victim,
+                   "a crash during an in-DAW scan is found on the next start and that plug-in is skipped from then on");
+            next.clearSkippedPlugins();
+            CHECK (next.getSkippedPlugins().isEmpty(), "and can be tried again from the menu");
         }
-       #endif
+        {
+            juce::AudioPluginFormatManager fm;
+            addPluginFormats (fm);
+            bool names = fm.getNumFormats() > 0;
+            for (auto* f : fm.getFormats()) names &= ! f->fileMightContainThisPluginType ("C:\\Program Files\\Common Files\\VST3\\Rigsmith.vst3");
+            CHECK (names, "Rigsmith.vst3 is never even looked at by a scan");
+        }
         CHECK (OutOfProcessScanner::isRigsmith ("C:\\Program Files\\Common Files\\VST3\\Rigsmith.vst3")
                && ! OutOfProcessScanner::isRigsmith ("C:\\Program Files\\Common Files\\VST3\\ValhallaRoom.vst3"), "Rigsmith never scans itself");
     }

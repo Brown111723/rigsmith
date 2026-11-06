@@ -49,8 +49,8 @@ public:
     /** Several edits, one write. */
     struct Batch
     {
-        explicit Batch (IniFile& i) : ini (i) { ini.reloadIfChanged(); ++ini.batchDepth; }
-        ~Batch() { if (--ini.batchDepth == 0 && ini.pending) ini.save(); }
+        explicit Batch (IniFile& i) : ini (i) { ini.lock.enter(); ini.reloadIfChanged(); ++ini.batchDepth; }
+        ~Batch() { if (--ini.batchDepth == 0 && ini.pending) ini.save(); ini.lock.exit(); }
         IniFile& ini;
     };
 
@@ -72,6 +72,7 @@ private:
     void changed();
 
     juce::File file;
+    mutable juce::CriticalSection lock;   // plug-in scans write from their own threads
     std::vector<Section> sections;
     juce::String lastText;   // what the file held when we last read or wrote it
     bool existedAtLoad = false, pending = false;

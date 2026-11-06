@@ -130,13 +130,12 @@ Engine::Engine() : root (std::make_unique<Chain>())
     o.osxLibrarySubFolder = "Application Support";
     props.setStorageParameters (o);
 
-    juce::addDefaultFormatsToManager (formatManager);
+    addPluginFormats (formatManager);   // VST3 (and VST2), never Rigsmith itself
 
     if (auto* s = props.getUserSettings())
         if (auto xml = s->getXmlValue ("pluginList"))
             knownPlugins.recreateFromXml (*xml);
-    // scan each plug-in in its own process (a crash only skips that plug-in), never Rigsmith itself
-    installSafeScanner (knownPlugins);
+    // the editor / processor picks the scanner (setupPluginScanning); never list Rigsmith itself
     for (auto& d : knownPlugins.getTypes())
         if (OutOfProcessScanner::isRigsmith (d.fileOrIdentifier)) knownPlugins.removeType (d);
 
@@ -277,6 +276,66 @@ void Engine::setFolder (const juce::String& key, const juce::File& f)
                     : key == "blockPresetFolder" ? "BlockPresets" : key == "downloadFolder" ? "TONE3000" : key.toRawUTF8();
     if (f != juce::File()) f.createDirectory();
     ini.set ("Folders", name, f.getFullPathName());   // an empty File clears it (back to the default)
+}
+
+//==============================================================================
+static constexpr const char* skippedSection = "Skipped Plug-ins";
+
+void Engine::setupPluginScanning (bool standalone)
+{
+    // a plug-in that crashed the last in-process scan is still written down as "Scanning": skip it from now on
+    const auto crashed = ini.get ("Plug-ins", "Scanning").trim();
+    if (crashed.isNotEmpty())
+    {
+        auto skipped = getSkippedPlugins();
+        skipped.addIfNotAlreadyThere (crashed);
+        ini.setList (skippedSection, "Plugin", skipped);
+        ini.set ("Plug-ins", "Scanning", "");
+        scanCrashNotice = crashed;
+    }
+
+    ScanPolicy policy;
+    policy.isSkipped = [this] (const juce::String& f) { return getSkippedPlugins().contains (f, true); };
+    policy.onCrashed = [this] (const juce::String& f)
+    {
+        auto skipped = getSkippedPlugins();
+        skipped.addIfNotAlreadyThere (f);
+        ini.setList (skippedSection, "Plugin", skipped);
+    };
+    policy.onStarting = [this] (const juce::String& f) { ini.set ("Plug-ins", "Scanning", f); };
+    policy.onFinished = [this] { ini.set ("Plug-ins", "Scanning", ""); };
+
+    // Rigsmith.exe scans each plug-in in a second copy of itself (a crash only skips that plug-in).
+    // The plug-in version borrows Rigsmith.exe for that when it's installed; otherwise it scans in
+    // the DAW, with the dead-man's-pedal above.
+    juce::File exe;
+    if (standalone)
+    {
+        exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+        ini.set ("Plug-ins", "ScannerApp", exe.getFullPathName());
+    }
+    else if (const juce::File app (ini.get ("Plug-ins", "ScannerApp")); juce::File::isAbsolutePath (app.getFullPathName()) && app.existsAsFile())
+        exe = app;
+    if (exe.existsAsFile()) knownPlugins.setCustomScanner (std::make_unique<OutOfProcessScanner> (exe, policy));
+    else                    knownPlugins.setCustomScanner (std::make_unique<InProcessScanner> (policy));
+}
+
+juce::StringArray Engine::getSkippedPlugins() const
+{
+    return ini.getList (skippedSection);
+}
+
+void Engine::clearSkippedPlugins()
+{
+    for (auto& f : getSkippedPlugins()) knownPlugins.removeFromBlacklist (f);
+    ini.setList (skippedSection, "Plugin", {});
+}
+
+juce::String Engine::takeScanCrashNotice()
+{
+    auto s = scanCrashNotice;
+    scanCrashNotice.clear();
+    return s;
 }
 
 bool Engine::addCaptures (Sweepable& sw, const juce::Array<juce::File>& more, juce::String& error)

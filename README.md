@@ -104,7 +104,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **Add anywhere**: a small **+** sits on the wire before every block, as well as the big one at the end of each chain.
 - **Remembered folders**: several NAM, IR and plug-in folders, set once in **Menu → Settings & folders**.
 - **`Rigsmith.ini`** holds your folders, preferences and randomise ticks, and is read every time Rigsmith starts. Rigsmith looks for it next to `Rigsmith.exe` first (a **portable** copy), then in `%APPDATA%\Rigsmith\`, and creates it there if neither exists. Settings has **Show Rigsmith.ini** and **Make this copy portable** buttons. It's plain text, so it's safe to edit or back up. Older settings are brought across automatically.
-- **Crash-proof plug-in scanning**: each plug-in is scanned by a separate little helper (`RigsmithScanner.exe`), so one that crashes or hangs is just skipped (and listed as failed) instead of taking Rigsmith, or your DAW, down with it. Rigsmith never scans itself.
+- **Crash-proof plug-in scanning, one exe**: `Rigsmith.exe` scans each plug-in in a second copy of itself, so one that crashes or hangs is just skipped instead of taking Rigsmith down. It's written in `Rigsmith.ini` under `[Skipped Plug-ins]` and never scanned again (menu > **Retry skipped plug-ins** to try again). The VST3 borrows `Rigsmith.exe` for this when it's installed; otherwise it scans inside the DAW, noting each plug-in in the ini first, so if one crashes the DAW it's skipped from the next start. Rigsmith never scans (or lists) itself.
 - **Plug-in scanning**: the first run scans for plug-ins. After that, Rigsmith opens straight away with the remembered list, unless you tick **Look for new plug-ins every time Rigsmith opens** (or click **Scan**).
 - Every dB readout is shown to one decimal place.
 - **Rig map**: when the rig is longer than the window, a small miniature of it floats at the bottom of the graph; click or drag on it to jump anywhere.
@@ -128,12 +128,12 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 Every push builds on GitHub Actions. Open the **Actions** tab, pick the latest run, and download **Rigsmith-Windows**. It contains:
 
 - **`Rigsmith-x.y.z-Setup.exe`**: installs the app, adds a Start-menu shortcut and puts the VST3 in `C:\Program Files\Common Files\VST3`.
-- **`Rigsmith-x.y.z-windows.zip`**: a portable copy of `Rigsmith.exe` (keep `RigsmithScanner.exe` next to it) and `Rigsmith.vst3`.
+- **`Rigsmith-x.y.z-windows.zip`**: a portable copy of `Rigsmith.exe` and `Rigsmith.vst3`.
 
 To publish a GitHub Release, push a tag:
 
 ```
-git tag v0.10.0 && git push origin v0.10.0
+git tag v0.10.1 && git push origin v0.10.1
 ```
 
 ## Quick start

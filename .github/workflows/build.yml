@@ -47,7 +47,7 @@ jobs:
           cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release @extra
 
       - name: Build
-        run: cmake --build build --config Release --parallel --target Rigsmith_Standalone Rigsmith_VST3 RigsmithScanner
+        run: cmake --build build --config Release --parallel --target Rigsmith_Standalone Rigsmith_VST3
 
       - name: Version
         id: version
@@ -56,21 +56,12 @@ jobs:
           $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(Rigsmith VERSION ([0-9.]+)').Matches[0].Groups[1].Value
           "version=$v" >> $env:GITHUB_OUTPUT
 
-      - name: Put the scanner helper in place
-        shell: pwsh
-        run: |
-          $scanner = Get-ChildItem -Recurse build/RigsmithScanner_artefacts -Filter RigsmithScanner.exe | Select-Object -First 1
-          Copy-Item $scanner.FullName build/Rigsmith_artefacts/Release/Standalone/
-          New-Item -ItemType Directory -Force -Path build/Rigsmith_artefacts/Release/VST3/Rigsmith.vst3/Contents/Resources | Out-Null
-          Copy-Item $scanner.FullName build/Rigsmith_artefacts/Release/VST3/Rigsmith.vst3/Contents/Resources/
-
       - name: Package zip
         shell: pwsh
         run: |
           $out = "dist/Rigsmith-${{ steps.version.outputs.version }}-windows"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           Copy-Item build/Rigsmith_artefacts/Release/Standalone/Rigsmith.exe $out/
-          Copy-Item build/Rigsmith_artefacts/Release/Standalone/RigsmithScanner.exe $out/
           Copy-Item -Recurse build/Rigsmith_artefacts/Release/VST3/Rigsmith.vst3 $out/
           Copy-Item README.md, LICENSE $out/
           Compress-Archive -Path "$out/*" -DestinationPath "$out.zip" -Force
@@ -112,6 +103,6 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRIGSMITH_TESTS=ON
       - name: Build
-        run: cmake --build build --target RigsmithTests RigsmithScanner
+        run: cmake --build build --target RigsmithTests
       - name: Run
         run: ./build/RigsmithTests_artefacts/Release/RigsmithTests build/_deps/namcore-src/example_models

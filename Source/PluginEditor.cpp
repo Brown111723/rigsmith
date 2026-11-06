@@ -105,6 +105,12 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     header.onPresetMenu = [this] { showPresetMenu(); };
     header.onSave = [this] { savePreset (false); };
     header.onMenu = [this] { showMainMenu(); };
+    if (const auto crashed = engine.takeScanCrashNotice(); crashed.isNotEmpty())
+        juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<RigsmithEditor> (this), crashed]
+        {
+            if (sp != nullptr)
+                sp->showMessage (juce::File (crashed).getFileName() + " crashed while being scanned: it won't be scanned again (menu > Retry skipped plug-ins)");
+        });
     header.onTooltips = [this] { setTooltipsEnabled (tooltips == nullptr); };
     setTooltipsEnabled (engine.getSetting ("tooltips", false));
     learnClose.onClick = [this] { engine.cancelLearn(); toast.clear(); learnClose.setVisible (false); repaint(); };
@@ -1210,6 +1216,8 @@ void RigsmithEditor::showMainMenu()
         m.addItem (18, "Full screen  (F11)", true, isFullScreen());
     m.addItem (19, "Show library  (L)", true, libraryVisible);
     m.addItem (20, "Tooltips", true, tooltips != nullptr);
+    if (const int skipped = engine.getSkippedPlugins().size(); skipped > 0)
+        m.addItem (24, "Retry skipped plug-ins (" + juce::String (skipped) + " crashed while being scanned)");
     m.addItem (3, "Output safety limiter", true, engine.limiterOn.load());
     m.addItem (4, "Tuner", true, engine.tunerActive.load());
 
@@ -1257,6 +1265,7 @@ void RigsmithEditor::showMainMenu()
             case 18: setFullScreen (! isFullScreen()); break;
             case 19: setLibraryVisible (! libraryVisible); break;
             case 20: setTooltipsEnabled (tooltips == nullptr); break;
+            case 24: engine.clearSkippedPlugins(); showMessage ("They'll be scanned again next time you scan"); break;
             case 3: engine.limiterOn = ! engine.limiterOn.load(); break;
             case 4: engine.tunerActive = ! engine.tunerActive.load(); updateTuner(); break;
             case 5: learn (MidiMapping::Target::PresetNext); break;

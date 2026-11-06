@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Engine/PluginScanner.h"
 
 RigsmithProcessor::RigsmithProcessor()
     : AudioProcessor (BusesProperties()
@@ -11,6 +12,7 @@ RigsmithProcessor::RigsmithProcessor()
     addParameter (sceneParam);
     sceneParam->addListener (this);
 
+    engine.setupPluginScanning (isStandalone());
     engine.onLatencyChanged = [this] (int samples) { setLatencySamples (samples); };
     engine.onSceneChanged = [this] (int scene)
     {
@@ -112,5 +114,14 @@ void RigsmithProcessor::setStateInformation (const void* data, int size)
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
+    // "Rigsmith.exe --rigsmith-scan <format> <plug-in> <out.xml>": Rigsmith scanning one plug-in for
+    // itself in a separate process (so a crash only loses that process). Scan, then quit at once.
+    if (juce::JUCEApplicationBase::isStandaloneApp())
+    {
+        const auto args = juce::JUCEApplicationBase::getCommandLineParameterArray();
+        for (auto& a : args)
+            if (a.unquoted() == rig::scanSwitch)
+                std::_Exit (rig::runScanCommand (args));
+    }
     return new RigsmithProcessor();
 }

@@ -201,6 +201,7 @@ public:
     void markPluginsScanned();
     /** Every NAM capture and IR in the library folders, grouped by gear (see Captures.h). */
     CaptureLibrary captures;
+    juce::String scanCrashNotice;
     /** Loads a .nam into a block with every capture of the same gear ready to sweep through
         (at most maxSweep, around the chosen one), positioned on the chosen file.
         diceOnly: leave out captures the dice may not pick. */
@@ -210,6 +211,14 @@ public:
     bool addCaptures (Sweepable&, const juce::Array<juce::File>&, juce::String& error);
     /** Every .nam (or IR) in a folder and its sub-folders, in name order (at most maxSweep). */
     static juce::Array<juce::File> capturesInFolder (const juce::File& folder, bool irs);
+    /** Picks how plug-ins are scanned: in a second copy of Rigsmith.exe (standalone, or the plug-in when
+        Rigsmith.exe is installed), else in this process with a note in the ini while each one is
+        scanned. Either way a plug-in that crashes is listed under [Skipped Plug-ins] and never scanned again. */
+    void setupPluginScanning (bool standalone);
+    juce::StringArray getSkippedPlugins() const;
+    void clearSkippedPlugins();
+    /** A plug-in that crashed Rigsmith during the last scan (once, then empty). */
+    juce::String takeScanCrashNotice();
     bool shouldScanOnStartup() const { return ! hasScannedPlugins() || getSetting ("scanOnStartup", false); }
 
     //--- Randomise include / exclude (the ticks in the library) ---------------------
