@@ -301,6 +301,15 @@ void Engine::setupPluginScanning (bool standalone)
         scanCrashNotice = crashed;
     }
 
+    // a plug-in that never finished loading last time (hung, or crashed Rigsmith): the dice leave it alone
+    const auto hung = ini.get ("Plug-ins", "Loading").trim();
+    if (hung.isNotEmpty())
+    {
+        ini.set ("Plug-in load times", hung.upToFirstOccurrenceOf ("|", false, false), "-3");
+        ini.set ("Plug-ins", "Loading", "");
+        loadHangNotice = hung.fromFirstOccurrenceOf ("|", false, false);
+    }
+
     ScanPolicy policy;
     policy.isSkipped = [this] (const juce::String& f) { return getSkippedPlugins().contains (f, true); };
     policy.onCrashed = [this] (const juce::String& f)
@@ -342,6 +351,12 @@ void Engine::finishStartup()
         ini.set ("General", "Starting", "0");
         trace ("started");
     }
+}
+
+int Engine::getPluginLoadMs (const juce::PluginDescription& d) const
+{
+    const auto v = ini.get ("Plug-in load times", d.createIdentifierString());
+    return v.isEmpty() ? -1 : v.getIntValue();
 }
 
 juce::StringArray Engine::getSkippedPlugins() const
@@ -1148,8 +1163,15 @@ std::unique_ptr<Node> Engine::createNode (NodeType type) const
 std::unique_ptr<Node> Engine::createPlugin (const juce::PluginDescription& desc, juce::String& error)
 {
     trace ("loading plug-in: " + desc.name + " (" + desc.fileOrIdentifier + ")");
+    // written down first: if it never comes back, the next start knows which one it was
+    const auto key = desc.createIdentifierString();
+    ini.set ("Plug-ins", "Loading", key + "|" + desc.name);
+    const auto t0 = juce::Time::getMillisecondCounterHiRes();
     auto inst = formatManager.createPluginInstance (desc, sampleRate, blockSize, error);
-    trace (inst != nullptr ? "  loaded" : "  failed: " + error);
+    const int ms = (int) (juce::Time::getMillisecondCounterHiRes() - t0);
+    ini.set ("Plug-ins", "Loading", "");
+    ini.set ("Plug-in load times", key, juce::String (inst != nullptr ? juce::jmax (1, ms) : -2));
+    trace (inst != nullptr ? "  loaded in " + juce::String (ms) + " ms" : "  failed: " + error);
     if (inst == nullptr)
         return nullptr;
     return std::make_unique<PluginBlock> (std::move (inst), desc);

@@ -1573,6 +1573,30 @@ int main (int argc, char** argv)
                && s2->branches[1]->chain->nodes[0]->getType() == NodeType::Gain, "or copies it onto both paths");
     }
 
+    //==========================================================================
+    std::printf ("--- v0.11.2: the dice and slow plug-ins\n");
+    {
+        Engine e;
+        e.prepare (48000.0, 256);
+        juce::PluginDescription d;
+        d.name = "NoSuchPlugin";
+        d.pluginFormatName = "VST3";
+        d.fileOrIdentifier = testDir.getChildFile ("NoSuch.vst3").getFullPathName();
+        d.uniqueId = 1234;
+        CHECK (e.getPluginLoadMs (d) == -1 && ! e.isDiceSafe (d), "a plug-in that has never loaded isn't used by the dice");
+        juce::String err;
+        auto n = e.createPlugin (d, err);
+        CHECK (n == nullptr && e.getPluginLoadMs (d) == -2 && ! e.isDiceSafe (d), "one that failed to load isn't either");
+        CHECK (e.ini.get ("Plug-ins", "Loading").isEmpty(), "the 'loading' note is cleared once it returns");
+        e.ini.set ("Plug-ins", "Loading", d.createIdentifierString() + "|NoSuchPlugin");
+        e.setupPluginScanning (true);
+        CHECK (e.getPluginLoadMs (d) == -3 && e.takeLoadHangNotice() == "NoSuchPlugin", "one that never finished loading is remembered at the next start");
+        e.ini.set ("Plug-in load times", d.createIdentifierString(), "120");
+        CHECK (e.isDiceSafe (d), "one that loaded quickly is fair game");
+        Randomiser r (e);
+        CHECK (! r.options.usePlugins, "the dice don't use plug-ins unless asked");
+    }
+
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;
 }

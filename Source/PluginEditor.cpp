@@ -47,6 +47,87 @@ private:
 };
 
 //==============================================================================
+//==============================================================================
+struct RigsmithEditor::BusyCard : public juce::Component, private juce::Timer
+{
+    BusyCard() { setInterceptsMouseClicks (true, true); startTimerHz (30); }
+    juce::String title, detail;
+    float progress = -1.0f;
+    float phase = 0.0f;
+    void timerCallback() override { phase += 0.08f; repaint(); }
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colours::black.withAlpha (0.45f));
+        auto card = getLocalBounds().withSizeKeepingCentre (juce::jmin (440, getWidth() - 40), 118).toFloat();
+        g.setColour (cardHi);
+        g.fillRoundedRectangle (card, 10.0f);
+        g.setColour (accent.withAlpha (0.7f));
+        g.drawRoundedRectangle (card, 10.0f, 1.2f);
+        auto r = card.reduced (22.0f, 18.0f);
+        // spinner
+        auto sp = r.removeFromLeft (34.0f).withSizeKeepingCentre (28.0f, 28.0f);
+        juce::Path arc;
+        arc.addCentredArc (sp.getCentreX(), sp.getCentreY(), 12.0f, 12.0f, phase * 6.0f, 0.0f, 4.2f, true);
+        g.setColour (accent);
+        g.strokePath (arc, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        r.removeFromLeft (14.0f);
+        g.setColour (text);
+        g.setFont (font (15.0f, true));
+        g.drawText (title, r.removeFromTop (24.0f), juce::Justification::centredLeft);
+        g.setColour (muted);
+        g.setFont (font (12.0f));
+        g.drawFittedText (detail, r.removeFromTop (34.0f).toNearestInt(), juce::Justification::topLeft, 2);
+        if (progress >= 0.0f)
+        {
+            auto bar = r.removeFromTop (8.0f).withTrimmedTop (2.0f);
+            g.setColour (juce::Colour (0xff111215));
+            g.fillRoundedRectangle (bar, 3.0f);
+            g.setColour (accent);
+            g.fillRoundedRectangle (bar.withWidth (juce::jmax (6.0f, bar.getWidth() * juce::jlimit (0.0f, 1.0f, progress))), 3.0f);
+        }
+    }
+};
+
+//==============================================================================
+struct RigsmithEditor::LibraryLoader : private juce::Thread
+{
+    LibraryLoader (juce::FileSearchPath m, juce::FileSearchPath i) : juce::Thread ("Rigsmith library"), models (std::move (m)), irs (std::move (i))
+    {
+        startThread (juce::Thread::Priority::normal);
+    }
+    ~LibraryLoader() override { stopThread (5000); }
+
+    std::atomic<int> found { 0 }, read { 0 }, total { 0 };
+    std::atomic<bool> listing { true }, finished { false };
+
+    void run() override
+    {
+        // find them all first (so there's a total), then read what each capture says it is
+        juce::Array<juce::File> nams;
+        for (int p = 0; p < models.getNumPaths() && ! threadShouldExit(); ++p)
+            for (const auto& e : juce::RangedDirectoryIterator (models.getRawString (p), true, "*.nam", juce::File::findFiles))
+            {
+                if (threadShouldExit() || nams.size() >= CaptureLibrary::maxFiles) break;
+                nams.add (e.getFile());
+                ++found;
+            }
+        for (int p = 0; p < irs.getNumPaths() && ! threadShouldExit(); ++p)
+            for (const auto& e : juce::RangedDirectoryIterator (irs.getRawString (p), true, "*.wav;*.aif;*.aiff;*.flac", juce::File::findFiles))
+                if (threadShouldExit()) break;   // warms the file system cache
+        total = nams.size();
+        listing = false;
+        for (auto& f : nams)
+        {
+            if (threadShouldExit()) return;
+            readCaptureInfo (f);
+            ++read;
+        }
+        finished = true;
+    }
+
+    juce::FileSearchPath models, irs;
+};
+
 RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     : AudioProcessorEditor (p), processor (p), engine (p.engine),
       header (engine), graph (*this), inspector (*this), library (*this), tunerOverlay (engine)
@@ -106,7 +187,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     modPanel.setCollapsed (! modVisible);
     inspectorHeight = getIntSetting ("inspectorHeight", 370);
     if (inspectorHeight == 330) inspectorHeight = 370;   // the old default: a little taller now
-    randomiser.options.usePlugins = engine.getSetting ("randomUsePlugins", true);
+    randomiser.options.usePlugins = engine.getSetting ("randomUsePlugins", false);
     randomiser.options.allowSplits = engine.getSetting ("randomSplits", true);
 
     header.onUndo = [this] { doUndo (false); };
@@ -122,6 +203,12 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     header.onPresetMenu = [this] { showPresetMenu(); };
     header.onSave = [this] { savePreset (false); };
     header.onMenu = [this] { showMainMenu(); };
+    if (const auto hung = engine.takeLoadHangNotice(); hung.isNotEmpty())
+        juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<RigsmithEditor> (this), hung]
+        {
+            if (sp != nullptr)
+                sp->showMessage (hung + " never finished loading last time: the dice won't pick it (you can still add it yourself)");
+        });
     if (const auto crashed = engine.takeScanCrashNotice(); crashed.isNotEmpty())
         juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<RigsmithEditor> (this), crashed]
         {
@@ -194,9 +281,25 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     if (! scannedThisRun && engine.shouldScanOnStartup() && ! engine.isSafeStart())
     {
         scannedThisRun = true;
-        juce::Timer::callAfterDelay (1500, [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
+        const bool firstTime = ! engine.hasScannedPlugins();
+        juce::Timer::callAfterDelay (1500, [sp = juce::Component::SafePointer<RigsmithEditor> (this), firstTime]
         {
-            if (sp != nullptr) sp->scanForNewPlugins (false);
+            if (sp == nullptr) return;
+            if (! firstTime) { sp->scanForNewPlugins (false); return; }
+            // the very first start: ask, rather than surprise anyone with a scan
+            auto opts = juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::QuestionIcon)
+                            .withTitle ("Scan for VST3 plug-ins?")
+                            .withMessage ("Rigsmith can host your VST3 effects in the rig, next to its own blocks and NAM amps.\n\n"
+                                          "Scan your plug-in folders now? It takes a moment the first time. You can do it any time "
+                                          "from the VST3 tab or Menu > Plug-ins.")
+                            .withButton ("Scan now").withButton ("Not now")
+                            .withAssociatedComponent (sp.getComponent());
+            juce::AlertWindow::showAsync (opts, [sp] (int r)
+            {
+                if (sp == nullptr) return;
+                if (r == 1) sp->scanForNewPlugins (true);
+                else sp->engine.markPluginsScanned();
+            });
         });
     }
 }
@@ -283,6 +386,7 @@ void RigsmithEditor::paintOverChildren (juce::Graphics& g)
 
 void RigsmithEditor::resized()
 {
+    if (busy != nullptr) busy->setBounds (getLocalBounds().withTrimmedTop (64));
     auto r = getLocalBounds();
     header.setBounds (r.removeFromTop (64));
     library.setVisible (libraryVisible);
@@ -397,6 +501,40 @@ struct RigsmithEditor::Watchdog : private juce::Thread
     }
 };
 
+void RigsmithEditor::showBusy (const juce::String& title, const juce::String& detail, float progress)
+{
+    if (busy == nullptr)
+    {
+        busy = std::make_unique<BusyCard>();
+        addAndMakeVisible (*busy);
+    }
+    busy->title = title;
+    busy->detail = detail;
+    busy->progress = progress;
+    busy->setBounds (getLocalBounds().withTrimmedTop (header.getBottom()));
+    busy->toFront (false);
+    busy->repaint();
+}
+
+void RigsmithEditor::hideBusy() { busy.reset(); }
+
+void RigsmithEditor::whileBusy (const juce::String& title, const juce::String& detail, std::function<void()> work)
+{
+    showBusy (title, detail);
+    juce::Timer::callAfterDelay (60, [sp = juce::Component::SafePointer<RigsmithEditor> (this), work]
+    {
+        if (sp == nullptr) return;
+        work();
+        if (sp != nullptr) sp->hideBusy();
+    });
+}
+
+void RigsmithEditor::loadLibraryInBackground()
+{
+    libraryLoader = std::make_unique<LibraryLoader> (engine.getPaths ("modelPaths"), engine.getPaths ("irPaths"));
+    showBusy ("Loading your library", "Looking for NAM captures and IRs in your folders...", 0.0f);
+}
+
 void RigsmithEditor::hideStandaloneOptionsButton()
 {
     // the standalone window's own "Options" button: its items live in the menu instead
@@ -416,6 +554,29 @@ void RigsmithEditor::timerCallback()
 {
     ++tick;
     if (watchdog != nullptr) ++watchdog->beat;
+    if (libraryLoader != nullptr)
+    {
+        auto& l = *libraryLoader;
+        if (l.finished.load())
+        {
+            const int n = l.total.load();
+            libraryLoader.reset();
+            hideBusy();
+            engine.captures.rescan();
+            library.refresh();
+            graph.repaint();
+            inspector.setNode (inspector.getNode());
+            saveCaptureCache();
+            showMessage ("Library loaded: " + juce::String (n) + " NAM captures");
+        }
+        else if (l.listing.load())
+            showBusy ("Loading your library", "Looking for NAM captures in your folders: " + juce::String (l.found.load()) + " found so far...", 0.0f);
+        else
+            showBusy ("Loading your library",
+                      "Reading what each capture is (amp, pedal, make and model): " + juce::String (l.read.load()) + " of " + juce::String (l.total.load())
+                          + ". This is only slow the first time.",
+                      l.total.load() > 0 ? (float) l.read.load() / (float) l.total.load() : 1.0f);
+    }
     if (tick % 15 == 1) hideStandaloneOptionsButton();
     {
         auto fall = [] (float& v, std::atomic<float>& src) { v = juce::jmax (src.exchange (0.0f), v * 0.86f); };
@@ -1435,9 +1596,17 @@ void RigsmithEditor::showSettings()
 {
     juce::DialogWindow::LaunchOptions o;
     auto* s = new SettingsPanel (engine, processor.isStandalone());
-    s->onChanged = [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
+    const auto foldersBefore = engine.getPaths ("modelPaths").toString() + "|" + engine.getPaths ("irPaths").toString();
+    s->onChanged = [sp = juce::Component::SafePointer<RigsmithEditor> (this), foldersBefore]
     {
         if (sp == nullptr) return;
+        const auto now = sp->engine.getPaths ("modelPaths").toString() + "|" + sp->engine.getPaths ("irPaths").toString();
+        if (now != foldersBefore)
+        {
+            // new folders: read them in the background, with progress, then refresh
+            sp->loadLibraryInBackground();
+            return;
+        }
         sp->library.refresh();
         sp->graph.repaint();
         sp->inspector.setNode (sp->inspector.getNode());
@@ -1597,6 +1766,13 @@ void RigsmithEditor::doUndo (bool redo)
 
 void RigsmithEditor::randomiseRig()
 {
+    if (busy != nullptr) return;
+    whileBusy ("Rolling the dice", randomiser.options.usePlugins ? "Building a rig: loading amps, cabs and plug-ins..." : "Building a rig: loading amps and cabs...",
+               [this] { randomiseRigNow(); });
+}
+
+void RigsmithEditor::randomiseRigNow()
+{
     randomiser.randomiseRig();
     selectedId.clear();
     inspector.setNode (nullptr);
@@ -1613,7 +1789,7 @@ void RigsmithEditor::showRigRandomMenu()
     m.addItem (2, "New blocks, same layout");
     m.addItem (3, "Randomise every block's settings");
     m.addSeparator();
-    m.addItem (10, "Use VST plug-ins too", true, randomiser.options.usePlugins);
+    m.addItem (10, "Use VST plug-ins too (ones that have loaded quickly in Rigsmith before)", true, randomiser.options.usePlugins);
     m.addItem (11, "Allow dual-amp splits", true, randomiser.options.allowSplits);
     m.addSeparator();
     m.addItem (-1, "Locked blocks are kept. Ctrl+Z undoes any of these.", false);

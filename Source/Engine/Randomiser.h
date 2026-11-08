@@ -13,7 +13,7 @@ public:
 
     struct Options
     {
-        bool usePlugins = true;    // mix scanned VSTs in with the built-ins
+        bool usePlugins = false;   // mix in VSTs that have loaded quickly before (at most two a roll)
         bool allowSplits = true;   // dual-amp rigs
     };
     Options options;
@@ -37,6 +37,9 @@ public:
     juce::Random& random() noexcept { return rng; }
 
 private:
+    int pluginsThisRoll = 0;
+    bool rolling = false;
+    static constexpr int maxPluginsPerRoll = 2;   // loading plug-ins is the slow part of a roll
     std::unique_ptr<Node> makeRandom (Category, const Node* avoid = nullptr);
     /** variant 1: a NAM pedal capture (Nam) or a space IR (Ir). */
     std::unique_ptr<Node> makeBuiltIn (NodeType, int variant = 0);

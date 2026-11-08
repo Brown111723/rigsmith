@@ -138,6 +138,21 @@ private:
     /** Notes in Rigsmith.log if the window stops responding, and what it was doing. */
     struct Watchdog;
     std::unique_ptr<Watchdog> watchdog;
+
+    /** A card over the rig while something slow happens ("Rolling the dice..."), with progress
+        when there is some. */
+    struct BusyCard;
+    std::unique_ptr<BusyCard> busy;
+    void showBusy (const juce::String& title, const juce::String& detail, float progress = -1.0f);
+    void hideBusy();
+    /** Runs `work` once the busy card has been drawn. */
+    void whileBusy (const juce::String& title, const juce::String& detail, std::function<void()> work);
+
+    /** Reads the NAM library in the background after the folders change, with progress. */
+    struct LibraryLoader;
+    std::unique_ptr<LibraryLoader> libraryLoader;
+    void loadLibraryInBackground();
+    void randomiseRigNow();
     bool modVisible = false;
     void setModVisible (bool);
     rig::IoPanel ioPanel { *this };

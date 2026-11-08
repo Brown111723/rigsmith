@@ -179,7 +179,8 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
     const auto types = engine.knownPlugins.getTypes();
     if (options.usePlugins)
         for (auto& d : types)
-            if (! d.isInstrument && categoriseDescription (d) == cat && ! engine.isRandomExcluded (d))
+            if (! d.isInstrument && categoriseDescription (d) == cat && ! engine.isRandomExcluded (d)
+                && engine.isDiceSafe (d) && (! rolling || pluginsThisRoll < maxPluginsPerRoll))
                 cands.push_back ({ NodeType::Plugin, &d, 1.0f });
 
     // prefer something different from what's there now (but a NAM/IR always gets a new file)
@@ -198,6 +199,7 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
         size_t i = 0;
         for (; i < cands.size() - 1; ++i) { r -= cands[i].weight; if (r <= 0) break; }
 
+        if (cands[i].plugin != nullptr) ++pluginsThisRoll;
         auto n = cands[i].plugin != nullptr ? makePlugin (*cands[i].plugin) : makeBuiltIn (cands[i].type, cands[i].variant);
         if (n != nullptr) return n;
         cands.erase (cands.begin() + (long) i);   // plug-in failed to load: try another
@@ -220,6 +222,9 @@ std::unique_ptr<Node> Randomiser::makeCab()
 //==============================================================================
 void Randomiser::randomiseRig()
 {
+    pluginsThisRoll = 0;
+    rolling = true;
+    struct Reset { bool& r; ~Reset() { r = false; } } reset { rolling };
     Engine::UndoGroup undo (engine);
     collectFiles();
 

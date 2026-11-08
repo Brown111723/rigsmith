@@ -247,6 +247,13 @@ public:
     //--- Randomise include / exclude (the ticks in the library) ---------------------
     bool isRandomExcluded (const juce::File&) const;
     bool isRandomExcluded (const juce::PluginDescription&) const;
+    /** How long this plug-in took to load last time (ms): -1 never loaded, -2 failed, -3 hung or crashed
+        Rigsmith while loading. The dice only use plug-ins that have loaded quickly before. */
+    int getPluginLoadMs (const juce::PluginDescription&) const;
+    static constexpr int diceMaxLoadMs = 2500;
+    bool isDiceSafe (const juce::PluginDescription& d) const { const int ms = getPluginLoadMs (d); return ms >= 0 && ms <= diceMaxLoadMs; }
+    /** Set at startup if a plug-in never finished loading last time. */
+    juce::String takeLoadHangNotice() { auto s = loadHangNotice; loadHangNotice.clear(); return s; }
     void setRandomExcluded (const juce::Array<juce::File>&, bool excluded);
     void setRandomExcluded (const juce::Array<juce::PluginDescription>&, bool excluded);
     bool isRandomExcluded (NodeType) const;   // built-in effects
@@ -323,6 +330,7 @@ private:
     std::vector<float> keyBuffer;   // the rig's input, for keyed gates and the modulators
     double hostPpq = -1.0;
     bool safeStart = false;
+    juce::String loadHangNotice;
     void pruneModRoutes();
     juce::SmoothedValue<float> inGain, outGain, inPanL, inPanR, outPanL, outPanR, outWidth;
     float limGain = 1.0f;   // zero-latency brickwall limiter state
