@@ -234,13 +234,74 @@ TunerOverlay::TunerOverlay (Engine& e) : engine (e)
     close.onClick = [this] { if (onClose) onClose(); };
     addAndMakeVisible (muteToggle);
     addAndMakeVisible (close);
+
+    for (int i = 0; i < 3; ++i)
+    {
+        auto& b = modeButtons[i];
+        b.setClickingTogglesState (false);
+        b.setColour (juce::TextButton::buttonOnColourId, teal.withAlpha (0.8f));
+        b.setConnectedEdges ((i > 0 ? juce::Button::ConnectedOnLeft : 0) | (i < 2 ? juce::Button::ConnectedOnRight : 0));
+        b.onClick = [this, i] { setMode ((Mode) i); };
+        addAndMakeVisible (b);
+    }
+    modeButtons[0].setTooltip ("Auto: strum and see every string, or play one string for the big single-note display");
+    modeButtons[1].setTooltip ("Mono: one string at a time, any note");
+    modeButtons[2].setTooltip ("Poly: strum all the open strings and see how far out each one is");
+
+    for (int i = 0; i < (int) PolyTuner::tunings().size(); ++i)
+        tuningBox.addItem (PolyTuner::tunings()[(size_t) i].name, i + 1);
+    const int tun = juce::jlimit (0, (int) PolyTuner::tunings().size() - 1, engine.getIntSetting ("tunerTuning", 0));
+    tuningBox.setSelectedItemIndex (tun, juce::dontSendNotification);
+    engine.polyTuner.tuning = tun;
+    tuningBox.onChange = [this]
+    {
+        engine.polyTuner.tuning = tuningBox.getSelectedItemIndex();
+        engine.setIntSetting ("tunerTuning", tuningBox.getSelectedItemIndex());
+        repaint();
+    };
+    tuningBox.setTooltip ("The tuning Poly mode checks each string against");
+    addAndMakeVisible (tuningBox);
+
+    reference.setSliderStyle (juce::Slider::LinearBar);
+    reference.setRange (430.0, 450.0, 1.0);
+    reference.setTextValueSuffix (" Hz");
+    reference.setValue (engine.getIntSetting ("tunerReference", 440), juce::dontSendNotification);
+    engine.polyTuner.referenceA = (float) reference.getValue();
+    engine.tuner.referenceA = (float) reference.getValue();
+    reference.onValueChange = [this]
+    {
+        engine.polyTuner.referenceA = (float) reference.getValue();
+        engine.tuner.referenceA = (float) reference.getValue();
+        engine.setIntSetting ("tunerReference", (int) reference.getValue());
+    };
+    reference.setTooltip ("Reference pitch for A (440 Hz is standard)");
+    addAndMakeVisible (reference);
+    referenceLabel.setText ("A =", juce::dontSendNotification);
+    referenceLabel.setJustificationType (juce::Justification::centredRight);
+    referenceLabel.setColour (juce::Label::textColourId, muted);
+    addAndMakeVisible (referenceLabel);
+
+    setMode ((Mode) juce::jlimit (0, 2, engine.getIntSetting ("tunerMode", 0)));
+}
+
+void TunerOverlay::setMode (Mode m)
+{
+    mode = m;
+    for (int i = 0; i < 3; ++i) modeButtons[i].setToggleState (i == (int) m, juce::dontSendNotification);
+    engine.setIntSetting ("tunerMode", (int) m);
+    repaint();
 }
 
 void TunerOverlay::paint (juce::Graphics& g)
 {
-    g.fillAll (bg.withAlpha (0.94f));
-    auto r = getLocalBounds().withSizeKeepingCentre (juce::jmin (getWidth() - 40, 640), 300);
+    g.fillAll (bg.withAlpha (0.95f));
+    auto r = getLocalBounds().withSizeKeepingCentre (juce::jmin (getWidth() - 40, 820), juce::jmin (getHeight() - 40, 470)).withTrimmedTop (44).withTrimmedBottom (52);
+    if (showingPoly()) paintPoly (g, r);
+    else paintMono (g, r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 640), 300));
+}
 
+void TunerOverlay::paintMono (juce::Graphics& g, juce::Rectangle<int> r)
+{
     const bool valid = reading.valid;
     const float cents = valid ? juce::jlimit (-50.0f, 50.0f, reading.cents) : 0.0f;
     const bool inTune = valid && std::abs (cents) < 3.0f;
@@ -253,7 +314,7 @@ void TunerOverlay::paint (juce::Graphics& g)
     g.setColour (muted);
     g.setFont (mono (16.0f));
     g.drawText (valid ? juce::String (reading.frequency, 1) + " Hz   " + (cents >= 0 ? "+" : "") + juce::String (cents, 1) + " cents"
-                      : juce::String ("Play a single string"),
+                      : juce::String (mode == Auto ? "Play a string, or strum them all" : "Play a single string"),
                 r.removeFromTop (30), juce::Justification::centred);
 
     auto meter = r.removeFromTop (70).reduced (0, 18).toFloat();
@@ -273,9 +334,84 @@ void TunerOverlay::paint (juce::Graphics& g)
     }
 }
 
+void TunerOverlay::paintPoly (juce::Graphics& g, juce::Rectangle<int> area)
+{
+    // one column per string, low string on the left: a ladder of lights, sharp above the
+    // centre line and flat below it; the whole column glows when the string is in tune
+    const auto& t = PolyTuner::tunings()[(size_t) juce::jlimit (0, (int) PolyTuner::tunings().size() - 1, engine.polyTuner.tuning.load())];
+    const int n = (int) t.midi.size();
+    auto r = area.toFloat();
+    auto title = r.removeFromTop (28.0f);
+    g.setColour (muted);
+    g.setFont (font (13.0f, true));
+    g.drawText (poly.heardCount > 0 ? "Strum all the open strings" : "Strum all the open strings  -  " + t.name, title, juce::Justification::centred);
+    r.removeFromTop (8.0f);
+
+    const float colW = juce::jmin (100.0f, r.getWidth() / (float) n);
+    auto cols = r.withSizeKeepingCentre (colW * (float) n, r.getHeight());
+    constexpr int segs = 21;   // 10 sharp, centre, 10 flat
+    for (int s = 0; s < n; ++s)
+    {
+        auto col = cols.removeFromLeft (colW).reduced (10.0f, 0.0f);
+        PolyTuner::StringReading sr;
+        if (s < (int) poly.strings.size()) sr = poly.strings[(size_t) s];
+        const bool show = sr.heard || sr.held;
+        const float cents = juce::jlimit (-50.0f, 50.0f, sr.cents);
+        const bool inTune = show && std::abs (cents) < 2.0f;
+        const auto c = ! show ? dim : inTune ? teal : std::abs (cents) < 10.0f ? accent : red;
+        const float alpha = sr.held ? 0.55f : 1.0f;
+
+        auto label = col.removeFromBottom (44.0f);
+        auto ladder = col.reduced (0.0f, 4.0f);
+        g.setColour (card);
+        g.fillRoundedRectangle (ladder.expanded (4.0f), 6.0f);
+        if (inTune)
+        {
+            g.setColour (teal.withAlpha (0.18f * alpha));
+            g.fillRoundedRectangle (ladder.expanded (4.0f), 6.0f);
+        }
+        const float segH = ladder.getHeight() / (float) segs;
+        // the lit segment: 5 cents a step, nearer the centre finer (2, then 5)
+        int lit = segs / 2;
+        if (show && ! inTune)
+        {
+            const float a = std::abs (cents);
+            const int steps = juce::jlimit (1, 10, a < 6.0f ? 1 : (int) std::ceil ((a - 1.0f) / 5.0f));
+            lit = segs / 2 + (cents > 0 ? -steps : steps);
+        }
+        for (int k = 0; k < segs; ++k)
+        {
+            auto seg = juce::Rectangle<float> (ladder.getX(), ladder.getY() + segH * (float) k, ladder.getWidth(), segH).reduced (4.0f, 1.5f);
+            const bool centre = k == segs / 2;
+            juce::Colour sc = centre ? teal.withAlpha (0.25f) : borderHi.withAlpha (0.35f);
+            if (show)
+            {
+                if (inTune && centre) sc = teal.withAlpha (alpha);
+                else if (k == lit) sc = c.withAlpha (alpha);
+                else if ((k < segs / 2 && lit <= k) || (k > segs / 2 && lit >= k)) sc = c.withAlpha (0.35f * alpha);   // the trail back to centre
+            }
+            g.setColour (sc);
+            g.fillRoundedRectangle (seg, 2.0f);
+        }
+        g.setColour (show ? c.withAlpha (alpha) : muted);
+        g.setFont (font (22.0f, true));
+        g.drawText (sr.note.dropLastCharacters (sr.note.length() > 0 && juce::CharacterFunctions::isDigit (sr.note.getLastCharacter()) ? 1 : 0),
+                    label.removeFromTop (26.0f), juce::Justification::centred);
+        g.setFont (mono (11.0f));
+        g.setColour (show ? text.withAlpha (alpha) : dim);
+        g.drawText (show ? (cents >= 0 ? "+" : "") + juce::String (cents, 1) : juce::String ("-"), label, juce::Justification::centred);
+    }
+}
+
 void TunerOverlay::resized()
 {
-    auto r = getLocalBounds().withSizeKeepingCentre (juce::jmin (getWidth() - 40, 640), 300);
+    auto r = getLocalBounds().withSizeKeepingCentre (juce::jmin (getWidth() - 40, 820), juce::jmin (getHeight() - 40, 470));
+    auto top = r.removeFromTop (32);
+    for (int i = 0; i < 3; ++i) modeButtons[i].setBounds (top.removeFromLeft (64).reduced (0, 2));
+    reference.setBounds (top.removeFromRight (90).reduced (0, 3));
+    referenceLabel.setBounds (top.removeFromRight (40));
+    top.removeFromRight (12);
+    tuningBox.setBounds (top.removeFromRight (260).reduced (0, 2));
     auto row = r.removeFromBottom (36).withSizeKeepingCentre (420, 34);
     muteToggle.setBounds (row.removeFromLeft (240));
     close.setBounds (row.removeFromRight (140));

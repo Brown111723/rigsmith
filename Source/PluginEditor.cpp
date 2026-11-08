@@ -483,6 +483,28 @@ struct RigsmithEditor::DemoAudio : private juce::Timer
     void timerCallback() override
     {
         static const float notes[] { 82.4f, 110.0f, 146.8f, 196.0f, 329.6f, 220.0f, 164.8f, 123.5f };
+        if (strum)
+        {
+            // six open strings, a little out: for the polyphonic tuner
+            static const float midi[] { 40.0f, 45.0f, 50.0f, 55.0f, 59.0f, 64.0f };
+            static const float off[] { -12.0f, 4.0f, 0.5f, -6.0f, 1.0f, 18.0f };
+            for (int i = 0; i < buffer.getNumSamples(); ++i, ++t)
+            {
+                if (t % 96000 == 0) env = 1.0f;
+                env *= 0.99998f;
+                float x = 0.0f;
+                for (int s = 0; s < 6; ++s)
+                {
+                    const float f = 440.0f * std::pow (2.0f, (midi[s] - 69.0f + off[s] / 100.0f) / 12.0f);
+                    for (int h = 1; h <= 4; ++h) x += 0.04f / (float) h * std::sin (juce::MathConstants<float>::twoPi * f * (float) h * (float) t / 48000.0f);
+                }
+                buffer.setSample (0, i, x * env);
+                buffer.setSample (1, i, x * env);
+            }
+            juce::MidiBuffer midi2;
+            proc.processBlock (buffer, midi2);
+            return;
+        }
         for (int i = 0; i < buffer.getNumSamples(); ++i)
         {
             if (--untilNext <= 0)
@@ -504,6 +526,9 @@ struct RigsmithEditor::DemoAudio : private juce::Timer
     RigsmithProcessor& proc;
     juce::AudioBuffer<float> buffer;
     juce::Random rng;
+    bool strum = juce::SystemStats::getEnvironmentVariable ("RIGSMITH_DEMO_AUDIO", {}) == "strum";
+    juce::int64 t = 0;
+    float env = 1.0f;
     int untilNext = 0;
     float hz = 110.0f, amp = 0.0f, phase = 0.0f;
 };
@@ -638,6 +663,8 @@ void RigsmithEditor::timerCallback()
         reading = engine.tuner.analyse();
         tunerOverlay.setReading (reading);
     }
+    if (engine.tunerActive.load() && tick % 3 == 1 && tunerOverlay.isVisible() && tunerOverlay.getMode() != rig::TunerOverlay::Mono)
+        tunerOverlay.setPolyReading (engine.polyTuner.analyse());
     else if (! engine.tunerActive.load())
     {
         reading = {};

@@ -105,24 +105,6 @@ protected:
     std::unique_ptr<juce::dsp::Oversampling<float>> os;
 };
 
-class OverdriveBlock : public DriveBase
-{
-public:
-    OverdriveBlock();
-    juce::String getName() const override { return "Overdrive"; }
-    juce::String getDetail() const override { return "Drive " + formatValue (pDrive) + "  Tone " + formatValue (pTone); }
-    float shape (float x) const override;
-    enum { pDrive, pTone, pLevel, pBlend };
-protected:
-    void prepareImpl (double, int) override;
-    void processImpl (juce::AudioBuffer<float>&, int) noexcept override;
-private:
-    Biquad preHp[1], tone;
-    dsp::OnePole cleanLp[2];
-    ChangeWatch watch;
-    juce::AudioBuffer<float> clean;
-};
-
 class FuzzBlock : public DriveBase
 {
 public:
@@ -186,19 +168,43 @@ class WahBlock : public Block
 public:
     WahBlock();
     juce::String getName() const override { return "Wah"; }
-    juce::String getDetail() const override { return getSpecs()[pMode].choices[getChoice (pMode)]; }
+    juce::String getDetail() const override;
     Visual getVisual() const override { return Visual::Response; }
     float responseDb (double hz) const override;
     float liveFrequency() const override { return liveHz.load(); }
-    enum { pMode, pPos, pSens, pRate, pLow, pHigh, pQ, pMix };
+    std::vector<int> panelOrder() const override;
+    void onChoiceChanged (int param) override;
+    enum { pMode, pPos, pSens, pRate, pLow, pHigh, pQ, pMix, pModel, pBoost, pBass, pTreble, pBias, pRange, pAuto };
+    enum Model { CryBaby = 0, Vox847, MultiWah535Q, BadHorsie, XoticXW1 };
+
+    struct WahModel
+    {
+        const char* name;
+        const char* blurb;
+        float heel, toe, q;     // its stock sweep
+        float leak;             // the inductor's low-pass leak (body under the sweep)
+        float drive;            // the transistor stage's grit
+        float taper;            // pot law: > 1 = audio taper (most of the sweep near the toe)
+        float gainDb;
+    };
+    static const std::array<WahModel, 5>& models();
+    /** Bad Horsie-style: off while the pedal rests heel-down, on as soon as it moves. */
+    bool isEngaged() const noexcept { return engaged.load(); }
+
 protected:
     void prepareImpl (double, int) override;
     void processImpl (juce::AudioBuffer<float>&, int) noexcept override;
 private:
+    void sweep (float& lo, float& hi) const noexcept;
     dsp::Svf svf[2];
     dsp::Follower det;
     dsp::Lfo lfo;
     dsp::OnePole posSmooth;
+    Biquad lowShelf, highShelf;
+    ChangeWatch watch;
+    float engage = 1.0f;
+    int restingSamples = 0;
+    std::atomic<bool> engaged { true };
     std::atomic<float> liveHz { 700.0f };
 };
 

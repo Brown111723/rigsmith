@@ -1638,6 +1638,108 @@ int main (int argc, char** argv)
         CHECK (raw->created == 1 && err == "made synchronously", "loading a plug-in on the message thread returns (no deadlock)");
     }
 
+    //==========================================================================
+    std::printf ("--- v0.12: pedal models\n");
+    {
+        auto levelOf = [] (PedalBlock& pb, float amp, float hz)
+        {
+            pb.prepare (48000.0, 512);
+            juce::AudioBuffer<float> buf (2, 512);
+            double sIn = 0, sOut = 0;
+            int t = 0;
+            bool finite = true;
+            for (int blk = 0; blk < 60; ++blk)
+            {
+                for (int i = 0; i < 512; ++i, ++t)
+                {
+                    const float ph = std::fmod ((float) t * hz / 48000.0f, 1.0f);
+                    const float x = amp * (2.0f * ph - 1.0f) * 0.7f + amp * 0.3f * std::sin ((float) t * 0.003f);
+                    buf.setSample (0, i, x); buf.setSample (1, i, x);
+                    if (blk >= 20) sIn += x * x;
+                }
+                pb.process (buf, 512);
+                for (int i = 0; i < 512; ++i)
+                {
+                    const float y = buf.getSample (0, i);
+                    finite &= std::isfinite (y);
+                    if (blk >= 20) sOut += y * y;
+                }
+            }
+            return finite ? (float) (10.0 * std::log10 ((sOut + 1e-20) / (sIn + 1e-20))) : 999.0f;
+        };
+        bool allOk = true;
+        for (auto type : { NodeType::Overdrive, NodeType::Distortion })
+        {
+            const auto& ms = type == NodeType::Overdrive ? PedalBlock::overdriveModels() : PedalBlock::distortionModels();
+            for (int mi = 0; mi < (int) ms.size(); ++mi)
+                for (int v = 0; v < juce::jmax (1, ms[(size_t) mi].voices.size()); ++v)
+                {
+                    std::unique_ptr<PedalBlock> pb (type == NodeType::Overdrive ? (PedalBlock*) new OverdriveBlock() : (PedalBlock*) new DistortionBlock());
+                    pb->set (PedalBlock::pModel, (float) mi);
+                    pb->set (PedalBlock::pVoice, (float) v);
+                    const float db = levelOf (*pb, 0.2f, 110.0f);
+                    pb->set (PedalBlock::pDrive, 10.0f);
+                    const float dbMax = levelOf (*pb, 0.2f, 110.0f);
+                    pb->set (PedalBlock::pDrive, 0.0f);
+                    const float dbMin = levelOf (*pb, 0.2f, 110.0f);
+                    std::printf ("    %-34s %-14s  drive 0: %6.1f  5: %6.1f  10: %6.1f dB\n", ms[(size_t) mi].name.toRawUTF8(),
+                                 ms[(size_t) mi].voices[v].toRawUTF8(), dbMin, db, dbMax);
+                    allOk &= std::abs (db) < 3.0f && std::abs (dbMax) < 10.0f && dbMin > -26.0f && dbMin < 6.0f;
+                }
+        }
+        CHECK (allOk, "every pedal model makes sound at a sensible level (within a few dB of unity at drive 5)");
+        DistortionBlock d;
+        d.set (PedalBlock::pModel, 1.0f);
+        CHECK (d.getParamName (PedalBlock::pDrive) == "Distortion" && d.getParamName (PedalBlock::pTone) == "Filter"
+               && d.getChoiceNames (PedalBlock::pVoice)[1] == "Turbo RAT", "models name their own knobs and switch");
+    }
+
+    std::printf ("--- v0.12: polyphonic tuner\n");
+    {
+        auto strum = [] (PolyTuner& pt, const std::vector<float>& detune, const std::vector<bool>& play)
+        {
+            const int midi[] { 40, 45, 50, 55, 59, 64 };
+            std::vector<float> buf (480);
+            juce::Random rng (7);
+            std::vector<float> ph (24, 0.0f);
+            for (int b = 0; b < 120; ++b)   // 1.2 s
+            {
+                for (int i = 0; i < 480; ++i)
+                {
+                    const float t = (float) (b * 480 + i) / 48000.0f;
+                    float x = 0.0f;
+                    for (int s = 0; s < 6; ++s)
+                    {
+                        if (! play[(size_t) s]) continue;
+                        const float f = 440.0f * std::pow (2.0f, ((float) midi[s] - 69.0f + detune[(size_t) s] / 100.0f) / 12.0f);
+                        for (int h = 1; h <= 6; ++h)
+                            x += 0.05f / (float) h * std::exp (-t * 1.5f) * std::sin (juce::MathConstants<float>::twoPi * f * (float) h * t + (float) (s * 7 + h));
+                    }
+                    buf[(size_t) i] = x + (rng.nextFloat() - 0.5f) * 0.001f;
+                }
+                pt.push (buf.data(), 480);
+            }
+            return pt.analyse();
+        };
+        PolyTuner pt;
+        pt.prepare (48000.0);
+        const std::vector<float> detune { -10.0f, 5.0f, 0.0f, -3.0f, 8.0f, -20.0f };
+        auto r = strum (pt, detune, { true, true, true, true, true, true });
+        bool all = r.strings.size() == 6 && r.strummed;
+        float worst = 0.0f;
+        for (size_t s = 0; s < r.strings.size(); ++s)
+        {
+            std::printf ("    %-3s heard %d  %+6.2f cents (true %+5.1f)\n", r.strings[s].note.toRawUTF8(), (int) r.strings[s].heard, r.strings[s].cents, detune[s]);
+            all &= r.strings[s].heard;
+            worst = juce::jmax (worst, std::abs (r.strings[s].cents - detune[s]));
+        }
+        CHECK (all && worst < 2.0f, "strumming all six strings: each one is heard and read to within 2 cents");
+        PolyTuner one;
+        one.prepare (48000.0);
+        auto r1 = strum (one, detune, { false, false, false, true, false, false });
+        CHECK (r1.strings[3].heard && std::abs (r1.strings[3].cents + 3.0f) < 2.0f && ! r1.strummed, "one string: only that one (no strum)");
+    }
+
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;
 }

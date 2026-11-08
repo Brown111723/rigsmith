@@ -261,71 +261,6 @@ int DriveBase::getLatency() const noexcept
 }
 
 //==============================================================================
-// Overdrive (mid-hump, asymmetric soft clip)
-//==============================================================================
-static inline float odShape (float x) noexcept { return fastTanh (x + 0.18f) - fastTanh (0.18f); }
-
-OverdriveBlock::OverdriveBlock()
-    : DriveBase (NodeType::Overdrive, {
-        P ("drive", "Drive", 0.0f, 10.0f, 5.0f).rand (2.0f, 9.0f),
-        P ("tone", "Tone", 0.0f, 10.0f, 5.0f).rand (3.0f, 8.0f),
-        P ("level", "Level", -24.0f, 12.0f, 0.0f, "dB"),
-        P ("blend", "Clean Blend", 0.0f, 100.0f, 0.0f, "%").rand (0.0f, 40.0f) })
-{
-}
-
-float OverdriveBlock::shape (float x) const
-{
-    return odShape (x * dbToGain (6.0f + get (pDrive) * 4.2f) * 0.25f);
-}
-
-void OverdriveBlock::prepareImpl (double sr, int block)
-{
-    prepareOversampling (sr, block);
-    preHp[0].reset(); tone.reset();
-    for (auto& c : cleanLp) { c.setCutoff (sr, 720.0); c.reset(); }
-    clean.setSize (2, block, false, true, true);
-    watch.invalidate();
-}
-
-void OverdriveBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
-{
-    if (watch.changed ({ get (pTone) }))
-    {
-        preHp[0].setHighPass (sampleRate * 2.0, 720.0, 0.6);
-        tone.setLowPass (sampleRate, 700.0 * std::pow (8.0, get (pTone) / 10.0), 0.707);
-    }
-    const float gain = dbToGain (6.0f + get (pDrive) * 4.2f) * 0.25f;
-    const float level = dbToGain (get (pLevel));
-    const float blend = get (pBlend) * 0.01f;
-
-    for (int ch = 0; ch < 2; ++ch) clean.copyFrom (ch, 0, b, ch, 0, n);
-
-    float* ptrs[2] = { b.getWritePointer (0), b.getWritePointer (1) };
-    juce::dsp::AudioBlock<float> blk (ptrs, 2, (size_t) n);
-    auto up = os->processSamplesUp (blk);
-    for (size_t ch = 0; ch < 2; ++ch)
-    {
-        auto* d = up.getChannelPointer (ch);
-        for (size_t i = 0; i < up.getNumSamples(); ++i)
-            d[i] = odShape (preHp[0].process (d[i], (int) ch) * gain);
-    }
-    os->processSamplesDown (blk);
-
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        auto* d = b.getWritePointer (ch);
-        auto* c = clean.getReadPointer (ch);
-        for (int i = 0; i < n; ++i)
-        {
-            // TS-style: the clipped mids plus some untouched low end for body
-            const float driven = tone.process (d[i], ch) + 0.35f * cleanLp[ch].lp (c[i]);
-            d[i] = (driven * (1.0f - blend) + c[i] * blend) * level;
-        }
-    }
-}
-
-//==============================================================================
 // Fuzz
 //==============================================================================
 static inline float fuzzShape (float x) noexcept
@@ -490,17 +425,102 @@ void CrusherBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 //==============================================================================
 // Wah
 //==============================================================================
+const std::array<WahBlock::WahModel, 5>& WahBlock::models()
+{
+    static const std::array<WahModel, 5> m { {
+        { "Cry Baby GCB95", "Dunlop, 1966: the best-selling pedal of all time. Aggressive, mid-forward sweep: classic rock and funk",
+          350.0f, 2200.0f, 6.5f, 0.12f, 0.35f, 1.6f, 2.0f },
+        { "Vox V847A", "Vox, 1967 design: smoother, more vocal and subtle, with more low end kept (Clapton in Cream)",
+          450.0f, 1800.0f, 4.2f, 0.22f, 0.2f, 1.2f, 1.0f },
+        { "Cry Baby 535Q Multi-Wah", "Dunlop: the Swiss Army knife. Six sweep ranges, adjustable Q and a variable boost",
+          300.0f, 2000.0f, 6.0f, 0.12f, 0.3f, 1.6f, 1.0f },
+        { "Morley Bad Horsie", "Steve Vai's optical wah, 1996: a wide, smooth sweep. Switchless: it turns on when you move it, off when you rest it heel-down",
+          330.0f, 2700.0f, 7.5f, 0.1f, 0.25f, 1.0f, 2.0f },
+        { "Xotic XW-1", "The boutique benchmark, 2015: bias, treble, bass and Q on the outside, from vintage Italian Vox to modern funk",
+          380.0f, 2300.0f, 5.5f, 0.15f, 0.3f, 1.4f, 1.0f },
+    } };
+    return m;
+}
+
+static juce::StringArray wahModelNames()
+{
+    juce::StringArray s;
+    for (auto& m : WahBlock::models()) s.add (m.name);
+    return s;
+}
+
 WahBlock::WahBlock()
     : Block (NodeType::Wah, {
         Choice ("mode", "Mode", { "Pedal", "Envelope", "LFO" }, 0),
         P ("position", "Pedal", 0.0f, 100.0f, 50.0f, "%").rand (20.0f, 80.0f),
         P ("sens", "Sensitivity", 0.0f, 100.0f, 60.0f, "%").rand (30.0f, 90.0f),
         P ("rate", "LFO Rate", 0.1f, 10.0f, 1.5f, "Hz").mid (1.5f).dec (2).rand (0.3f, 4.0f),
-        P ("low", "Heel", 200.0f, 800.0f, 380.0f, "Hz").mid (400.0f).rand (300.0f, 600.0f),
+        P ("low", "Heel", 200.0f, 800.0f, 350.0f, "Hz").mid (400.0f).rand (300.0f, 600.0f),
         P ("high", "Toe", 1000.0f, 4000.0f, 2200.0f, "Hz").mid (2000.0f).rand (1500.0f, 3000.0f),
-        P ("q", "Resonance", 1.0f, 15.0f, 6.0f).mid (5.0f).rand (3.0f, 10.0f),
-        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%").rand (70.0f, 100.0f) })
+        P ("q", "Q", 1.0f, 15.0f, 6.5f).mid (5.0f).rand (3.0f, 10.0f),
+        P ("mix", "Mix", 0.0f, 100.0f, 100.0f, "%").rand (70.0f, 100.0f),
+        Choice ("model", "Model", wahModelNames(), 0),
+        P ("boost", "Boost", 0.0f, 16.0f, 0.0f, "dB").rand (0.0f, 6.0f),
+        P ("bass", "Bass", -10.0f, 10.0f, 0.0f, "dB").rand (-4.0f, 4.0f),
+        P ("treble", "Treble", -10.0f, 10.0f, 0.0f, "dB").rand (-4.0f, 4.0f),
+        P ("bias", "Bias", 0.0f, 10.0f, 5.0f).rand (3.0f, 7.0f),
+        Choice ("range", "Range", { "1", "2", "3", "4", "5", "6" }, 2),
+        Toggle ("auto", "Auto-engage", false).fixed() })
 {
+}
+
+juce::String WahBlock::getDetail() const
+{
+    const auto& m = models()[(size_t) juce::jlimit (0, 4, getChoice (pModel))];
+    return juce::String (m.name) + "  " + getSpecs()[pMode].choices[getChoice (pMode)];
+}
+
+std::vector<int> WahBlock::panelOrder() const
+{
+    const int mode = getChoice (pMode), model = getChoice (pModel);
+    std::vector<int> o { pModel, pMode };
+    if (model == MultiWah535Q) o.push_back (pRange);
+    o.push_back (mode == 0 ? pPos : mode == 1 ? pSens : pRate);
+    switch (model)
+    {
+        case MultiWah535Q: o.insert (o.end(), { pQ, pBoost }); break;
+        case XoticXW1:     o.insert (o.end(), { pQ, pBias, pBass, pTreble, pLow, pHigh }); break;
+        default:           o.insert (o.end(), { pLow, pHigh, pQ }); break;
+    }
+    o.push_back (pMix);
+    if (model == BadHorsie && mode == 0) o.push_back (pAuto);
+    return o;
+}
+
+void WahBlock::onChoiceChanged (int param)
+{
+    if (param != pModel) return;
+    // a new model: its own stock sweep
+    const auto& m = models()[(size_t) juce::jlimit (0, 4, getChoice (pModel))];
+    set (pLow, m.heel);
+    set (pHigh, m.toe);
+    set (pQ, m.q);
+    set (pAuto, getChoice (pModel) == BadHorsie ? 1.0f : 0.0f);
+    if (getChoice (pModel) != MultiWah535Q) set (pBoost, 0.0f);
+}
+
+void WahBlock::sweep (float& lo, float& hi) const noexcept
+{
+    if (getChoice (pModel) == MultiWah535Q)
+    {
+        // the six-position range selector: each step moves the whole sweep up
+        const int r = juce::jlimit (0, 5, getChoice (pRange));
+        lo = 220.0f * std::pow (1.15f, (float) r);
+        hi = 1300.0f * std::pow (1.18f, (float) r);
+        return;
+    }
+    lo = get (pLow);
+    hi = juce::jmax (get (pHigh), lo * 1.2f);
+    if (getChoice (pModel) == XoticXW1)
+    {
+        const float shift = 0.9f + get (pBias) * 0.02f;   // bias nudges the sweep and the grit
+        lo *= shift; hi *= shift;
+    }
 }
 
 float WahBlock::responseDb (double hz) const
@@ -509,10 +529,17 @@ float WahBlock::responseDb (double hz) const
     Biquad bp;
     bp.setBandPass (sr, liveHz.load(), get (pQ));
     const float m = get (pMix) * 0.01f;
-    const double w = juce::MathConstants<double>::twoPi * hz / sr;
-    juce::ignoreUnused (w);
     const float wet = (float) std::pow (10.0, bp.magnitudeDb (hz, sr) / 20.0) * 2.0f;
-    return gainToDb ((1.0f - m) + m * wet);
+    const auto& md = models()[(size_t) juce::jlimit (0, 4, getChoice (pModel))];
+    float db = gainToDb ((1.0f - m) + m * (wet + md.leak * (hz < liveHz.load() ? 1.0f : 0.2f)));
+    if (getChoice (pModel) == XoticXW1)
+    {
+        Biquad ls, hs;
+        ls.setLowShelf (sr, 200.0, get (pBass));
+        hs.setHighShelf (sr, 3000.0, get (pTreble));
+        db += (float) (ls.magnitudeDb (hz, sr) + hs.magnitudeDb (hz, sr));
+    }
+    return db + md.gainDb + (getChoice (pModel) == MultiWah535Q ? get (pBoost) : 0.0f);
 }
 
 void WahBlock::prepareImpl (double sr, int)
@@ -521,13 +548,32 @@ void WahBlock::prepareImpl (double sr, int)
     det.set (sr, 3.0, 120.0);
     posSmooth.setTime (sr, 12.0);
     lfo.phase = 0;
+    lowShelf.reset(); highShelf.reset();
+    watch.invalidate();
+    engage = 1.0f;
+    restingSamples = 0;
 }
 
 void WahBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 {
     const int mode = getChoice (pMode);
-    const float lo = get (pLow), hi = juce::jmax (get (pHigh), lo * 1.2f), q = get (pQ);
+    const int modelIx = juce::jlimit (0, 4, getChoice (pModel));
+    const auto& md = models()[(size_t) modelIx];
+    float lo, hi;
+    sweep (lo, hi);
+    const float q = get (pQ);
     const float sens = get (pSens) * 0.01f, m = get (pMix) * 0.01f;
+    const bool xw = modelIx == XoticXW1;
+    if (watch.changed ({ get (pBass), get (pTreble), (float) modelIx }))
+    {
+        lowShelf.setLowShelf (sampleRate, 200.0, xw ? get (pBass) : 0.0f);
+        highShelf.setHighShelf (sampleRate, 3000.0, xw ? get (pTreble) : 0.0f);
+    }
+    const float drive = xw ? 0.1f + get (pBias) * 0.06f : md.drive;
+    const float dg = 1.0f + drive * 4.0f;
+    const float outGain = dbToGain (md.gainDb + (modelIx == MultiWah535Q ? get (pBoost) : 0.0f));
+    const bool autoEngage = get (pAuto) > 0.5f && mode == 0;
+    const float engStep = 1.0f / (0.02f * (float) sampleRate);
     lfo.setRate (sampleRate, get (pRate));
     auto* l = b.getWritePointer (0);
     auto* r = b.getWritePointer (1);
@@ -538,16 +584,32 @@ void WahBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
         if (mode == 1)      pos = juce::jlimit (0.0f, 1.0f, det.process (0.5f * (l[i] + r[i])) * sens * 14.0f);
         else if (mode == 2) pos = 0.5f + 0.5f * wave (lfo.tick(), 0);
         pos = posSmooth.lp (pos);
-        f = lo * std::pow (hi / lo, pos);
-        if ((i & 7) == 0) { svf[0].set (sampleRate, f, q); svf[1].set (sampleRate, f, q); svf[1].g = svf[0].g; }
+
+        // switchless: resting heel-down for a moment turns it off, moving it turns it on
+        if (autoEngage)
+        {
+            restingSamples = pos < 0.03f ? restingSamples + 1 : 0;
+            const float target = restingSamples > (int) (0.35 * sampleRate) ? 0.0f : 1.0f;
+            engage += juce::jlimit (-engStep, engStep, target - engage);
+        }
+        else engage = 1.0f;
+
+        f = lo * std::pow (hi / lo, std::pow (pos, 1.0f / md.taper));
+        if ((i & 7) == 0) { svf[0].set (sampleRate, f, q); svf[1].set (sampleRate, f, q); }
         float lp_, bp, hp;
         svf[0].process (l[i], lp_, bp, hp);
-        const float yl = bp * svf[0].k * 2.0f + lp_ * 0.12f;
+        float yl = bp * svf[0].k * 2.0f + lp_ * md.leak;
         svf[1].process (r[i], lp_, bp, hp);
-        const float yr = bp * svf[1].k * 2.0f + lp_ * 0.12f;
-        l[i] = l[i] * (1.0f - m) + yl * m;
-        r[i] = r[i] * (1.0f - m) + yr * m;
+        float yr = bp * svf[1].k * 2.0f + lp_ * md.leak;
+        // the transistor stage
+        yl = dsp::fastTanh (yl * dg) / dg * outGain;
+        yr = dsp::fastTanh (yr * dg) / dg * outGain;
+        if (xw) { yl = highShelf.process (lowShelf.process (yl, 0), 0); yr = highShelf.process (lowShelf.process (yr, 1), 1); }
+        const float wet = m * engage;
+        l[i] = l[i] * (1.0f - wet) + yl * wet;
+        r[i] = r[i] * (1.0f - wet) + yr * wet;
     }
+    engaged.store (engage > 0.5f);
     liveHz.store (f);
     livePhase.store (lfo.phase);
 }

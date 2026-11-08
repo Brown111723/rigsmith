@@ -2,13 +2,14 @@
 
 #include "Nodes.h"
 #include "Blocks.h"
-#include "Fx.h"
+#include "Pedals.h"
 #include "NamBlock.h"
 #include "PluginBlock.h"
 #include "Tuner.h"
 #include "IniFile.h"
 #include "Captures.h"
 #include "Modulation.h"
+#include "PolyTuner.h"
 
 namespace rig
 {
@@ -52,6 +53,7 @@ public:
     std::atomic<bool> limiterOn { true }, tunerMute { false }, tunerActive { false };
     std::atomic<float> inPeak { 0.0f }, outPeak { 0.0f };
     Tuner tuner;
+    PolyTuner polyTuner;
 
     //--- Modulation (v0.11) -----------------------------------------------------
     ModMatrix mods;

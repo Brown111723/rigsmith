@@ -347,6 +347,17 @@ ChoiceControl::ChoiceControl (const juce::String& name, const juce::StringArray&
     label.setText (name, juce::dontSendNotification);
     label.setFont (font (12.0f, true));
     addAndMakeVisible (label);
+    int total = 0;
+    for (auto& o : options) total += juce::GlyphArrangement::getStringWidthInt (font (13.0f, true), o) + 26;
+    if (options.size() > 4 || total > 380)
+    {
+        combo = std::make_unique<juce::ComboBox>();
+        combo->addItemList (options, 1);
+        combo->setColour (juce::ComboBox::outlineColourId, colour.withAlpha (0.6f));
+        combo->onChange = [this] { if (onChange) onChange (combo->getSelectedItemIndex()); };
+        addAndMakeVisible (*combo);
+        return;
+    }
     for (int i = 0; i < options.size(); ++i)
     {
         auto* b = buttons.add (new juce::TextButton (options[i]));
@@ -358,12 +369,14 @@ ChoiceControl::ChoiceControl (const juce::String& name, const juce::StringArray&
 
 void ChoiceControl::setSelected (int index)
 {
+    if (combo != nullptr) { combo->setSelectedItemIndex (index, juce::dontSendNotification); return; }
     for (int i = 0; i < buttons.size(); ++i)
         buttons[i]->setToggleState (i == index, juce::dontSendNotification);
 }
 
 int ChoiceControl::preferredWidth() const
 {
+    if (combo != nullptr) return 300;
     int w = 0;
     for (auto* b : buttons) w += juce::GlyphArrangement::getStringWidthInt (font (13.0f, true), b->getButtonText()) + 22;
     return juce::jmax (120, w + 4 * (buttons.size() - 1));
@@ -374,6 +387,7 @@ void ChoiceControl::resized()
     auto r = getLocalBounds();
     label.setBounds (r.removeFromTop (20));
     r = r.removeFromTop (30);
+    if (combo != nullptr) { combo->setBounds (r.withWidth (juce::jmin (r.getWidth(), 300))); return; }
     for (auto* b : buttons)
     {
         const int w = juce::GlyphArrangement::getStringWidthInt (font (13.0f, true), b->getButtonText()) + 22;
@@ -650,6 +664,13 @@ void Inspector::setNode (Node* n)
 
 static int knobPriority (const juce::String& id, const juce::String& name);
 
+juce::String Inspector::panelSignature (const Block& b)
+{
+    juce::String s;
+    for (int i : b.panelOrder()) s << b.getParamName (i) << "|" << b.getChoiceNames (i).joinIntoString (",") << ";";
+    return s;
+}
+
 void Inspector::buildBlock (Block& b)
 {
     const auto c = colourFor (b);
@@ -662,6 +683,7 @@ void Inspector::buildBlock (Block& b)
     // the parameters, in the block's panel order (NAM: Gain first; Input / Output are the meters)
     std::vector<int> order = b.panelOrder();
     builtOrder = order;
+    builtNames = panelSignature (b);
     if (order.empty())
         for (int i = 0; i < b.numParams(); ++i) order.push_back (i);
     std::stable_sort (order.begin(), order.end(), [&b] (int x, int y)
@@ -673,9 +695,10 @@ void Inspector::buildBlock (Block& b)
     for (int i : order)
     {
         const auto& sp = b.getSpecs()[(size_t) i];
+        const auto pname = b.getParamName (i);
         if (sp.toggle)
         {
-            auto* t = toggles.add (new juce::ToggleButton (sp.name));
+            auto* t = toggles.add (new juce::ToggleButton (pname));
             t->onClick = [this, &b, i, t] { b.set (i, t->getToggleState() ? 1.0f : 0.0f); host.getEngine().markDirty(); };
             controls.addAndMakeVisible (t);
             toggleParam.push_back (i);
@@ -683,15 +706,21 @@ void Inspector::buildBlock (Block& b)
         }
         if (sp.isChoice())
         {
-            auto* ch = choices.add (new ChoiceControl (sp.name, sp.choices, c));
+            auto* ch = choices.add (new ChoiceControl (pname, b.getChoiceNames (i), c));
             ch->setSelected (juce::roundToInt (b.getBase (i)));
-            ch->onChange = [this, &b, i] (int v) { b.set (i, (float) v); host.getEngine().markDirty(); };
+            ch->onChange = [this, &b, i] (int v)
+            {
+                host.getEngine().checkpoint();
+                b.set (i, (float) v);
+                b.onChoiceChanged (i);
+                host.getEngine().markDirty();
+            };
             controls.addAndMakeVisible (ch);
             choiceParam.push_back (i);
             continue;
         }
 
-        auto* k = addKnob (sp.name, c);
+        auto* k = addKnob (pname, c);
         k->slider.setRange (sp.min, sp.max, 0.0);
         if (sp.hasCentre && sp.centre > sp.min && sp.centre < sp.max)
             k->slider.setSkewFactorFromMidPoint (sp.centre);
@@ -703,12 +732,12 @@ void Inspector::buildBlock (Block& b)
         {
             b.set (i, (float) k->slider.getValue());
             k->refreshText();
-            if (display) display->setHighlight (b.getSpecs()[(size_t) i].name + "  " + b.formatValue (i, b.getBase (i)));
+            if (display) display->setHighlight (b.getParamName (i) + "  " + b.formatValue (i, b.getBase (i)));
             host.getEngine().markDirty();
         };
         k->onHover = [this, &b, i] (bool over)
         {
-            if (display) display->setHighlight (over ? b.getSpecs()[(size_t) i].name + "  " + b.formatValue (i, b.getBase (i)) : juce::String());
+            if (display) display->setHighlight (over ? b.getParamName (i) + "  " + b.formatValue (i, b.getBase (i)) : juce::String());
         };
         k->onRightClick = [this, &b, i, k]
         {
@@ -718,7 +747,7 @@ void Inspector::buildBlock (Block& b)
                                   ? juce::String ("Gain: drives the amp harder, like the gain knob on the real thing. "
                                                   "Rigsmith measured this capture when it loaded and trims the output, so mostly the drive changes, not the volume. "
                                                   "Double-click: 5 (as captured). Right-click: MIDI learn")
-                                  : sp.name + ": drag up / down (Shift for fine). Double-click: default. "
+                                  : pname + ": drag up / down (Shift for fine). Double-click: default. "
                                     "Drop a MOD source here to modulate it. Right-click: MIDI learn, modulation");
         k->refreshText();
         knobParam.push_back (i);
@@ -1434,7 +1463,7 @@ void Inspector::timerCallback()
         meters->in.setLevel (in);
         meters->out.setLevel (out);
     }
-    if (auto* blk = dynamic_cast<Block*> (node); blk != nullptr && blk->panelOrder() != builtOrder)
+    if (auto* blk = dynamic_cast<Block*> (node); blk != nullptr && (blk->panelOrder() != builtOrder || panelSignature (*blk) != builtNames))
     {
         needsRebuild = true;   // e.g. the gate switched to Advanced: different controls
         return;
@@ -1487,6 +1516,19 @@ void Inspector::timerCallback()
             case SplitMode::Stereo:    inf << "\nPan paths for a wide rig."; break;
         }
         for (auto* st : strips) st->refresh();
+    }
+    else if (auto* pd = dynamic_cast<PedalBlock*> (node))
+    {
+        const auto& m = pd->model();
+        sub = (m.maker + "  " + m.year).toUpperCase();
+        inf = m.blurb;
+    }
+    else if (auto* wah = dynamic_cast<WahBlock*> (node))
+    {
+        const auto& m = WahBlock::models()[(size_t) juce::jlimit (0, 4, wah->getChoice (WahBlock::pModel))];
+        inf = m.blurb;
+        if (wah->get (WahBlock::pAuto) > 0.5f && wah->getChoice (WahBlock::pMode) == 0)
+            inf << (wah->isEngaged() ? "\nEngaged" : "\nResting heel-down: off (move the pedal to engage)");
     }
     else if (auto* nb = dynamic_cast<NamBlock*> (node))
     {

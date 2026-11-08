@@ -49,6 +49,9 @@ namespace
         { "libraryVisible",   "Window",    "ShowLibrary" },
         { "modVisible",       "Window",    "ShowModulation" },
         { "tooltips",         "Window",    "Tooltips" },
+        { "tunerMode",        "Tuner",     "Mode" },
+        { "tunerTuning",      "Tuner",     "Tuning" },
+        { "tunerReference",   "Tuner",     "ReferenceA" },
         { "inspectorHeight",  "Window",    "PanelHeight" },
         { "randomUsePlugins", "Randomise", "UsePlugins" },
         { "randomSplits",     "Randomise", "AllowSplits" },
@@ -646,6 +649,7 @@ void Engine::prepare (double sr, int block)
         root->prepare (sampleRate, blockSize);
     }
     tuner.prepare (sr);
+    polyTuner.prepare (sr);
     keyBuffer.assign ((size_t) blockSize, 0.0f);
     {
         const juce::ScopedLock sl (lock);
@@ -707,7 +711,10 @@ void Engine::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) 
     inMeter.write (L, R, total, 0.999f);
     inPeak.store (juce::jmax (inPeak.load(), inMeter.peakL.load(), inMeter.peakR.load()));
     if (tunerActive.load())
+    {
         tuner.push (L, total);
+        polyTuner.push (L, total);
+    }
 
     // --- the rig, in chunks no larger than prepared
     // (with modulation running, in steps of 64 samples so the knobs move smoothly)
@@ -1142,6 +1149,7 @@ std::unique_ptr<Node> Engine::createNode (NodeType type) const
         case NodeType::Transient: return std::make_unique<TransientBlock>();
         case NodeType::Swell:     return std::make_unique<SwellBlock>();
         case NodeType::Overdrive: return std::make_unique<OverdriveBlock>();
+        case NodeType::Distortion: return std::make_unique<DistortionBlock>();
         case NodeType::Fuzz:      return std::make_unique<FuzzBlock>();
         case NodeType::Boost:     return std::make_unique<BoostBlock>();
         case NodeType::Crusher:   return std::make_unique<CrusherBlock>();

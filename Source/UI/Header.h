@@ -64,7 +64,9 @@ public:
     void setStatus (double sr, int block, int latencySamples, float cpuLoad);
 };
 
-/** Full-screen tuner shown over the rig. */
+/** Full-screen tuner shown over the rig. Mono (one string), Poly (strum all the open strings
+    and see every one at once, PolyTune-style), or Auto (Poly when several strings ring, Mono
+    when one does). */
 class TunerOverlay : public juce::Component
 {
 public:
@@ -72,11 +74,26 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void setReading (const Tuner::Reading& r) { reading = r; repaint(); }
+    void setPolyReading (const PolyTuner::Reading& r) { poly = r; repaint(); }
     std::function<void()> onClose;
 
+    enum Mode { Auto = 0, Mono, Poly };
+    Mode getMode() const noexcept { return mode; }
+    bool showingPoly() const noexcept { return mode == Poly || (mode == Auto && poly.strummed); }
+
 private:
+    void paintMono (juce::Graphics&, juce::Rectangle<int>);
+    void paintPoly (juce::Graphics&, juce::Rectangle<int>);
+    void setMode (Mode);
+
     Engine& engine;
     Tuner::Reading reading;
+    PolyTuner::Reading poly;
+    Mode mode = Auto;
+    juce::TextButton modeButtons[3] { juce::TextButton ("Auto"), juce::TextButton ("Mono"), juce::TextButton ("Poly") };
+    juce::ComboBox tuningBox;
+    juce::Slider reference;
+    juce::Label referenceLabel;
     juce::ToggleButton muteToggle { "Mute output while tuning" };
     juce::TextButton close { "Close tuner" };
 };

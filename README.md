@@ -65,10 +65,12 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - **Amp + Cab** captures already include a cabinet, so a cab IR after one switches itself off (**Auto off** on its card) and comes back when you change to an amp head. Untick **Switch off after an Amp + Cab model** on the IR to keep it.
 - A pedal capture is a drive: it's coloured as one, double-clicking it puts it before the amp, and the dice can pick it for the drive slot. Space IRs can be the dice's reverb. The dice never put a cab after an Amp + Cab capture.
 
-**Built-in effects** (22 + tuner), each with a live FabFilter-style display of what its knobs are doing
+**Built-in effects** (23 + tuner), each with a live FabFilter-style display of what its knobs are doing
 - Dynamics: noise gate, compressor (soft knee, auto makeup, blend), limiter, expander, transient shaper, auto swell
-- Drive (2x oversampled): overdrive, fuzz (with octave), clean boost, bit crusher
-- EQ & filter: studio EQ with **draggable bands**, wah (pedal / envelope / LFO)
+- **Overdrive** (10 pedals in one block, 4x oversampled): Ibanez Tube Screamer (TS808 / TS9), Klon Centaur, Boss SD-1, Fulltone OCD (LP / HP), Paul Cochrane Timmy (three clipping modes), EHX Soul Food, JHS Morning Glory (Lo / Hi), Boss OD-1, Analogman King of Tone (OD / Distortion / Boost), Greer Lightspeed. Pick the model in the block; its knobs and switch take the pedal's own names, plus a Clean Blend
+- **Distortion** (10 pedals): Boss DS-1 (and DS-1W Ultra), Pro Co RAT 2 (and Turbo RAT, You Dirty RAT), Ibanez Tube Screamer, EHX Big Muff Pi (Ram's Head / NYC / Triangle), Boss MT-2 Metal Zone (parametric mid), Boss HM-2 (and HM-2W), Marshall Shredmaster, Fulltone OCD, MXR Distortion+, Friedman BE-OD (tight, presence). Each circuit is modelled in its own way: op-amp feedback clipping with the TS mid hump, diodes / LEDs / germanium to ground, the RAT's gain-dependent bandwidth and Filter, the Big Muff's two stages and scooped tone stack, the HM-2's resonant colour boosts...
+- Fuzz (with octave), clean boost, bit crusher
+- EQ & filter: studio EQ with **draggable bands**; **Wah** with five models (Dunlop Cry Baby GCB95, Vox V847A, Cry Baby 535Q Multi-Wah with six ranges, Q and boost, Morley Bad Horsie with switchless auto-engage, Xotic XW-1 with bias, bass, treble and Q), as a pedal, envelope or LFO wah
 - Modulation: chorus, flanger, phaser, tremolo (incl. harmonic), Uni-Vibe, rotary speaker
 - Time: delay (digital / tape / ping-pong / dual, with ducking), reverb (room / hall / plate / spring / shimmer)
 - Pitch: octave down / up, pitch shift, doubler
@@ -139,7 +141,7 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - Hosts any **VST3** effect (and VST2 in builds made with the VST2 SDK; see below). Plug-in state is saved in your presets, and a missing plug-in keeps its settings until you reinstall it.
 - **Scenes A–D**: per-scene bypass, path levels and mutes, with click-free crossfades.
 - **MIDI learn** for footswitches and expression pedals: scenes, bypass, path levels, an A/B amp blend, the capture sweep, any knob, next/previous preset, tuner and master volume. Program Change selects presets. Esc or the x on the message cancels.
-- **Tuner**: the tuning fork in the top bar opens a full-screen tuner (`T`), and **Tuner** is also a block you can put anywhere in the rig, with a strobe, a cents needle, a steadiness history, mute and a 430–450 Hz reference.
+- **Tuner**: the tuning fork in the top bar opens a full-screen tuner (`T`) with a **polyphonic** mode, PolyTune-style: strum all the open strings and see each one's tuning at once (Auto switches between that and the single-note tuner). Standard, Eb, D, Drop D / C# / C / B, DADGAD, Open G / D / E, 7-string and bass tunings, A = 430-450 Hz. It and **Tuner** is also a block you can put anywhere in the rig, with a strobe, a cents needle, a steadiness history, mute and a 430–450 Hz reference.
 - Presets are `.rig` files in `Documents\Rigsmith\Presets` (sub-folders show up as banks). **Settings > Where Rigsmith saves things** moves rig presets, block presets and TONE3000 downloads wherever you like; **Keep presets with my NAM models** puts them all in your NAM folder, and your existing presets can move with them.
 - **Click IN or OUT** for the input / output panel: stereo peak + RMS meters with peak hold and clip counters, and a level history.
   - Input: gain, balance, source (input 1, input 2, summed or stereo) and polarity flip.

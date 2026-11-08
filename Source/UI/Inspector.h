@@ -129,6 +129,7 @@ public:
 private:
     juce::Label label;
     juce::OwnedArray<juce::TextButton> buttons;
+    std::unique_ptr<juce::ComboBox> combo;   // many options (a pedal's models): a drop-down instead of buttons
 };
 
 /** Bottom panel. Left: the block's name, a row of icon buttons (open, bypass, gain
@@ -187,7 +188,9 @@ private:
     juce::OwnedArray<juce::ToggleButton> toggles;
     juce::OwnedArray<ChoiceControl> choices;
     std::vector<int> knobParam, toggleParam, choiceParam;
-    std::vector<int> builtOrder;   // the block's panelOrder() when built (the gate's View changes it)
+    std::vector<int> builtOrder;
+    juce::String builtNames;      // what the knobs were called (a pedal model renames them)
+    static juce::String panelSignature (const Block&);   // the block's panelOrder() when built (the gate's View changes it)
 
     // NAM / IR: every capture of the loaded gear on one knob
     std::unique_ptr<Knob> captureKnob;

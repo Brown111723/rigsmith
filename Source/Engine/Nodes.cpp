@@ -11,14 +11,14 @@ static const std::pair<NodeType, const char*> typeNames[] = {
     { NodeType::Chorus, "chorus" }, { NodeType::Flanger, "flanger" }, { NodeType::Phaser, "phaser" },
     { NodeType::Tremolo, "tremolo" }, { NodeType::Vibe, "vibe" }, { NodeType::Rotary, "rotary" },
     { NodeType::Delay, "delay" }, { NodeType::Reverb, "reverb" }, { NodeType::Pitch, "pitch" },
-    { NodeType::Tuner, "tuner" }, { NodeType::Modulator, "modulator" }
+    { NodeType::Tuner, "tuner" }, { NodeType::Modulator, "modulator" }, { NodeType::Distortion, "distortion" }
 };
 
 const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups()
 {
     static const std::vector<std::pair<juce::String, std::vector<NodeType>>> groups {
         { "Dynamics",       { NodeType::Gate, NodeType::Comp, NodeType::Limiter, NodeType::Expander, NodeType::Transient, NodeType::Swell } },
-        { "Drive",          { NodeType::Overdrive, NodeType::Fuzz, NodeType::Boost, NodeType::Crusher } },
+        { "Drive",          { NodeType::Overdrive, NodeType::Distortion, NodeType::Fuzz, NodeType::Boost, NodeType::Crusher } },
         { "EQ & Filter",    { NodeType::Eq, NodeType::Wah } },
         { "Modulation",     { NodeType::Chorus, NodeType::Flanger, NodeType::Phaser, NodeType::Tremolo, NodeType::Vibe, NodeType::Rotary } },
         { "Delay & Reverb", { NodeType::Delay, NodeType::Reverb } },
@@ -38,6 +38,7 @@ juce::String builtInMenuName (NodeType t)
         case NodeType::Transient: return "Transient Shaper";
         case NodeType::Swell:     return "Auto Swell (violin swells)";
         case NodeType::Overdrive: return "Overdrive";
+        case NodeType::Distortion: return "Distortion";
         case NodeType::Fuzz:      return "Fuzz";
         case NodeType::Boost:     return "Clean Boost";
         case NodeType::Crusher:   return "Bit Crusher";
@@ -74,7 +75,8 @@ juce::String builtInBlurb (NodeType t)
         case NodeType::Expander:  return "Gentle downward expansion";
         case NodeType::Transient: return "More or less pick attack";
         case NodeType::Swell:     return "Violin-style volume swells";
-        case NodeType::Overdrive: return "Mid-hump tube-style drive";
+        case NodeType::Overdrive: return "10 classic overdrives: Tube Screamer, Klon, SD-1, OCD, Timmy, Soul Food, Morning Glory, OD-1, King of Tone, Lightspeed";
+        case NodeType::Distortion: return "10 classic distortions: DS-1, RAT, Tube Screamer, Big Muff, Metal Zone, HM-2, Shredmaster, OCD, Distortion+, BE-OD";
         case NodeType::Fuzz:      return "Thick fuzz, optional octave";
         case NodeType::Boost:     return "Clean level and tone boost";
         case NodeType::Crusher:   return "Lo-fi bits and sample rate";
@@ -157,7 +159,7 @@ Category categoryForBuiltIn (NodeType t)
     {
         case NodeType::Gate: case NodeType::Comp: case NodeType::Limiter: case NodeType::Expander:
         case NodeType::Transient: case NodeType::Swell:                         return Category::Dynamics;
-        case NodeType::Overdrive: case NodeType::Fuzz: case NodeType::Boost:
+        case NodeType::Overdrive: case NodeType::Distortion: case NodeType::Fuzz: case NodeType::Boost:
         case NodeType::Crusher:                                                  return Category::Drive;
         case NodeType::Nam:                                                      return Category::Amp;
         case NodeType::Ir:                                                       return Category::Cab;
@@ -555,7 +557,10 @@ juce::String Block::formatValue (int i, float v) const
     if (s.toggle)
         return v > 0.5f ? "On" : "Off";
     if (s.isChoice())
-        return s.choices[juce::jlimit (0, s.choices.size() - 1, juce::roundToInt (v))];
+    {
+        const auto names = getChoiceNames (i);
+        return names[juce::jlimit (0, names.size() - 1, juce::roundToInt (v))];
+    }
     if (s.unit == "Hz" && v >= 1000.0f)
         return juce::String (v / 1000.0f, 2) + " kHz";
     if (s.unit == "ms" && v >= 1000.0f)

@@ -10,7 +10,7 @@ static std::vector<NodeType> builtInsFor (Category c)
     switch (c)
     {
         case Category::Dynamics:   return { NodeType::Gate, NodeType::Comp, NodeType::Limiter, NodeType::Expander, NodeType::Transient, NodeType::Swell };
-        case Category::Drive:      return { NodeType::Overdrive, NodeType::Fuzz, NodeType::Boost, NodeType::Crusher };
+        case Category::Drive:      return { NodeType::Overdrive, NodeType::Distortion, NodeType::Fuzz, NodeType::Boost, NodeType::Crusher };
         case Category::Eq:         return { NodeType::Eq };
         case Category::Filter:     return { NodeType::Wah };
         case Category::Modulation: return { NodeType::Chorus, NodeType::Flanger, NodeType::Phaser, NodeType::Tremolo, NodeType::Vibe, NodeType::Rotary };

@@ -15,7 +15,9 @@ enum class NodeType
     // v0.4
     Tuner,
     // v0.11: a modulation source (lives in the MOD section, not in the rig)
-    Modulator
+    Modulator,
+    // v0.12
+    Distortion
 };
 
 juce::String nodeTypeToString (NodeType);
@@ -244,6 +246,12 @@ public:
     virtual juce::String formatValue (int i, float v) const;
     /** Which parameters the panel shows as knobs, in order (empty: all of them, as declared). */
     virtual std::vector<int> panelOrder() const { return {}; }
+    /** What a knob is called right now (a pedal model may call Drive "Sustain" or "Distortion"). */
+    virtual juce::String getParamName (int i) const { return specs[(size_t) i].name; }
+    /** A choice's options right now (a model's own switch positions). */
+    virtual juce::StringArray getChoiceNames (int i) const { return specs[(size_t) i].choices; }
+    /** Message thread: a choice was picked on the panel (a wah model sets its sweep, say). */
+    virtual void onChoiceChanged (int /*param*/) {}
 
     juce::ValueTree toState() const override;
     void fromState (const juce::ValueTree&) override;
