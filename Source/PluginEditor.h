@@ -153,6 +153,9 @@ private:
     std::unique_ptr<LibraryLoader> libraryLoader;
     void loadLibraryInBackground();
     void randomiseRigNow();
+    bool audioSetupOpen() const;
+    void askScanWhenAudioSetupCloses();
+    void askToScan();
     bool modVisible = false;
     void setModVisible (bool);
     rig::IoPanel ioPanel { *this };

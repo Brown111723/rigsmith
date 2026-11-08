@@ -278,6 +278,14 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
                                  "Your last session was kept (Menu > Session state > Load a saved state: \"Rigsmith - session that didn't open\", "
                                  "beside Rigsmith.ini), and Rigsmith.log there shows what it was doing");
         });
+    // no Rigsmith.ini: a first run (or a reset) - start with the audio / MIDI settings
+   #if RIGSMITH_HAS_STANDALONE_HOLDER
+    if (processor.isStandalone() && engine.isFirstRun())
+        juce::Timer::callAfterDelay (700, []
+        {
+            if (auto* h = juce::StandalonePluginHolder::getInstance()) h->showAudioSettingsDialog();
+        });
+   #endif
     if (! scannedThisRun && engine.shouldScanOnStartup() && ! engine.isSafeStart())
     {
         scannedThisRun = true;
@@ -286,7 +294,18 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
         {
             if (sp == nullptr) return;
             if (! firstTime) { sp->scanForNewPlugins (false); return; }
-            // the very first start: ask, rather than surprise anyone with a scan
+            if (sp->audioSetupOpen()) sp->askScanWhenAudioSetupCloses();
+            else sp->askToScan();
+        });
+    }
+}
+
+void RigsmithEditor::askToScan()
+{
+    // the very first start: ask, rather than surprise anyone with a scan
+    {
+        juce::Component::SafePointer<RigsmithEditor> sp (this);
+        {
             auto opts = juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::QuestionIcon)
                             .withTitle ("Scan for VST3 plug-ins?")
                             .withMessage ("Rigsmith can host your VST3 effects in the rig, next to its own blocks and NAM amps.\n\n"
@@ -300,8 +319,24 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
                 if (r == 1) sp->scanForNewPlugins (true);
                 else sp->engine.markPluginsScanned();
             });
-        });
+        }
     }
+}
+
+bool RigsmithEditor::audioSetupOpen() const
+{
+    return juce::ModalComponentManager::getInstance()->getNumModalComponents() > 0;
+}
+
+void RigsmithEditor::askScanWhenAudioSetupCloses()
+{
+    // the VST3 question waits until the audio settings have been closed
+    juce::Timer::callAfterDelay (400, [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
+    {
+        if (sp == nullptr) return;
+        if (sp->audioSetupOpen()) sp->askScanWhenAudioSetupCloses();
+        else sp->askToScan();
+    });
 }
 
 RigsmithEditor::~RigsmithEditor()

@@ -238,6 +238,8 @@ public:
     bool beginStartup();
     void finishStartup();
     bool isSafeStart() const noexcept { return safeStart; }
+    /** No Rigsmith.ini was found at startup (a first run, or the settings were reset). */
+    bool isFirstRun() const noexcept { return firstRun; }
     juce::StringArray getSkippedPlugins() const;
     void clearSkippedPlugins();
     /** A plug-in that crashed Rigsmith during the last scan (once, then empty). */
@@ -329,7 +331,7 @@ private:
     int blockSize = 512;
     std::vector<float> keyBuffer;   // the rig's input, for keyed gates and the modulators
     double hostPpq = -1.0;
-    bool safeStart = false;
+    bool safeStart = false, firstRun = false;
     juce::String loadHangNotice;
     void pruneModRoutes();
     juce::SmoothedValue<float> inGain, outGain, inPanL, inPanR, outPanL, outPanR, outWidth;

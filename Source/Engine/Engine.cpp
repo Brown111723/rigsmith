@@ -167,6 +167,7 @@ Engine::~Engine()
 void Engine::openSettings()
 {
     ini.setFile (findSettingsFile());
+    firstRun = ! ini.existed();
     ini.header = { "Rigsmith settings - read every time Rigsmith starts.",
                    "Safe to edit with Notepad while Rigsmith is closed. Delete it to reset everything.",
                    "Lists are numbered (Folder1=, Folder2=...). 1 = on, 0 = off.",

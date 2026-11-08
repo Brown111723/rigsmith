@@ -1597,6 +1597,47 @@ int main (int argc, char** argv)
         CHECK (! r.options.usePlugins, "the dice don't use plug-ins unless asked");
     }
 
+    //==========================================================================
+    std::printf ("--- v0.11.3: loading plug-ins through the format wrapper\n");
+    {
+        // a format that creates its "plug-in" synchronously, like VST3 does
+        struct FakeFormat final : juce::AudioPluginFormat
+        {
+            juce::String getName() const override { return "VST3"; }
+            void findAllTypesForFile (juce::OwnedArray<juce::PluginDescription>&, const juce::String&) override {}
+            bool fileMightContainThisPluginType (const juce::String&) override { return true; }
+            juce::String getNameOfPluginFromIdentifier (const juce::String& f) override { return f; }
+            bool pluginNeedsRescanning (const juce::PluginDescription&) override { return false; }
+            bool doesPluginStillExist (const juce::PluginDescription&) override { return true; }
+            bool canScanForPlugins() const override { return true; }
+            bool isTrivialToScan() const override { return true; }
+            juce::StringArray searchPathsForPlugins (const juce::FileSearchPath&, bool, bool) override { return {}; }
+            juce::FileSearchPath getDefaultLocationsToSearch() override { return {}; }
+            bool requiresUnblockedMessageThreadDuringCreation (const juce::PluginDescription&) const override { return false; }
+            void createPluginInstance (const juce::PluginDescription&, double, int, PluginCreationCallback cb) override
+            {
+                ++created;
+                cb (nullptr, "made synchronously");
+            }
+            int created = 0;
+        };
+        auto fake = std::make_unique<FakeFormat>();
+        auto* raw = fake.get();
+        auto wrapped = withoutRigsmith (std::move (fake));
+        juce::PluginDescription d;
+        d.name = "Fake";
+        d.pluginFormatName = "VST3";
+        d.fileOrIdentifier = "C:\\VST3\\Fake.vst3";
+        juce::String err;
+        std::atomic<bool> done { false };
+        std::thread guard ([&done] { for (int i = 0; i < 100 && ! done; ++i) std::this_thread::sleep_for (std::chrono::milliseconds (50));
+                                     if (! done) { std::printf ("FAIL: loading a plug-in on the message thread deadlocked\n"); std::fflush (stdout); std::_Exit (2); } });
+        auto inst = wrapped->createInstanceFromDescription (d, 48000.0, 256, err);   // on the message thread, as Rigsmith does
+        done = true;
+        guard.join();
+        CHECK (raw->created == 1 && err == "made synchronously", "loading a plug-in on the message thread returns (no deadlock)");
+    }
+
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;
 }

@@ -65,14 +65,25 @@ namespace
         }
 
     protected:
+        // JUCE calls this on the message thread, and a synchronous load (createInstanceFromDescription)
+        // sits waiting for the callback. So the inner format must create it right here, synchronously:
+        // passing it on as an *async* request posts a message to the very thread that's waiting,
+        // and nothing ever loads (v0.10 - v0.11.2: "Not Responding" on every plug-in load).
         void createPluginInstance (const juce::PluginDescription& d, double sr, int bs, PluginCreationCallback cb) override
         {
-            inner->createPluginInstanceAsync (d, sr, bs, std::move (cb));
+            juce::String error;
+            auto instance = inner->createInstanceFromDescription (d, sr, bs, error);
+            cb (std::move (instance), error);
         }
 
     private:
         std::unique_ptr<juce::AudioPluginFormat> inner;
     };
+}
+
+std::unique_ptr<juce::AudioPluginFormat> withoutRigsmith (std::unique_ptr<juce::AudioPluginFormat> f)
+{
+    return std::make_unique<WithoutRigsmith> (std::move (f));
 }
 
 void addPluginFormats (juce::AudioPluginFormatManager& m)

@@ -33,5 +33,7 @@ private:
 
 /** VST3 (and VST2 if enabled), but never finding Rigsmith itself. */
 void addPluginFormats (juce::AudioPluginFormatManager&);
+/** The wrapper addPluginFormats uses (for tests). */
+std::unique_ptr<juce::AudioPluginFormat> withoutRigsmith (std::unique_ptr<juce::AudioPluginFormat>);
 
 } // namespace rig
