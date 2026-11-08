@@ -124,6 +124,8 @@ public:
 protected:
     virtual void prepareImpl (double sampleRate, int maxBlockSize) = 0;
     virtual void processImpl (juce::AudioBuffer<float>& buffer, int numSamples) noexcept = 0;
+    /** Right after processImpl (a modelled block's colouring). */
+    virtual void afterProcess (juce::AudioBuffer<float>&, int) noexcept {}
 
     double sampleRate = 48000.0;
     int maxBlock = 512;
@@ -211,6 +213,30 @@ inline ParamSpec Choice (const juce::String& id, const juce::String& name, const
 }
 
 //==============================================================================
+/** The sound of a modelled unit beyond its knob settings: its bandwidth and its grit. */
+struct FxCharacter
+{
+    float darkHz = 0.0f;   // a low-pass on the output (BBD chips, old circuits), 0 = none
+    float drive = 0.0f;    // 0..1 gentle saturation (tube stages, hot preamps)
+};
+
+/** A famous unit a built-in block can be: the knob settings it starts from, the knobs it
+    actually has (and what it calls them), and its character. Model 0 of every list is
+    "Studio": the block with every control, uncoloured. */
+struct FxModel
+{
+    juce::String name, maker, year, blurb;
+    std::vector<std::pair<juce::String, float>> stock;              // knob settings it starts with
+    juce::StringArray hide;                                         // parameters the real unit doesn't have
+    std::vector<std::pair<juce::String, juce::String>> labels;      // what the real unit calls them
+    FxCharacter c;
+    juce::String title() const { return maker.isEmpty() ? name : maker + " " + name; }
+};
+
+/** The models of a block type (empty: not modelled this way). In FxModels.cpp. */
+const std::vector<FxModel>& fxModelsFor (NodeType);
+
+//==============================================================================
 /** How a block's display draws what its knobs are doing. */
 enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope, Tuner, Gate, Modulator };
 
@@ -245,13 +271,26 @@ public:
     juce::String formatValue (int i) const;
     virtual juce::String formatValue (int i, float v) const;
     /** Which parameters the panel shows as knobs, in order (empty: all of them, as declared). */
-    virtual std::vector<int> panelOrder() const { return {}; }
+    virtual std::vector<int> panelOrder() const { return fxModels != nullptr ? modelPanel ({}) : std::vector<int>(); }
     /** What a knob is called right now (a pedal model may call Drive "Sustain" or "Distortion"). */
-    virtual juce::String getParamName (int i) const { return specs[(size_t) i].name; }
+    virtual juce::String getParamName (int i) const;
     /** A choice's options right now (a model's own switch positions). */
     virtual juce::StringArray getChoiceNames (int i) const { return specs[(size_t) i].choices; }
     /** Message thread: a choice was picked on the panel (a wah model sets its sweep, say). */
-    virtual void onChoiceChanged (int /*param*/) {}
+    virtual void onChoiceChanged (int param);
+
+    //--- famous-unit models (FxModels.cpp): a "Model" choice added to the block's own params ---
+    bool hasModels() const noexcept { return fxModels != nullptr; }
+    int getModelParam() const noexcept { return modelParam; }
+    /** The current model (null: not modelled, or model 0 "Studio"). */
+    const FxModel* currentModel() const noexcept;
+    /** "Boss CE-2", or empty. */
+    juce::String getModelTitle() const;
+    juce::String getModelBlurb() const;
+    /** The model's knob settings (picking a model on the panel does this). */
+    void applyModelStock();
+    /** A panel order with the model selector first and the unit's missing knobs left out. */
+    std::vector<int> modelPanel (std::vector<int> order) const;
 
     juce::ValueTree toState() const override;
     void fromState (const juce::ValueTree&) override;
@@ -286,6 +325,14 @@ protected:
     std::vector<ParamSpec> specs;
     std::unique_ptr<std::atomic<float>[]> values, effective;
     std::unique_ptr<std::atomic<bool>[]> modulated;
+    const std::vector<FxModel>* fxModels = nullptr;
+    int modelParam = -1;
+    // the model's colour, on the audio thread
+    void afterProcess (juce::AudioBuffer<float>&, int) noexcept override;
+    Biquad charLp;
+    int charModel = -1;
+    double charRate = 0.0;
+    FxCharacter charNow;
 };
 
 //==============================================================================

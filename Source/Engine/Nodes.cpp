@@ -319,6 +319,7 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
     hold (peakIn, peakOf());
 
     processImpl (buffer, n);
+    afterProcess (buffer, n);
 
     auto* l = buffer.getWritePointer (0);
     auto* r = buffer.getWritePointer (1);
@@ -514,15 +515,103 @@ void Block::randomise (juce::Random& rng, float amount)
 }
 
 //==============================================================================
+static std::vector<ParamSpec> withModels (NodeType t, std::vector<ParamSpec> s)
+{
+    const auto& ms = fxModelsFor (t);
+    if (! ms.empty())
+    {
+        juce::StringArray names;
+        for (auto& m : ms) names.add (m.title());
+        s.push_back (Choice ("model", "Model", names, 0).fixed());
+    }
+    return s;
+}
+
 Block::Block (NodeType t, std::vector<ParamSpec> s)
-    : Node (t), specs (std::move (s)), values (new std::atomic<float>[specs.size()]),
+    : Node (t), specs (withModels (t, std::move (s))), values (new std::atomic<float>[specs.size()]),
       effective (new std::atomic<float>[specs.size()]), modulated (new std::atomic<bool>[specs.size()])
 {
+    if (! fxModelsFor (t).empty())
+    {
+        fxModels = &fxModelsFor (t);
+        modelParam = (int) specs.size() - 1;
+    }
     for (size_t i = 0; i < specs.size(); ++i)
     {
         values[i].store (specs[i].def);
         effective[i].store (specs[i].def);
         modulated[i].store (false);
+    }
+}
+
+const FxModel* Block::currentModel() const noexcept
+{
+    if (fxModels == nullptr) return nullptr;
+    const int m = juce::roundToInt (getBase (modelParam));
+    return m > 0 && m < (int) fxModels->size() ? &(*fxModels)[(size_t) m] : nullptr;
+}
+
+juce::String Block::getParamName (int i) const
+{
+    if (auto* m = currentModel())
+        for (auto& [pid, label] : m->labels)
+            if (pid == specs[(size_t) i].id) return label;
+    return specs[(size_t) i].name;
+}
+
+juce::String Block::getModelTitle() const { auto* m = currentModel(); return m != nullptr ? m->title() : juce::String(); }
+juce::String Block::getModelBlurb() const { auto* m = currentModel(); return m != nullptr ? m->blurb : juce::String(); }
+
+void Block::applyModelStock()
+{
+    auto* m = currentModel();
+    if (m == nullptr) return;
+    for (auto& [pid, v] : m->stock)
+        if (const int i = indexOf (pid); i >= 0) set (i, v);
+}
+
+void Block::onChoiceChanged (int param)
+{
+    if (param == modelParam) applyModelStock();
+}
+
+std::vector<int> Block::modelPanel (std::vector<int> order) const
+{
+    if (fxModels == nullptr) return order;
+    if (order.empty())
+        for (int i = 0; i < (int) specs.size(); ++i) order.push_back (i);
+    const auto* m = currentModel();
+    std::vector<int> out { modelParam };
+    for (int i : order)
+        if (i != modelParam && (m == nullptr || ! m->hide.contains (specs[(size_t) i].id)))
+            out.push_back (i);
+    return out;
+}
+
+void Block::afterProcess (juce::AudioBuffer<float>& b, int n) noexcept
+{
+    if (fxModels == nullptr) return;
+    const int m = juce::roundToInt (getBase (modelParam));
+    if (m != charModel || sampleRate != charRate)
+    {
+        charModel = m;
+        charRate = sampleRate;
+        charNow = m > 0 && m < (int) fxModels->size() ? (*fxModels)[(size_t) m].c : FxCharacter();
+        if (charNow.darkHz > 0.0f) charLp.setLowPass (sampleRate, juce::jmin ((double) charNow.darkHz, sampleRate * 0.45), 0.707);
+        charLp.reset();
+    }
+    if (charNow.darkHz <= 0.0f && charNow.drive <= 0.0f) return;
+    const float k = 1.0f + 3.0f * charNow.drive;
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        auto* d = b.getWritePointer (ch);
+        for (int i = 0; i < n; ++i)
+        {
+            float y = d[i];
+            if (charNow.drive > 0.0f) y = std::tanh (y * k) / k;
+            if (charNow.darkHz > 0.0f) y = charLp.process (y, ch);
+            d[i] = y;
+        }
     }
 }
 

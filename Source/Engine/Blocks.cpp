@@ -26,11 +26,11 @@ GateBlock::GateBlock()
 std::vector<int> GateBlock::panelOrder() const
 {
     if (! isAdvanced())
-        return { pView, pThreshold, pRelease, pRange };
+        return modelPanel ({ pView, pThreshold, pRelease, pRange });
     std::vector<int> o { pView, pKey, pBands, pThreshold, pHysteresis, pAttack, pHold, pRelease, pRange };
     if (isDual()) { o.push_back (pHighRange); o.push_back (pCrossover); }
     for (int p : { (int) pKeyHpf, (int) pKeyLpf, (int) pLookahead, (int) pListen }) o.push_back (p);
-    return o;
+    return modelPanel (o);
 }
 
 float GateBlock::transferDb (float in) const

@@ -63,7 +63,10 @@ SettingsPanel::SettingsPanel (Engine& e, bool isStandalone) : engine (e)
     addAndMakeVisible (savedTitle);
     setupRow (presetRow, "Rig presets (.rig)", "Default", "presetFolder");
     setupRow (blockRow, "Block presets (.rbp)", "Default", "blockPresetFolder");
-    setupRow (t3kRow, "TONE3000 downloads", "Use my NAM / IR folders", "downloadFolder");
+    setupRow (t3kRow, "TONE3000 downloads", "Default", "downloadFolder");
+    t3kRow.reset.setTooltip ("Default: a TONE3000 folder inside your first NAM folder (models) and your first IR folder (IRs)");
+    presetRow.reset.setTooltip ("Default: Documents\\Rigsmith\\Presets");
+    blockRow.reset.setTooltip ("Default: Documents\\Rigsmith\\Block Presets");
     withModels.setTooltip ("Rig presets go to <your first NAM folder>\\Presets and block presets to <your first NAM folder>\\Block Presets, "
                            "so everything lives together (and your existing presets move with them)");
     withModels.onClick = [this]
@@ -167,7 +170,6 @@ void SettingsPanel::updateRows()
     else
         t3kRow.path.setText (engine.getDownloadFolder (false).getFullPathName() + "  (and the same in your IR folder)",
                              juce::dontSendNotification);
-    t3kRow.reset.setEnabled (engine.hasCustomDownloadFolder());
     for (auto* r : { &presetRow, &blockRow, &t3kRow }) r->path.setTooltip (r->path.getText());
     if (! engine.hasCustomDownloadFolder())
         t3kRow.path.setTooltip ("Models: " + engine.getDownloadFolder (false).getFullPathName()
@@ -274,7 +276,7 @@ void SettingsPanel::resized()
     {
         auto line = r.removeFromTop (28);
         row->title.setBounds (line.removeFromLeft (150));
-        row->reset.setBounds (line.removeFromRight (row == &t3kRow ? 170 : 80).reduced (0, 1));
+        row->reset.setBounds (line.removeFromRight (80).reduced (0, 1));
         line.removeFromRight (6);
         row->choose.setBounds (line.removeFromRight (90).reduced (0, 1));
         line.removeFromRight (8);

@@ -279,14 +279,31 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
                                  "beside Rigsmith.ini), and Rigsmith.log there shows what it was doing");
         });
     // no Rigsmith.ini: a first run (or a reset) - start with the audio / MIDI settings
+    // then the folders (NAM, IRs, presets), then the VST3 question - one at a time
+    bool firstRunSetup = false;
    #if RIGSMITH_HAS_STANDALONE_HOLDER
-    if (processor.isStandalone() && engine.isFirstRun())
-        juce::Timer::callAfterDelay (700, []
+    if (processor.isStandalone() && engine.isFirstRun() && ! scannedThisRun)
+    {
+        firstRunSetup = true;
+        scannedThisRun = true;
+        juce::Timer::callAfterDelay (700, [sp = juce::Component::SafePointer<RigsmithEditor> (this)]
         {
+            if (sp == nullptr) return;
             if (auto* h = juce::StandalonePluginHolder::getInstance()) h->showAudioSettingsDialog();
+            sp->afterDialogs ([sp]
+            {
+                if (sp == nullptr) return;
+                sp->showMessage ("Welcome to Rigsmith. Next: where your NAM models, IRs and presets live");
+                sp->showSettings();
+                sp->afterDialogs ([sp]
+                {
+                    if (sp != nullptr && ! sp->engine.hasScannedPlugins()) sp->askToScan();
+                });
+            });
         });
+    }
    #endif
-    if (! scannedThisRun && engine.shouldScanOnStartup() && ! engine.isSafeStart())
+    if (! firstRunSetup && ! scannedThisRun && engine.shouldScanOnStartup() && ! engine.isSafeStart())
     {
         scannedThisRun = true;
         const bool firstTime = ! engine.hasScannedPlugins();
@@ -326,6 +343,16 @@ void RigsmithEditor::askToScan()
 bool RigsmithEditor::audioSetupOpen() const
 {
     return juce::ModalComponentManager::getInstance()->getNumModalComponents() > 0;
+}
+
+void RigsmithEditor::afterDialogs (std::function<void()> next)
+{
+    juce::Timer::callAfterDelay (400, [sp = juce::Component::SafePointer<RigsmithEditor> (this), next]
+    {
+        if (sp == nullptr) return;
+        if (sp->audioSetupOpen()) sp->afterDialogs (next);
+        else next();
+    });
 }
 
 void RigsmithEditor::askScanWhenAudioSetupCloses()

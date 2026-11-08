@@ -155,6 +155,8 @@ private:
     void randomiseRigNow();
     bool audioSetupOpen() const;
     void askScanWhenAudioSetupCloses();
+    /** Runs `next` once no dialog is open (the first-run setup goes one window at a time). */
+    void afterDialogs (std::function<void()> next);
     void askToScan();
     bool modVisible = false;
     void setModVisible (bool);

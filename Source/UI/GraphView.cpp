@@ -273,6 +273,8 @@ void BlockCard::paint (juce::Graphics& g)
     g.drawFittedText (node.getName(), 12, 37, getWidth() - 24 - (hasKnob ? 34 : 0), 36, juce::Justification::topLeft, 2, 0.9f);
 
     juce::String detail = node.getDetail();
+    if (auto* mb = dynamic_cast<const Block*> (&node); mb != nullptr && mb->currentModel() != nullptr)
+        detail = mb->currentModel()->name.upToFirstOccurrenceOf (" (", false, false);
     if (hasKnob)
     {
         // the capture selector: a little pointer knob with "3/12" under it

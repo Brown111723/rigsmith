@@ -1451,7 +1451,7 @@ int main (int argc, char** argv)
         // the gate: Basic and Advanced
         {
             GateBlock gate;
-            CHECK (gate.panelOrder().size() == 4, "Basic: View, Threshold, Release, Range");
+            CHECK (gate.panelOrder().size() == 5, "Basic: Model, View, Threshold, Release, Range");
             gate.set (GateBlock::pView, 1.0f);
             const auto adv = gate.panelOrder().size();
             gate.set (GateBlock::pBands, 1.0f);
@@ -1738,6 +1738,66 @@ int main (int argc, char** argv)
         one.prepare (48000.0);
         auto r1 = strum (one, detune, { false, false, false, true, false, false });
         CHECK (r1.strings[3].heard && std::abs (r1.strings[3].cents + 3.0f) < 2.0f && ! r1.strummed, "one string: only that one (no strum)");
+    }
+
+    std::printf ("--- v0.12.1: famous-unit models for the built-in effects\n");
+    {
+        Engine e;
+        juce::StringArray bad;
+        int total = 0, types = 0;
+        for (auto& [group, list] : builtInGroups())
+            for (auto t : list)
+            {
+                const auto& ms = fxModelsFor (t);
+                if (ms.empty()) continue;
+                ++types;
+                auto n = e.createNode (t);
+                auto* b = dynamic_cast<Block*> (n.get());
+                if (b == nullptr || ! b->hasModels()) { bad.add (builtInShortName (t) + ": no model parameter"); continue; }
+                for (int mi = 0; mi < (int) ms.size(); ++mi)
+                {
+                    ++total;
+                    const auto& m = ms[(size_t) mi];
+                    for (auto& [pid, v] : m.stock)
+                    {
+                        const int i = b->indexOf (pid);
+                        if (i < 0) bad.add (m.title() + ": no '" + pid + "'");
+                        else if (v < b->getSpecs()[(size_t) i].min || v > b->getSpecs()[(size_t) i].max) bad.add (m.title() + ": " + pid + " out of range");
+                    }
+                    for (auto& h : m.hide) if (b->indexOf (h) < 0) bad.add (m.title() + ": hides unknown '" + h + "'");
+                    for (auto& [pid, l] : m.labels) if (b->indexOf (pid) < 0) bad.add (m.title() + ": labels unknown '" + pid + "'");
+                    b->set (b->getModelParam(), (float) mi);
+                    b->onChoiceChanged (b->getModelParam());
+                    // runs, and stays finite
+                    b->prepare (48000.0, 256);
+                    juce::AudioBuffer<float> buf (2, 256);
+                    bool finite = true;
+                    for (int k = 0; k < 20; ++k)
+                    {
+                        for (int i = 0; i < 256; ++i) { const float x = 0.2f * std::sin ((float) (k * 256 + i) * 0.05f); buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                        b->process (buf, 256);
+                        for (int i = 0; i < 256; ++i) finite &= std::isfinite (buf.getSample (0, i));
+                    }
+                    if (! finite) bad.add (m.title() + ": not finite");
+                    if (mi > 0)
+                    {
+                        const auto order = b->panelOrder();
+                        if (order.empty() || order[0] != b->getModelParam()) bad.add (m.title() + ": model selector not first");
+                        for (int i : order) if (m.hide.contains (b->getSpecs()[(size_t) i].id)) bad.add (m.title() + ": shows a hidden knob");
+                    }
+                }
+            }
+        for (auto& x : bad) std::printf ("    %s\n", x.toRawUTF8());
+        std::printf ("    %d models across %d blocks\n", total, types);
+        CHECK (bad.isEmpty() && types >= 15 && total >= 100, "every modelled block's models are valid, run, and show only their own knobs");
+        ChorusBlock c;
+        c.set (c.getModelParam(), 2.0f);   // CE-2
+        c.onChoiceChanged (c.getModelParam());
+        CHECK (c.getModelTitle() == "Boss CE-2" && std::abs (c.getBase (c.indexOf ("delay")) - 12.0f) < 0.01f
+               && c.getParamName (c.indexOf ("depth")) == "Depth", "picking a model sets its stock settings");
+        CompBlock d;
+        d.set (d.getModelParam(), 1.0f);
+        CHECK (d.getParamName (d.indexOf ("threshold")) == "Sensitivity", "and names the knobs as the real unit does");
     }
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);

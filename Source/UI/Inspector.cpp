@@ -1530,6 +1530,16 @@ void Inspector::timerCallback()
         if (wah->get (WahBlock::pAuto) > 0.5f && wah->getChoice (WahBlock::pMode) == 0)
             inf << (wah->isEngaged() ? "\nEngaged" : "\nResting heel-down: off (move the pedal to engage)");
     }
+    else if (auto* mb = dynamic_cast<Block*> (node); mb != nullptr && mb->currentModel() != nullptr)
+    {
+        const auto* m = mb->currentModel();
+        sub = (m->maker + (m->year.isNotEmpty() ? "  " + m->year : juce::String())).toUpperCase();
+        inf = m->blurb;
+    }
+    else if (auto* mb2 = dynamic_cast<Block*> (node); mb2 != nullptr && mb2->hasModels())
+    {
+        inf = "Studio: every control. Pick a Model above to start from a famous unit, with its own knobs and character.";
+    }
     else if (auto* nb = dynamic_cast<NamBlock*> (node))
     {
         const auto i = nb->getInfo();

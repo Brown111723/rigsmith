@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.12.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.12.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -103,6 +103,7 @@ target_sources(Rigsmith PRIVATE
     Source/Engine/Blocks.cpp
     Source/Engine/Modulation.cpp
     Source/Engine/Pedals.cpp
+    Source/Engine/FxModels.cpp
     Source/Engine/PolyTuner.cpp
     Source/Engine/FactoryPresets.cpp
     Source/Engine/NamBlock.cpp
@@ -199,6 +200,7 @@ if(RIGSMITH_TESTS)
         Source/Engine/Blocks.cpp
         Source/Engine/Modulation.cpp
         Source/Engine/Pedals.cpp
+        Source/Engine/FxModels.cpp
         Source/Engine/PolyTuner.cpp
         Source/Engine/FactoryPresets.cpp
         Source/Engine/NamBlock.cpp
