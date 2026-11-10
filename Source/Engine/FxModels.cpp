@@ -323,6 +323,42 @@ namespace
             M ("DigiTech", "Drop", "2015", "Drop-tune without touching the tuners: fully wet, half step to an octave down",
                { { "mode", 2 }, { "semis", -2 }, { "detune", 0 }, { "mix", 100 }, { "tone", 14000 } }, { "mode", "detune", "tone", "mix" }, { { "semis", "Drop" } }),
         };
+        //--- Acoustic & vocal ------------------------------------------------------
+        t[NodeType::AcousticPre] = {
+            studio ("acoustic preamp"),
+            M ("LR Baggs", "Venue DI", "2010s", "The gigging acoustic player's preamp: five-band EQ, a sweepable notch and a clean boost",
+               { { "gain", 0 }, { "lowcut", 60 }, { "bass", 1 }, { "mid", -2 }, { "midfreq", 700 }, { "treble", 1 }, { "presence", 1 }, { "notch", 160 }, { "notchdepth", -8 }, { "bodyimage", 0 }, { "comp", 0 } },
+               { "bodyimage", "comp" }, { { "presence", "Presence" }, { "gain", "Volume" } }),
+            M ("Fishman", "Platinum Pro EQ", "2000s", "Studio-style acoustic EQ with an optical compressor and a brilliance control",
+               { { "gain", 0 }, { "lowcut", 80 }, { "bass", 0 }, { "mid", -3 }, { "midfreq", 900 }, { "treble", 2 }, { "presence", 2 }, { "notch", 120 }, { "notchdepth", -6 }, { "bodyimage", 0 }, { "comp", 3 } },
+               { "bodyimage" }, { { "presence", "Brilliance" }, { "comp", "Compressor" } }),
+            M ("Fishman", "Aura Spectrum DI", "2008", "Images of studio-miked guitars blended in: the body and air a piezo never hears",
+               { { "gain", 0 }, { "lowcut", 70 }, { "bass", 0 }, { "mid", -1 }, { "midfreq", 800 }, { "treble", 1 }, { "presence", 0 }, { "notch", 140 }, { "notchdepth", -6 }, { "bodyimage", 80 }, { "comp", 2 } },
+               { "presence", "midfreq" }, { { "bodyimage", "Image Blend" } }),
+            M ("Grace Design", "Felix", "2014", "Boutique, transparent, quiet: what a high-end studio would use for a pickup",
+               { { "gain", 3 }, { "lowcut", 50 }, { "bass", 0 }, { "mid", 0 }, { "midfreq", 1000 }, { "treble", 0 }, { "presence", 0 }, { "notch", 200 }, { "notchdepth", 0 }, { "bodyimage", 0 }, { "comp", 0 } },
+               { "bodyimage", "comp", "presence" }),
+            M ("Radial", "PZ-Pre", "2010s", "A workhorse acoustic preamp with a notch, a high-pass and a gentle compressor",
+               { { "gain", 2 }, { "lowcut", 90 }, { "bass", 2 }, { "mid", -2 }, { "midfreq", 600 }, { "treble", 2 }, { "presence", 0 }, { "notch", 100 }, { "notchdepth", -10 }, { "bodyimage", 0 }, { "comp", 2 } },
+               { "bodyimage", "presence" }),
+        };
+        t[NodeType::VoiceStrip] = {
+            studio ("vocal channel strip"),
+            M ("Neve", "1073", "1970", "The console channel on countless classic vocals: thick, forward and warm through its transformers",
+               { { "gain", 0 }, { "lowcut", 80 }, { "warmth", 5 }, { "comp", 3 }, { "deess", 3 }, { "body", 1 }, { "presence", 3 }, { "air", 4 }, { "gate", -90 } },
+               {}, { { "presence", "High Mid (4.8k)" }, { "air", "High (12k)" }, { "body", "Low (220)" } }, dark (0, 0.15f)),
+            M ("API", "512c + 550A", "1970s", "Punchy American console sound: forward, bright and confident",
+               { { "gain", 0 }, { "lowcut", 90 }, { "warmth", 3 }, { "comp", 4 }, { "deess", 3 }, { "body", 0 }, { "presence", 4 }, { "air", 3 }, { "gate", -90 } },
+               {}, {}, dark (0, 0.1f)),
+            M ("SSL", "4000 E Channel", "1979", "The 80s and 90s pop vocal: clean, tight, bright, with that channel compressor",
+               { { "gain", 0 }, { "lowcut", 100 }, { "warmth", 1 }, { "comp", 6 }, { "deess", 4 }, { "body", -1 }, { "presence", 3 }, { "air", 4 }, { "gate", -70 } }),
+            M ("Avalon", "VT-737sp", "1990s", "Tube preamp, opto compressor and EQ: the silky, polished modern vocal",
+               { { "gain", 0 }, { "lowcut", 80 }, { "warmth", 6 }, { "comp", 5 }, { "deess", 4 }, { "body", 1 }, { "presence", 2 }, { "air", 6 }, { "gate", -90 } },
+               {}, {}, dark (0, 0.2f)),
+            M ("Universal Audio", "610", "1960s", "The vintage tube console channel: dark, round and saturated (Sinatra to the Beach Boys)",
+               { { "gain", 0 }, { "lowcut", 70 }, { "warmth", 8 }, { "comp", 3 }, { "deess", 2 }, { "body", 2 }, { "presence", 1 }, { "air", 1 }, { "gate", -90 } },
+               {}, {}, dark (13000, 0.3f)),
+        };
         return t;
     }
 }

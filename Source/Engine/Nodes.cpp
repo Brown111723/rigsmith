@@ -12,7 +12,10 @@ static const std::pair<NodeType, const char*> typeNames[] = {
     { NodeType::Tremolo, "tremolo" }, { NodeType::Vibe, "vibe" }, { NodeType::Rotary, "rotary" },
     { NodeType::Delay, "delay" }, { NodeType::Reverb, "reverb" }, { NodeType::Pitch, "pitch" },
     { NodeType::Tuner, "tuner" }, { NodeType::Modulator, "modulator" }, { NodeType::Distortion, "distortion" },
-    { NodeType::Cab, "cab" }, { NodeType::BassDrive, "bassdrive" }
+    { NodeType::Cab, "cab" }, { NodeType::BassDrive, "bassdrive" },
+    { NodeType::Amp, "amp" }, { NodeType::AcousticBody, "acousticbody" }, { NodeType::AcousticPre, "acousticpre" },
+    { NodeType::VoiceStrip, "voicestrip" }, { NodeType::DeEsser, "deesser" }, { NodeType::PitchCorrect, "pitchcorrect" },
+    { NodeType::Harmonizer, "harmonizer" }
 };
 
 const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups()
@@ -20,12 +23,13 @@ const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups
     static const std::vector<std::pair<juce::String, std::vector<NodeType>>> groups {
         { "Dynamics",       { NodeType::Gate, NodeType::Comp, NodeType::Limiter, NodeType::Expander, NodeType::Transient, NodeType::Swell } },
         { "Drive",          { NodeType::Overdrive, NodeType::Distortion, NodeType::Fuzz, NodeType::Boost, NodeType::Crusher } },
+        { "Amp & Cabinet",  { NodeType::Amp, NodeType::Cab } },
         { "Bass",           { NodeType::BassDrive } },
-        { "Cabinet",        { NodeType::Cab } },
         { "EQ & Filter",    { NodeType::Eq, NodeType::Wah } },
         { "Modulation",     { NodeType::Chorus, NodeType::Flanger, NodeType::Phaser, NodeType::Tremolo, NodeType::Vibe, NodeType::Rotary } },
         { "Delay & Reverb", { NodeType::Delay, NodeType::Reverb } },
         { "Pitch",          { NodeType::Pitch } },
+        { "Acoustic & Vocal", { NodeType::AcousticBody, NodeType::AcousticPre, NodeType::VoiceStrip, NodeType::DeEsser, NodeType::PitchCorrect, NodeType::Harmonizer } },
         { "Utility",        { NodeType::Tuner, NodeType::Gain } } };
     return groups;
 }
@@ -44,6 +48,13 @@ juce::String builtInMenuName (NodeType t)
         case NodeType::Distortion: return "Distortion";
         case NodeType::BassDrive: return "Bass Preamp / Drive";
         case NodeType::Cab:       return "Cabinet (speaker + mic, no IR needed)";
+        case NodeType::Amp:       return "Amp (26 tube and solid-state amps)";
+        case NodeType::AcousticBody: return "Acoustic Sim (electric to acoustic)";
+        case NodeType::AcousticPre:  return "Acoustic Preamp / DI";
+        case NodeType::VoiceStrip:   return "Vocal Strip (channel strip)";
+        case NodeType::DeEsser:      return "De-Esser";
+        case NodeType::PitchCorrect: return "Pitch Correct (auto-tune)";
+        case NodeType::Harmonizer:   return "Harmonizer (in key)";
         case NodeType::Fuzz:      return "Fuzz";
         case NodeType::Boost:     return "Clean Boost";
         case NodeType::Crusher:   return "Bit Crusher";
@@ -84,6 +95,13 @@ juce::String builtInBlurb (NodeType t)
         case NodeType::Distortion: return "10 classic distortions: DS-1, RAT, Tube Screamer, Big Muff, Metal Zone, HM-2, Shredmaster, OCD, Distortion+, BE-OD";
         case NodeType::BassDrive: return "10 bass preamps and drives: SansAmp, Darkglass B3K / B7K / Alpha-Omega, SVT, M80, Bass Big Muff, ODB-3, Tone Hammer, Brassmaster";
         case NodeType::Cab:       return "10 guitar and 5 bass cabinets, 5 mics: drag the mic across the cone. No IR file needed";
+        case NodeType::Amp:       return "Twin, Deluxe, AC30, JC-120, Bassman, Plexi, JCM800, Rectifier, Mark IIC+, 5150, SLO and more, 4 bass amps, and Studio";
+        case NodeType::AcousticBody: return "Your electric as a dreadnought, jumbo, parlour, nylon-string, 12-string or resonator";
+        case NodeType::AcousticPre:  return "For an acoustic's own pickup: EQ, feedback notch, body image, comp (Venue DI, Platinum, Aura, Felix, PZ-Pre)";
+        case NodeType::VoiceStrip:   return "Mic pre, tube warmth, comp, de-ess, EQ and gate (1073, API, SSL, VT-737, 610)";
+        case NodeType::DeEsser:      return "Takes the harsh 's' off a vocal";
+        case NodeType::PitchCorrect: return "Pulls a voice to the key: natural touch-up to robotic";
+        case NodeType::Harmonizer:   return "One or two harmony voices that follow the key";
         case NodeType::Fuzz:      return "Thick fuzz, optional octave";
         case NodeType::Boost:     return "Clean level and tone boost";
         case NodeType::Crusher:   return "Lo-fi bits and sample rate";
@@ -169,6 +187,10 @@ Category categoryForBuiltIn (NodeType t)
         case NodeType::Overdrive: case NodeType::Distortion: case NodeType::Fuzz: case NodeType::Boost:
         case NodeType::Crusher: case NodeType::BassDrive:                        return Category::Drive;
         case NodeType::Cab:                                                      return Category::Cab;
+        case NodeType::Amp:                                                      return Category::Amp;
+        case NodeType::AcousticBody: case NodeType::AcousticPre:                 return Category::Eq;
+        case NodeType::VoiceStrip: case NodeType::DeEsser:                       return Category::Dynamics;
+        case NodeType::PitchCorrect: case NodeType::Harmonizer:                  return Category::Pitch;
         case NodeType::Nam:                                                      return Category::Amp;
         case NodeType::Ir:                                                       return Category::Cab;
         case NodeType::Eq:                                                       return Category::Eq;
@@ -838,6 +860,8 @@ juce::ValueTree Split::toState() const
         bt.setProperty ("pan", b->pan.load(), nullptr);
         bt.setProperty ("mute", b->mute.load(), nullptr);
         bt.setProperty ("phase", b->phase.load(), nullptr);
+        if (b->input.load() != 0) bt.setProperty ("input", b->input.load(), nullptr);
+        if (b->output.load() != 0) bt.setProperty ("output", b->output.load(), nullptr);
         bt.appendChild (b->chain->toState(), nullptr);
         v.appendChild (bt, nullptr);
     }
@@ -860,6 +884,17 @@ void Split::prepareImpl (double sr, int block)
     mix.setSize (2, block, false, true, true);
     for (auto& b : branches)
         b->prepare (sr, block);
+}
+
+juce::StringArray pathInputNames()
+{
+    return { "Split signal", "Input 1", "Input 2", "Input 3", "Input 4", "Input 5", "Input 6", "Input 7", "Input 8",
+             "Inputs 1+2", "Inputs 3+4", "Inputs 5+6", "Inputs 7+8" };
+}
+
+juce::StringArray pathOutputNames()
+{
+    return { "Rig", "Out 3/4 only", "Out 5/6 only", "Out 7/8 only", "Rig + Out 3/4", "Rig + Out 5/6", "Rig + Out 7/8" };
 }
 
 void Split::processImpl (juce::AudioBuffer<float>& buffer, int n) noexcept
@@ -895,11 +930,27 @@ void Split::processImpl (juce::AudioBuffer<float>& buffer, int n) noexcept
     for (int bi = 0; bi < nb; ++bi)
     {
         auto& b = *branches[(size_t) bi];
-        for (int ch = 0; ch < 2; ++ch)
-            b.buffer.copyFrom (ch, 0, input, ch, 0, n);
+        // --- this path's own input: an input channel of the interface instead of the split's signal
+        const int src = b.input.load (std::memory_order_relaxed);
+        if (src > 0)
+        {
+            const int first = src <= 8 ? src - 1 : (src - 9) * 2;
+            const int second = src <= 8 ? first : first + 1;
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const int k = ch == 0 ? first : second;
+                if (RigIo::inputs != nullptr && k < RigIo::numInputs && RigIo::inputs[k] != nullptr)
+                    b.buffer.copyFrom (ch, 0, RigIo::inputs[k] + RigIo::offset, n);
+                else
+                    b.buffer.clear (ch, 0, n);
+            }
+        }
+        else
+            for (int ch = 0; ch < 2; ++ch)
+                b.buffer.copyFrom (ch, 0, input, ch, 0, n);
 
         // --- frequency split (Linkwitz-Riley, allpass-compensated for 3 bands)
-        if (crossover && bi < 3)
+        if (crossover && bi < 3 && src == 0)
         {
             LRType ta = LRType::lowpass, tb = LRType::allpass;
             bool useB = nb >= 3;
@@ -957,12 +1008,26 @@ void Split::processImpl (juce::AudioBuffer<float>& buffer, int n) noexcept
 
         auto* sl = b.buffer.getReadPointer (0);
         auto* sr = b.buffer.getReadPointer (1);
-        auto* ml = mix.getWritePointer (0);
-        auto* mr = mix.getWritePointer (1);
+        // --- where it goes: back into the rig, and / or straight to an output of its own
+        const int dest = juce::jlimit (0, 6, b.output.load (std::memory_order_relaxed));
+        const bool toRig = dest == 0 || dest >= 4;
+        float* ol = nullptr; float* orr = nullptr;
+        if (dest > 0)
+        {
+            const int pair = (dest - 1) % 3;
+            if (RigIo::outputs != nullptr && pair * 2 + 1 < RigIo::numOutputs)
+            {
+                ol = RigIo::outputs[pair * 2] + RigIo::offset;
+                orr = RigIo::outputs[pair * 2 + 1] + RigIo::offset;
+            }
+        }
+        auto* ml = toRig ? mix.getWritePointer (0) : nullptr;
+        auto* mr = toRig ? mix.getWritePointer (1) : nullptr;
         for (int i = 0; i < n; ++i)
         {
-            ml[i] += sl[i] * b.gainL.getNextValue();
-            mr[i] += sr[i] * b.gainR.getNextValue();
+            const float yl = sl[i] * b.gainL.getNextValue(), yr = sr[i] * b.gainR.getNextValue();
+            if (ml != nullptr) { ml[i] += yl; mr[i] += yr; }
+            if (ol != nullptr) { ol[i] += yl; orr[i] += yr; }
         }
     }
 

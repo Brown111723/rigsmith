@@ -343,6 +343,7 @@ public:
     juce::String getDetail() const override { return getSpecs()[pMode].choices[getChoice (pMode)] + "  " + formatValue (pTime); }
     Visual getVisual() const override { return Visual::Delay; }
     void getTaps (std::vector<DelayTap>&) const override;
+    std::vector<int> panelOrder() const override;
     enum { pMode, pTime, pFeedback, pMix, pLowCut, pHighCut, pMod, pDuck, pSpread };
 protected:
     void prepareImpl (double, int) override;
@@ -386,6 +387,7 @@ public:
     PitchBlock();
     juce::String getName() const override { return getSpecs()[pMode].choices[getChoice (pMode)]; }
     juce::String getDetail() const override;
+    std::vector<int> panelOrder() const override;
     enum { pMode, pSemis, pDetune, pMix, pTone };
 protected:
     void prepareImpl (double, int) override;

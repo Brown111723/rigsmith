@@ -343,7 +343,8 @@ void TrimMeter::mouseDoubleClick (const juce::MouseEvent&)
 }
 
 //==============================================================================
-ChoiceControl::ChoiceControl (const juce::String& name, const juce::StringArray& options, juce::Colour colour)
+ChoiceControl::ChoiceControl (const juce::String& name, const juce::StringArray& options, juce::Colour colour,
+                              const std::vector<std::pair<int, juce::String>>& sections)
 {
     label.setText (name.toUpperCase(), juce::dontSendNotification);
     label.setFont (medium (10.0f).withExtraKerningFactor (0.09f));
@@ -351,12 +352,18 @@ ChoiceControl::ChoiceControl (const juce::String& name, const juce::StringArray&
     addAndMakeVisible (label);
     int total = 0;
     for (auto& o : options) total += juce::GlyphArrangement::getStringWidthInt (font (13.0f, true), o) + 26;
-    if (options.size() > 4 || total > 380)
+    if (options.size() > 4 || total > 380 || ! sections.empty())
     {
         combo = std::make_unique<juce::ComboBox>();
-        combo->addItemList (options, 1);
+        // a long list in groups (the amps: Clean, Crunch, High gain, Bass)
+        for (int i = 0; i < options.size(); ++i)
+        {
+            for (auto& [first, heading] : sections)
+                if (first == i) combo->addSectionHeading (heading);
+            combo->addItem (options[i], i + 1);
+        }
         combo->setColour (juce::ComboBox::outlineColourId, colour.withAlpha (0.6f));
-        combo->onChange = [this] { if (onChange) onChange (combo->getSelectedItemIndex()); };
+        combo->onChange = [this] { if (onChange && combo->getSelectedId() > 0) onChange (combo->getSelectedId() - 1); };
         addAndMakeVisible (*combo);
         return;
     }
@@ -371,7 +378,7 @@ ChoiceControl::ChoiceControl (const juce::String& name, const juce::StringArray&
 
 void ChoiceControl::setSelected (int index)
 {
-    if (combo != nullptr) { combo->setSelectedItemIndex (index, juce::dontSendNotification); return; }
+    if (combo != nullptr) { combo->setSelectedId (index + 1, juce::dontSendNotification); return; }
     for (int i = 0; i < buttons.size(); ++i)
         buttons[i]->setToggleState (i == index, juce::dontSendNotification);
 }
@@ -453,6 +460,20 @@ struct Inspector::Strip : public juce::Component
         };
         addAndMakeVisible (phase);
 
+        // where this path's sound comes from and goes to
+        for (auto* b : { &inButton, &outButton })
+        {
+            b->setColour (juce::TextButton::buttonColourId, c.withAlpha (0.12f));
+            b->setColour (juce::TextButton::textColourOffId, theme::text.withAlpha (0.85f));
+            addAndMakeVisible (*b);
+        }
+        inButton.setTooltip ("This path's input: the signal arriving at the split, or an input of your audio interface of its own "
+                             "(a second guitar, a bass, a microphone)");
+        outButton.setTooltip ("Where this path goes: back into the rig, or to an output of its own (Out 3/4, 5/6, 7/8): "
+                              "separate tracks in a DAW, or another amp or PA from the standalone app");
+        inButton.onClick = [this] { showMenu (true); };
+        outButton.onClick = [this] { showMenu (false); };
+
         mute.setButtonText ("M");
         mute.setTooltip ("Mute path (stored per scene)");
         mute.setClickingTogglesState (true);
@@ -475,8 +496,53 @@ struct Inspector::Strip : public juce::Component
         if (! pan.isMouseButtonDown()) pan.setValue (b.pan.load(), juce::dontSendNotification);
         phase.setToggleState (b.phase.load(), juce::dontSendNotification);
         mute.setToggleState (b.mute.load(), juce::dontSendNotification);
+        const int in = juce::jlimit (0, 12, b.input.load()), out = juce::jlimit (0, 6, b.output.load());
+        inButton.setButtonText (in == 0 ? juce::String ("In: split") : "In: " + pathInputNames()[in].fromFirstOccurrenceOf (" ", false, false));
+        outButton.setButtonText (out == 0 ? juce::String ("Out: rig") : "Out: " + pathOutputNames()[out].replace (" only", "").replace ("Rig + Out ", "rig+"));
+        inButton.setToggleState (in != 0, juce::dontSendNotification);
+        outButton.setToggleState (out != 0, juce::dontSendNotification);
         level.refreshText();
         updating = false;
+    }
+
+    void showMenu (bool input)
+    {
+        auto& eng = owner.host.getEngine();
+        auto& b = *split.branches[(size_t) index];
+        juce::PopupMenu m;
+        const auto names = input ? pathInputNames() : pathOutputNames();
+        const int current = input ? b.input.load() : b.output.load();
+        const int have = input ? eng.ioInputs.load() : eng.ioOutputs.load();
+        if (input) m.addSectionHeader ("Path " + juce::String::charToString ((juce::juce_wchar) ('A' + index)) + " input");
+        else m.addSectionHeader ("Path " + juce::String::charToString ((juce::juce_wchar) ('A' + index)) + " output");
+        for (int k = 0; k < names.size(); ++k)
+        {
+            // what this interface (or DAW track) actually has
+            int needs = 0;
+            if (input) needs = k == 0 ? 0 : (k <= 8 ? k : (k - 9) * 2 + 2);
+            else needs = k == 0 ? 0 : 2 + 2 * (((k - 1) % 3) + 1);
+            if (input && k == 9) m.addSeparator();
+            if (! input && k == 1) m.addSeparator();
+            if (! input && k == 4) m.addSeparator();
+            juce::String label = names[k];
+            if (needs > have) label << "   (not available)";
+            m.addItem (k + 1, label, true, k == current);
+        }
+        m.addSeparator();
+        if (input)
+            m.addItem (100, "Standalone: switch more inputs on in Audio/MIDI Settings. DAW: enable the \"Inputs 3+4\" side input", false);
+        else
+            m.addItem (100, "Standalone: switch more outputs on in Audio/MIDI Settings. DAW: enable Rigsmith's extra outputs", false);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (input ? &inButton : &outButton),
+                         [this, input] (int r)
+                         {
+                             if (r <= 0 || r > 50 || index >= (int) split.branches.size()) return;
+                             auto& br = *split.branches[(size_t) index];
+                             owner.host.getEngine().checkpoint();
+                             if (input) br.input = r - 1; else br.output = r - 1;
+                             owner.host.getEngine().markDirty();
+                             refresh();
+                         });
     }
 
     void paint (juce::Graphics& g) override
@@ -489,6 +555,10 @@ struct Inspector::Strip : public juce::Component
     {
         auto r = getLocalBounds().reduced (6);
         name.setBounds (r.removeFromTop (18));
+        auto io = r.removeFromTop (22);
+        inButton.setBounds (io.removeFromLeft (io.getWidth() / 2).reduced (1, 0));
+        outButton.setBounds (io.reduced (1, 0));
+        r.removeFromTop (2);
         auto bottom = r.removeFromBottom (26);
         phase.setBounds (bottom.removeFromLeft (bottom.getWidth() / 2).reduced (2, 0));
         mute.setBounds (bottom.reduced (2, 0));
@@ -503,7 +573,7 @@ struct Inspector::Strip : public juce::Component
     juce::Label name;
     Knob level;
     juce::Slider pan;
-    juce::TextButton phase, mute;
+    juce::TextButton phase, mute, inButton, outButton;
 };
 
 //==============================================================================
@@ -708,7 +778,7 @@ void Inspector::buildBlock (Block& b)
         }
         if (sp.isChoice())
         {
-            auto* ch = choices.add (new ChoiceControl (pname, b.getChoiceNames (i), c));
+            auto* ch = choices.add (new ChoiceControl (pname, b.getChoiceNames (i), c, b.getChoiceSections (i)));
             ch->setSelected (juce::roundToInt (b.getBase (i)));
             ch->onChange = [this, &b, i] (int v)
             {
@@ -1559,6 +1629,13 @@ void Inspector::timerCallback()
             case SplitMode::Stereo:    inf << "\nPan paths for a wide rig."; break;
         }
         for (auto* st : strips) st->refresh();
+    }
+    else if (auto* amp = dynamic_cast<AmpBlock*> (node))
+    {
+        const auto& m = amp->model();
+        sub = m.section == "Studio" ? juce::String ("AMP - STUDIO") : (m.maker + "  " + m.year + "  -  " + m.section).toUpperCase();
+        inf = m.blurb;
+        if (m.section == "Studio") inf << ". Pick a Model to start from a famous amp";
     }
     else if (auto* pd = dynamic_cast<PedalBlock*> (node))
     {

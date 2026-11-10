@@ -59,6 +59,7 @@ juce::String kindLabel (const Node& n)
             return "CAB IR";
         case NodeType::Cab:    return "CABINET";
         case NodeType::BassDrive: return "BASS";
+        case NodeType::Amp:    return dynamic_cast<const AmpBlock*> (&n) != nullptr && dynamic_cast<const AmpBlock&> (n).isBassModel() ? "BASS AMP" : "AMP";
         case NodeType::Split:  return "SPLIT";
         case NodeType::Chain:  return "CHAIN";
         case NodeType::Plugin:

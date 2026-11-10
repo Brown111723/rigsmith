@@ -832,8 +832,9 @@ void TremoloBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
         {
             // harmonic tremolo: lows and highs pulse in opposition
             const float gLo = 1.0f - depth * (0.5f - 0.5f * w), gHi = 1.0f - depth * (0.5f + 0.5f * w);
+            const float gLoR = 1.0f - depth * (0.5f - 0.5f * wr), gHiR = 1.0f - depth * (0.5f + 0.5f * wr);
             l[i] = lowF.processSample (0, l[i]) * gLo + highF.processSample (0, l[i]) * gHi;
-            r[i] = lowF.processSample (1, r[i]) * gLo + highF.processSample (1, r[i]) * gHi;
+            r[i] = lowF.processSample (1, r[i]) * gLoR + highF.processSample (1, r[i]) * gHiR;
         }
         else
         {
@@ -977,7 +978,7 @@ void DelayBlock::getTaps (std::vector<DelayTap>& taps) const
     float g = mix;
     for (int k = 1; k <= 40 && g > 0.002f; ++k, g *= fb)
     {
-        if (mode == 2)      taps.push_back ({ k * t, g, (k % 2) ? -1 : 1 });
+        if (mode == 2)      taps.push_back ({ k * t, g, (k % 2) ? -get (pSpread) * 0.01f : get (pSpread) * 0.01f });
         else if (mode == 3) { taps.push_back ({ k * t, g, -1 }); taps.push_back ({ k * t * ratio, g, 1 }); }
         else                taps.push_back ({ k * t, g * (mode == 1 ? std::pow (0.9f, (float) k) : 1.0f), 0 });
         if (fb <= 0.0f) break;
@@ -995,6 +996,15 @@ void DelayBlock::prepareImpl (double sr, int)
     wow.setRate (sr, 0.55); flutter.setRate (sr, 6.3);
 }
 
+std::vector<int> DelayBlock::panelOrder() const
+{
+    // Spread only means something with two different sides: Ping-Pong (how wide) and Dual (how far apart)
+    const int mode = getChoice (pMode);
+    std::vector<int> o { pMode, pTime, pFeedback, pMix, pLowCut, pHighCut, pMod, pDuck };
+    if (mode >= 2) o.push_back (pSpread);
+    return modelPanel (o);
+}
+
 void DelayBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 {
     if (watch.changed ({ get (pLowCut), get (pHighCut) }))
@@ -1010,8 +1020,11 @@ void DelayBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     mixGains (get (pMix) * 0.01f, dg, wg);
     const float modAmt = get (pMod) * 0.01f;
     const float duck = get (pDuck) * 0.01f;
-    const float ratio = 1.0f - get (pSpread) * 0.005f;
+    const float spread = get (pSpread) * 0.01f;
+    const float ratio = 1.0f - spread * 0.5f;
     const bool tape = mode == 1;
+    // ping-pong: Spread is the width, from both sides together (0) to hard left / right (100)
+    const float wide = 0.5f + 0.5f * spread, narrow = 1.0f - wide;
 
     auto* l = b.getWritePointer (0);
     auto* r = b.getWritePointer (1);
@@ -1022,27 +1035,33 @@ void DelayBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
         const float modS = tape ? modAmt * (0.004f * sr * w + 0.0004f * sr * fl) : modAmt * 0.0003f * sr * w;
         const float tl = t + modS, tr = (mode == 3 ? t * ratio : t) + modS;
 
+        // what goes into the line is filtered, so the tone controls shape every repeat (the first too)
         const float rl = buf[0].read (tl), rr = buf[1].read (tr);
-        float fl_ = lp[0].process (hp[0].process (rl, 0), 0) * fb;
-        float fr_ = lp[0].process (hp[0].process (rr, 1), 1) * fb;
-        if (tape) { fl_ = fastTanh (fl_ * 1.3f) / 1.3f; fr_ = fastTanh (fr_ * 1.3f) / 1.3f; }
-
         const float dryL = l[i], dryR = r[i];
+        auto voice = [&] (float x, int ch)
+        {
+            x = lp[0].process (hp[0].process (x, ch), ch);
+            return tape ? fastTanh (x * 1.3f) / 1.3f : x;
+        };
+        float outL = rl, outR = rr;
         if (mode == 2)
         {
-            buf[0].push (0.5f * (dryL + dryR) + fr_);   // ping-pong: L feeds R feeds L
-            buf[1].push (fl_);
+            // ping-pong: the input starts on the left, each repeat crosses to the other side
+            buf[0].push (voice (0.5f * (dryL + dryR) + fb * rr, 0));
+            buf[1].push (fb * rl);
+            outL = wide * rl + narrow * rr;
+            outR = wide * rr + narrow * rl;
         }
         else
         {
-            buf[0].push (dryL + fl_);
-            buf[1].push (dryR + fr_);
+            buf[0].push (voice (dryL + fb * rl, 0));
+            buf[1].push (voice (dryR + fb * rr, 1));
         }
 
         const float env = duckDet.process (0.5f * (dryL + dryR));
         const float duckG = 1.0f - duck * juce::jmin (1.0f, env * 6.0f);
-        l[i] = dryL * dg + rl * wg * duckG;
-        r[i] = dryR * dg + rr * wg * duckG;
+        l[i] = dryL * dg + outL * wg * duckG;
+        r[i] = dryR * dg + outR * wg * duckG;
     }
 }
 
@@ -1173,6 +1192,16 @@ juce::String PitchBlock::getDetail() const
         case 3:  return "+/- " + formatValue (pDetune);
         default: return "Mix " + formatValue (pMix);
     }
+}
+
+std::vector<int> PitchBlock::panelOrder() const
+{
+    const int mode = getChoice (pMode);
+    std::vector<int> o { pMode };
+    if (mode == 2) o.push_back (pSemis);
+    if (mode == 3) o.push_back (pDetune);
+    o.push_back (pMix); o.push_back (pTone);
+    return modelPanel (o);
 }
 
 void PitchBlock::prepareImpl (double sr, int)

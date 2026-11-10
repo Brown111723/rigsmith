@@ -53,6 +53,15 @@ float pedalTrimDb (NodeType t, int model, int voice)
     return table[model][voice];
 }
 
+float ampTrimDb (int model, int voice)
+{
+    static const float t[][5] {
+#include "AmpTrims.inc"
+    };
+    if (model < 0 || model >= (int) std::size (t) || voice < 0 || voice > 4) return 0.0f;
+    return t[model][voice];
+}
+
 float fxTrimDb (NodeType t, int model)
 {
     static const std::map<NodeType, std::vector<float>> table {

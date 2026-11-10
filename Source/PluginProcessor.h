@@ -38,12 +38,14 @@ public:
     rig::Engine engine;
 
 private:
+    static BusesProperties makeBuses();
     juce::AudioProcessorEditor* createEditor() override;
     void parameterValueChanged (int, float) override;
     void parameterGestureChanged (int, bool) override {}
 
     juce::AudioParameterChoice* sceneParam = nullptr;
     juce::AudioProcessLoadMeasurer loadMeasurer;
+    juce::AudioBuffer<float> inputCopy, spareOut;   // every input channel; a place for switched-off outputs to go
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RigsmithProcessor)

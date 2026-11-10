@@ -123,10 +123,24 @@ static float runNoise (Engine& e, int blocks, int blockSize, bool* finite, float
     return peak;
 }
 
+// The default rig's amp is a NAM block when the library has captures, else the built-in amp:
+// the NAM tests swap one in.
+static NamBlock* namAt (Engine& e, size_t index)
+{
+    auto& nodes = e.getRoot().nodes;
+    if (auto* nb = dynamic_cast<NamBlock*> (nodes[index].get())) return nb;
+    nodes[index] = std::make_unique<NamBlock>();
+    e.prepare (e.getSampleRate(), e.getBlockSize());
+    return dynamic_cast<NamBlock*> (nodes[index].get());
+}
+
 int runBench (const juce::File& models);
 int checkLevels();
 int runAudit (const juce::File& models);
 int runCalibrate (const juce::File& models);
+int auditKnobs (bool verbose);
+int runCalibrateAmps();
+int runAmpReport();
 
 int main (int argc, char** argv)
 {
@@ -156,6 +170,9 @@ int main (int argc, char** argv)
     {
         if (juce::String (argv[a]) == "--bench") return runBench (models);
         if (juce::String (argv[a]) == "--audit") return runAudit (models);
+        if (juce::String (argv[a]) == "--knobs") return auditKnobs (true);
+        if (juce::String (argv[a]) == "--calibrate-amps") return runCalibrateAmps();
+        if (juce::String (argv[a]) == "--amps") return runAmpReport();
         if (juce::String (argv[a]) == "--calibrate") return runCalibrate (models);
     }
 
@@ -165,7 +182,7 @@ int main (int argc, char** argv)
         Engine e;
         e.prepare (sr, 256);
 
-        auto* nam = dynamic_cast<NamBlock*> (e.getRoot().nodes[1].get());
+        auto* nam = namAt (e, 1);
         CHECK (nam != nullptr, "default rig has a NAM block");
         juce::String err;
         const bool loaded = nam->loadModel (model, err);
@@ -1999,6 +2016,263 @@ int main (int argc, char** argv)
             worst = juce::jmax (worst, std::abs (r.strings[s].cents - detune[s]));
         }
         CHECK (heard && worst < 3.0f, "poly tuner: a strummed 5-string bass, every string within 3 cents");
+    }
+
+    std::printf ("--- v0.14: amp, delay\n");
+    {
+        // the passive tone stack: a mid scoop at noon, and each knob does its job
+        const auto& ms = AmpBlock::models();
+        int bassman = 0;
+        for (int i = 0; i < (int) ms.size(); ++i) if (ms[(size_t) i].name.contains ("Bassman")) bassman = i;
+        const auto parts = ms[(size_t) bassman].c.parts;
+        auto mag = [&] (double hz, double t, double m, double l) { return 20.0 * std::log10 (ToneStack::magnitude (parts, hz, t, m, l)); };
+        CHECK (mag (700, .5, .5, .5) < mag (100, .5, .5, .5) - 3 && mag (700, .5, .5, .5) < mag (4000, .5, .5, .5) - 3, "the Bassman tone stack scoops the mids at noon");
+        CHECK (mag (5000, 1, .5, .5) > mag (5000, 0, .5, .5) + 6, "...Treble raises the highs");
+        CHECK (mag (80, .5, .5, 1) > mag (80, .5, .5, 0) + 6, "...Bass raises the lows");
+        CHECK (mag (700, .5, 1, .5) > mag (700, .5, 0, .5) + 3, "...Middle raises the mids");
+        std::printf ("      100 Hz %.1f, 700 Hz %.1f, 4 kHz %.1f dB\n", mag (100, .5, .5, .5), mag (700, .5, .5, .5), mag (4000, .5, .5, .5));
+        // the digital filter matches the circuit
+        ToneStack ts;
+        ts.design (parts, 192000.0, 0.7, 0.4, 0.6);
+        bool close = true;
+        for (double hz : { 100.0, 1000.0, 5000.0 })
+        {
+            ts.reset();
+            double pk = 0;
+            for (int i = 0; i < 192000; ++i)
+            {
+                const float y = ts.process ((float) std::sin (juce::MathConstants<double>::twoPi * hz * i / 192000.0));
+                if (i > 96000) pk = juce::jmax (pk, (double) std::abs (y));
+            }
+            const double want = ToneStack::magnitude (parts, hz, 0.7, 0.4, 0.6);
+            if (std::abs (20.0 * std::log10 (pk / want)) > 0.5) { close = false; std::printf ("      %.0f Hz: %.2f vs %.2f\n", hz, pk, want); }
+        }
+        CHECK (close, "the digital tone stack matches the circuit within 0.5 dB");
+
+        // distortion: a clean amp is clean and a high-gain one isn't
+        auto thdOf = [] (AmpBlock& a)
+        {
+            const double sr = 48000.0;
+            a.prepare (sr, 256);
+            juce::AudioBuffer<float> buf (2, 256);
+            std::vector<float> out;
+            for (int off = 0; off < 48000; off += 256)
+            {
+                for (int i = 0; i < 256; ++i) { const float x = 0.2f * (float) std::sin (juce::MathConstants<double>::twoPi * 220.0 * (off + i) / sr); buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                a.process (buf, 256);
+                for (int i = 0; i < 256; ++i) out.push_back (buf.getSample (0, i));
+            }
+            double h[6] {};
+            for (int k = 1; k <= 5; ++k)
+            {
+                double re = 0, im = 0;
+                for (int i = 24000; i < 48000; ++i) { const double ph = juce::MathConstants<double>::twoPi * 220.0 * k * i / sr; re += out[(size_t) i] * std::cos (ph); im += out[(size_t) i] * std::sin (ph); }
+                h[k] = std::sqrt (re * re + im * im);
+            }
+            return 100.0 * std::sqrt (h[2] * h[2] + h[3] * h[3] + h[4] * h[4] + h[5] * h[5]) / juce::jmax (1.0e-9, h[1]);
+        };
+        auto ampNamed = [&] (const char* n)
+        {
+            auto a = std::make_unique<AmpBlock>();
+            for (int i = 0; i < (int) ms.size(); ++i) if (ms[(size_t) i].name.contains (n)) { a->set (AmpBlock::pModel, (float) i); a->onChoiceChanged (AmpBlock::pModel); break; }
+            return a;
+        };
+        auto twin = ampNamed ("Twin"); auto hg = ampNamed ("5150 /"); auto jc = ampNamed ("JC-120");
+        const double tTwin = thdOf (*twin), tHg = thdOf (*hg), tJc = thdOf (*jc);
+        std::printf ("      THD: Twin %.1f%%, JC-120 %.2f%%, 5150 %.0f%%\n", tTwin, tJc, tHg);
+        CHECK (tTwin < 3.0 && tJc < 0.5, "the Twin and JC-120 are clean at their stock settings");
+        CHECK (tHg > 25.0, "the 5150 isn't");
+        twin->set (AmpBlock::pGain, 10.0f);
+        CHECK (thdOf (*twin) > tTwin * 1.5, "turning a Twin up breaks it up");
+        CHECK (twin->getLatency() > 0 && twin->getLatency() < 16, "the amp reports its (small) oversampling latency");
+
+        // presets start from the model's own settings
+        Engine e; e.prepare (48000.0, 256);
+        auto* a = dynamic_cast<AmpBlock*> (e.insert (e.createNode (NodeType::Amp), e.getRoot(), 0));
+        const auto& presets = factoryPresets (NodeType::Amp);
+        int recto = -1;
+        for (int i = 0; i < (int) presets.size(); ++i) if (presets[(size_t) i].name.startsWith ("Recto")) recto = i;
+        e.applyFactoryPreset (a->id, recto);
+        CHECK (a->model().name.contains ("Rectifier") && std::abs (a->get (AmpBlock::pMaster) - 5.0f) < 0.01f && std::abs (a->get (AmpBlock::pSag) - 7.0f) < 0.01f,
+               "an amp preset picks its amp, takes the amp's stock settings and then its own");
+        CHECK (a->getName() == "Dual Rectifier" && a->getDetail().contains ("Modern"), "the card names the amp and its switch");
+        bool sectioned = false;
+        for (auto& [first, heading] : a->getChoiceSections (AmpBlock::pModel)) if (heading == "High gain") sectioned = true;
+        CHECK (sectioned, "the amp list is grouped (Clean, Crunch, High gain, Bass)");
+
+        // a bass rig makes a bass amp
+        Engine eb; eb.prepare (48000.0, 256); eb.setBass (true);
+        auto ba = eb.createNode (NodeType::Amp);
+        CHECK (dynamic_cast<AmpBlock*> (ba.get())->isBassModel(), "in bass mode a new amp is a bass amp");
+    }
+    {
+        // the delay: ping-pong starts left and crosses right; Spread is its width; the tone controls shape the first repeat
+        auto echoes = [] (float spread, float lowcut, float& firstL, float& firstR, float& secondR)
+        {
+            DelayBlock d;
+            d.set (DelayBlock::pMode, 2.0f); d.set (DelayBlock::pTime, 100.0f); d.set (DelayBlock::pFeedback, 50.0f);
+            d.set (DelayBlock::pMix, 100.0f); d.set (DelayBlock::pMod, 0.0f); d.set (DelayBlock::pSpread, spread);
+            d.set (DelayBlock::pLowCut, lowcut); d.set (DelayBlock::pHighCut, 20000.0f);
+            d.prepare (48000.0, 256);
+            juce::AudioBuffer<float> buf (2, 256);
+            std::vector<float> L, R;
+            for (int off = 0; off < 48000; off += 256)
+            {
+                buf.clear();
+                if (off < 960) for (int i = 0; i < 256 && off + i < 960; ++i) { const float x = (float) std::sin (juce::MathConstants<double>::twoPi * 120.0 * (off + i) / 48000.0) * 0.5f; buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                d.process (buf, 256);
+                for (int i = 0; i < 256; ++i) { L.push_back (buf.getSample (0, i)); R.push_back (buf.getSample (1, i)); }
+            }
+            auto pk = [] (const std::vector<float>& v, int from, int to) { float p = 0; for (int i = from; i < to; ++i) p = juce::jmax (p, std::abs (v[(size_t) i])); return p; };
+            firstL = pk (L, 4800, 5800); firstR = pk (R, 4800, 5800); secondR = pk (R, 9600, 10600);
+        };
+        float l1, r1, r2, l1b, r1b, r2b, l1c, r1c, r2c;
+        echoes (100.0f, 20.0f, l1, r1, r2);
+        echoes (0.0f, 20.0f, l1b, r1b, r2b);
+        echoes (100.0f, 800.0f, l1c, r1c, r2c);
+        CHECK (l1 > 0.05f && r1 < l1 * 0.05f && r2 > 0.02f, "ping-pong: the first repeat is on the left, the second on the right");
+        CHECK (std::abs (l1b - r1b) < l1b * 0.05f, "Spread 0: ping-pong repeats in the middle");
+        CHECK (l1c < l1 * 0.6f, "Low Cut shapes the first repeat, not just the feedback");
+        DelayBlock d;
+        d.set (DelayBlock::pMode, 0.0f);
+        bool spreadHidden = true;
+        for (int k : d.panelOrder()) if (k == DelayBlock::pSpread) spreadHidden = false;
+        d.set (DelayBlock::pMode, 2.0f);
+        bool spreadShown = false;
+        for (int k : d.panelOrder()) if (k == DelayBlock::pSpread) spreadShown = true;
+        CHECK (spreadHidden && spreadShown, "Spread shows only in Ping-Pong and Dual, where it does something");
+    }
+    {
+        // split paths with their own input and output: a guitar on input 1, a mic on input 3 to Out 3/4
+        Engine e; e.prepare (48000.0, 256);
+        e.getRoot().nodes.clear();
+        auto split = std::make_unique<Split>();
+        split->setMode (SplitMode::Parallel);
+        split->branches.push_back (split->makeBranch());
+        split->branches.push_back (split->makeBranch());
+        split->branches[1]->input = 3;    // Input 3
+        split->branches[1]->output = 1;   // Out 3/4 only
+        auto* sp = split.get();
+        e.getRoot().nodes.push_back (std::move (split));
+        e.prepare (48000.0, 256);
+        juce::AudioBuffer<float> main (2, 256), ins (4, 256), outs (6, 256);
+        juce::MidiBuffer midi;
+        double mainSum = 0, mainMic = 0, auxSum = 0, auxGuitar = 0;
+        for (int k = 0; k < 40; ++k)
+        {
+            for (int i = 0; i < 256; ++i)
+            {
+                const int t = k * 256 + i;
+                const float guitar = 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * 110.0 * t / 48000.0);
+                const float mic = 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * 1000.0 * t / 48000.0);
+                ins.setSample (0, i, guitar); ins.setSample (1, i, guitar); ins.setSample (2, i, mic); ins.setSample (3, i, 0.0f);
+                main.setSample (0, i, guitar); main.setSample (1, i, guitar);
+            }
+            outs.clear();
+            const float* ip[4] = { ins.getReadPointer (0), ins.getReadPointer (1), ins.getReadPointer (2), ins.getReadPointer (3) };
+            float* op[6] = { outs.getWritePointer (0), outs.getWritePointer (1), outs.getWritePointer (2), outs.getWritePointer (3), outs.getWritePointer (4), outs.getWritePointer (5) };
+            Engine::IoChannels io { ip, 4, op, 6 };
+            e.process (main, midi, &io);
+            if (k < 10) continue;
+            for (int i = 0; i < 256; ++i)
+            {
+                const int t = k * 256 + i;
+                const double g = std::sin (juce::MathConstants<double>::twoPi * 110.0 * t / 48000.0), m = std::sin (juce::MathConstants<double>::twoPi * 1000.0 * t / 48000.0);
+                mainSum += main.getSample (0, i) * (double) main.getSample (0, i); mainMic += main.getSample (0, i) * m;
+                auxSum += outs.getSample (0, i) * (double) outs.getSample (0, i); auxGuitar += outs.getSample (0, i) * g;
+            }
+        }
+        CHECK (auxSum > 1.0 && std::abs (auxGuitar) < std::sqrt (auxSum) * 2.0, "a path on Input 3 sends that input to Out 3/4");
+        CHECK (mainSum > 1.0 && std::abs (mainMic) < std::sqrt (mainSum) * 2.0, "...and not into the main mix");
+        auto st = e.getState (false);
+        Engine e2; e2.prepare (48000.0, 256); e2.setState (st, false);
+        auto* sp2 = dynamic_cast<Split*> (e2.getRoot().nodes[0].get());
+        CHECK (sp2 != nullptr && sp2->branches[1]->input.load() == 3 && sp2->branches[1]->output.load() == 1, "a path's input and output are saved with the rig");
+        juce::ignoreUnused (sp);
+        // without the channels (a plain stereo host) the path is silent, not garbage
+        main.clear();
+        e.process (main, midi);
+        CHECK (std::isfinite (main.getMagnitude (0, 0, 256)), "without extra channels a path on Input 3 is just quiet");
+    }
+    {
+        // the vocal tools on a sung (sine) note
+        auto sing = [] (Block& blk, float hz, std::vector<float>& outL, std::vector<float>& outR)
+        {
+            blk.prepare (48000.0, 256);
+            juce::AudioBuffer<float> buf (2, 256);
+            outL.clear(); outR.clear();
+            for (int off = 0; off < 96000; off += 256)
+            {
+                for (int i = 0; i < 256; ++i) { const float x = 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * hz * (off + i) / 48000.0); buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                blk.process (buf, 256);
+                for (int i = 0; i < 256; ++i) { outL.push_back (buf.getSample (0, i)); outR.push_back (buf.getSample (1, i)); }
+            }
+        };
+        auto energyAt = [] (const std::vector<float>& v, double hz)
+        {
+            double re = 0, im = 0;
+            for (size_t i = 48000; i < v.size(); ++i) { const double ph = juce::MathConstants<double>::twoPi * hz * (double) i / 48000.0; re += v[i] * std::cos (ph); im += v[i] * std::sin (ph); }
+            return std::sqrt (re * re + im * im) / (double) (v.size() - 48000);
+        };
+        std::vector<float> L, R;
+        PitchCorrectBlock pc;
+        pc.set (PitchCorrectBlock::pSpeed, 5.0f);
+        sing (pc, 448.0f, L, R);   // A4, 31 cents sharp
+        std::printf ("      pitch correct: %.3f at 440 Hz, %.3f at 448 Hz (heard %.2f)\n", energyAt (L, 440.0), energyAt (L, 448.0), pc.heardMidi.load());
+        CHECK (energyAt (L, 440.0) > energyAt (L, 448.0) * 3.0, "Pitch Correct pulls a sharp A back to 440 Hz");
+        HarmonizerBlock hm;   // C major, a 3rd above
+        sing (hm, 261.63f, L, R);
+        std::printf ("      harmonizer: E %.3f, Eb %.3f\n", energyAt (L, 329.63), energyAt (L, 311.13));
+        CHECK (energyAt (L, 329.63) > 0.02 && energyAt (L, 329.63) > energyAt (L, 311.13) * 3.0, "the Harmonizer adds a major third above C in C major");
+        hm.set (HarmonizerBlock::pKey, 0.0f); hm.set (HarmonizerBlock::pScale, 2.0f);   // C minor
+        sing (hm, 261.63f, L, R);
+        CHECK (energyAt (L, 311.13) > energyAt (L, 329.63) * 3.0, "...and a minor third in C minor");
+        DeEsserBlock de;
+        de.set (DeEsserBlock::pThreshold, -40.0f);
+        sing (de, 7500.0f, L, R);
+        CHECK (energyAt (L, 7500.0) < 0.15 * 0.6, "the De-Esser takes a loud 7.5 kHz 's' down");
+        AcousticBodyBlock ab;
+        sing (ab, 196.0f, L, R);
+        bool finite = true; for (auto x : L) if (! std::isfinite (x)) finite = false;
+        CHECK (finite && energyAt (L, 196.0) > 0.03, "the Acoustic Sim passes a note");
+        ab.set (AcousticBodyBlock::pBody, 5.0f);   // 12-string: the octave strings
+        sing (ab, 196.0f, L, R);
+        CHECK (energyAt (L, 392.0) > 0.01, "...the 12-string adds the octave");
+    }
+    {
+        // the new starting rigs: each loads and plays, on one input or two
+        for (int idx = 5; idx <= 9; ++idx)
+        {
+            Engine e; e.prepare (48000.0, 256);
+            e.loadFactory (idx);
+            juce::AudioBuffer<float> main (2, 256), ins (2, 256), outs (6, 256);
+            juce::MidiBuffer midi;
+            bool finite = true; float peak = 0;
+            for (int k = 0; k < 120; ++k)
+            {
+                for (int i = 0; i < 256; ++i)
+                {
+                    const int t = k * 256 + i;
+                    const float g = 0.2f * (float) std::sin (juce::MathConstants<double>::twoPi * 196.0 * t / 48000.0) * (float) std::exp (-(t % 24000) / 9000.0);
+                    const float v = 0.15f * (float) std::sin (juce::MathConstants<double>::twoPi * 220.0 * t / 48000.0);
+                    ins.setSample (0, i, g); ins.setSample (1, i, v);
+                    main.setSample (0, i, g); main.setSample (1, i, v);
+                }
+                outs.clear();
+                const float* ip[2] = { ins.getReadPointer (0), ins.getReadPointer (1) };
+                float* op[6] = { outs.getWritePointer (0), outs.getWritePointer (1), outs.getWritePointer (2), outs.getWritePointer (3), outs.getWritePointer (4), outs.getWritePointer (5) };
+                Engine::IoChannels io { ip, 2, op, 6 };
+                e.process (main, midi, &io);
+                for (int ch = 0; ch < 2; ++ch) for (int i = 0; i < 256; ++i) { const float y = main.getSample (ch, i); if (! std::isfinite (y)) finite = false; peak = juce::jmax (peak, std::abs (y)); }
+            }
+            const auto name = Engine::getFactoryNames()[idx];
+            std::printf ("      %s: peak %.2f\n", name.toRawUTF8(), peak);
+            CHECK (finite && peak > 0.02f && peak < 1.01f, ("starting rig plays: " + name).toRawUTF8());
+        }
+    }
+    {
+        // every knob a panel shows changes the sound (every block, model and mode)
+        CHECK (auditKnobs (false) == 0, "every visible knob on every block, model and mode does something");
     }
 
     // every setting the dice can reach must stay finite, on every block type

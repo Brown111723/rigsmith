@@ -333,7 +333,102 @@ int runCalibrate (const juce::File&)
         std::printf (" } },\n");
     }
     std::printf ("    };\n    if (const auto it = table.find (t); it != table.end() && model >= 0 && model < (int) it->second.size())\n"
-                 "        return it->second[(size_t) model];\n    return 0.0f;\n}\n} // namespace rig\n");
+                 "        return it->second[(size_t) model];\n    return 0.0f;\n}\n\n");
+    std::printf ("float ampTrimDb (int model, int voice)\n{\n    static const float t[][5] {\n#include \"AmpTrims.inc\"\n    };\n"
+                 "    if (model < 0 || model >= (int) std::size (t) || voice < 0 || voice > 4) return 0.0f;\n    return t[model][voice];\n}\n"
+                 "} // namespace rig\n");
+    return 0;
+}
+
+/** Prints Source/Engine/AmpTrims.inc: each amp and switch position at its stock settings, trimmed to
+    unity against a played guitar (bass amps against a bass). */
+int runCalibrateAmps()
+{
+    const double sr = 48000.0;
+    const auto sig = makeStrum (sr, 8.0);
+    const auto in = levelOf (sig, sr);
+    const auto bassSig = makeStrum (sr, 8.0, true);
+    const auto bassIn = levelOf (bassSig, sr);
+    std::printf ("    // RigsmithTests <models> --calibrate-amps\n");
+    const auto& ms = AmpBlock::models();
+    for (int m = 0; m < (int) ms.size(); ++m)
+    {
+        std::printf ("    {");
+        for (int v = 0; v < 5; ++v)
+        {
+            float trim = 0.0f;
+            if (v < juce::jmax (1, (int) ms[(size_t) m].voices.size()))
+            {
+                AmpBlock a;
+                a.set (AmpBlock::pModel, (float) m); a.onChoiceChanged (AmpBlock::pModel);
+                a.set (AmpBlock::pVoice, (float) v);
+                const bool bass = ms[(size_t) m].bass;
+                // measured without the current table's trim
+                const float old = ampTrimDb (m, v);
+                const float err = 0.0f - (float) (through (a, bass ? bassSig : sig, sr).rmsDb - (bass ? bassIn : in).rmsDb - old);
+                trim = std::round (err * 10.0f) / 10.0f;
+            }
+            std::printf (" %.1ff,", trim);
+        }
+        std::printf (" },   // %s\n", ms[(size_t) m].name.toRawUTF8());
+    }
+    return 0;
+}
+
+/** The amps: how distorted each is at its stock settings (THD of a 220 Hz sine played at a guitar's
+    level), and its level. For voicing. */
+int runAmpReport()
+{
+    const double sr = 48000.0;
+    const auto sig = makeStrum (sr, 6.0);
+    const auto in = levelOf (sig, sr);
+    const auto& ms = AmpBlock::models();
+    std::printf ("%-28s %-12s %7s %7s %7s %7s %7s\n", "amp", "switch", "thd%", "thd g2", "thd g8", "level", "cpu%");
+    auto thd = [&] (AmpBlock& a, float gain)
+    {
+        const float keep = a.get (AmpBlock::pGain);
+        a.set (AmpBlock::pGain, gain);
+        const int len = (int) sr;
+        std::vector<float> s ((size_t) len);
+        for (int i = 0; i < len; ++i) s[(size_t) i] = 0.2f * std::sin (juce::MathConstants<float>::twoPi * 220.0f * (float) i / (float) sr);
+        a.prepare (sr, 128);
+        juce::AudioBuffer<float> buf (2, 128);
+        std::vector<float> out;
+        for (int off = 0; off + 128 <= len; off += 128)
+        {
+            for (int ch = 0; ch < 2; ++ch) buf.copyFrom (ch, 0, s.data() + off, 128);
+            a.process (buf, 128);
+            for (int i = 0; i < 128; ++i) out.push_back (buf.getSample (0, i));
+        }
+        a.set (AmpBlock::pGain, keep);
+        // harmonic energy against the fundamental, over the last half second (an exact number of cycles)
+        const int start = len - 24000;
+        double h[11] {};
+        for (int k = 1; k <= 10; ++k)
+        {
+            double re = 0, im = 0;
+            for (int i = start; i < len; ++i)
+            {
+                const double ph = juce::MathConstants<double>::twoPi * 220.0 * k * i / sr;
+                re += out[(size_t) i] * std::cos (ph); im += out[(size_t) i] * std::sin (ph);
+            }
+            h[k] = std::sqrt (re * re + im * im);
+        }
+        double hs = 0; for (int k = 2; k <= 10; ++k) hs += h[k] * h[k];
+        return 100.0 * std::sqrt (hs) / juce::jmax (1.0e-9, h[1]);
+    };
+    for (int m = 0; m < (int) ms.size(); ++m)
+        for (int v = 0; v < juce::jmax (1, (int) ms[(size_t) m].voices.size()); ++v)
+        {
+            AmpBlock a;
+            a.set (AmpBlock::pModel, (float) m); a.onChoiceChanged (AmpBlock::pModel);
+            a.set (AmpBlock::pVoice, (float) v);
+            const double t = thd (a, a.get (AmpBlock::pGain)), t2 = thd (a, 2.0f), t8 = thd (a, 8.0f);
+            const double lv = through (a, sig, sr).rmsDb - in.rmsDb;
+            const double cpu = v == 0 ? costOf (a, sig, sr) : 0.0;
+            std::printf ("%-28s %-12s %7.1f %7.1f %7.1f %+7.1f %7.2f\n", ms[(size_t) m].name.substring (0, 28).toRawUTF8(),
+                         ms[(size_t) m].voices.empty() ? "" : ms[(size_t) m].voices[(size_t) v].name.substring (0, 12).toRawUTF8(), t, t2, t8, lv, cpu);
+        }
     return 0;
 }
 
@@ -350,7 +445,8 @@ int checkLevels()
     int bad = 0, checked = 0;
     auto check = [&] (NodeType t, const juce::String& what, Node& n)
     {
-        const bool bass = t == NodeType::BassDrive || (dynamic_cast<CabBlock*> (&n) != nullptr && dynamic_cast<CabBlock&> (n).cab().bass);
+        const bool bass = t == NodeType::BassDrive || (dynamic_cast<CabBlock*> (&n) != nullptr && dynamic_cast<CabBlock&> (n).cab().bass)
+                       || (dynamic_cast<AmpBlock*> (&n) != nullptr && dynamic_cast<AmpBlock&> (n).isBassModel());
         const auto lv = through (n, bass ? bassSig : sig, sr);
         const double gain = lv.rmsDb - (bass ? bassIn : in).rmsDb;
         double lo = -2.0, hi = 3.0;   // effects sit at level
@@ -395,6 +491,14 @@ int checkLevels()
                     b->set (CabBlock::pCab, (float) cab); b->set (CabBlock::pMic, (float) mic);
                     check (t, CabBlock::cabs()[(size_t) cab].name + " / " + CabBlock::mics()[(size_t) mic].name, *n);
                 }
+        if (t == NodeType::Amp)
+            for (int m = 0; m < (int) AmpBlock::models().size(); ++m)
+                for (int v = 0; v < juce::jmax (1, (int) AmpBlock::models()[(size_t) m].voices.size()); ++v)
+                {
+                    AmpBlock a;
+                    a.set (AmpBlock::pModel, (float) m); a.onChoiceChanged (AmpBlock::pModel); a.set (AmpBlock::pVoice, (float) v);
+                    check (t, AmpBlock::models()[(size_t) m].name + " / " + a.formatValue (AmpBlock::pVoice), a);
+                }
         const auto& fm = fxModelsFor (t);
         for (int m = 1; m < (int) fm.size(); ++m)
         {
@@ -405,4 +509,169 @@ int checkLevels()
     }
     std::printf ("    %d blocks, models and cabinets measured\n", checked);
     return bad;
+}
+
+namespace
+{
+/** Renders a signal through a fresh copy of a node's settings and keeps what comes out (both channels). */
+std::vector<float> render (Engine& e, NodeType t, const std::vector<float>& values, const std::vector<float>& sig, double sr)
+{
+    auto n = e.createNode (t);
+    auto* b = dynamic_cast<Block*> (n.get());
+    for (int k = 0; k < b->numParams(); ++k) b->set (k, values[(size_t) k]);
+    const int block = 128;
+    n->prepare (sr, block);
+    juce::AudioBuffer<float> buf (2, block);
+    std::vector<float> out;
+    out.reserve (sig.size() * 2);
+    for (size_t off = 0; off + (size_t) block <= sig.size(); off += (size_t) block)
+    {
+        for (int ch = 0; ch < 2; ++ch) buf.copyFrom (ch, 0, sig.data() + off, block);
+        n->process (buf, block);
+        for (int i = 0; i < block; ++i) { out.push_back (buf.getSample (0, i)); out.push_back (buf.getSample (1, i)); }
+    }
+    return out;
+}
+
+double differenceDb (const std::vector<float>& a, const std::vector<float>& b)
+{
+    double d = 0, s = 0;
+    for (size_t i = 0; i < a.size(); ++i) { d += ((double) a[i] - b[i]) * ((double) a[i] - b[i]); s += (double) a[i] * a[i] + (double) b[i] * b[i]; }
+    return 10.0 * std::log10 (juce::jmax (1.0e-20, d) / juce::jmax (1.0e-20, s * 0.5));
+}
+}
+
+/** Every knob a panel shows must change the sound: for every block, every model, and (on the
+    Studio model) every setting of each selector, each visible knob is turned from one end to the
+    other and the outputs compared. Returns the number that made no difference. */
+int auditKnobs (bool verbose)
+{
+    const double sr = 48000.0;
+    // half a second of near-silence (so swells and gates arm), a strum that dies away over its last
+    // second, then 1.5 s for the tails, all over a faint hiss for the gates and expanders to act on
+    std::vector<float> sig ((size_t) (sr * 0.5), 0.0f);
+    {
+        auto strum = makeStrum (sr, 2.5);
+        const size_t fade = (size_t) sr;
+        for (size_t i = 0; i < fade; ++i) strum[strum.size() - fade + i] *= std::pow (0.001f, (float) i / (float) fade);
+        sig.insert (sig.end(), strum.begin(), strum.end());
+        sig.resize (sig.size() + (size_t) (sr * 1.5), 0.0f);
+        juce::Random rnd (7);
+        for (auto& x : sig) x += 0.0003f * (rnd.nextFloat() - 0.5f);
+    }
+    auto loud = sig;
+    for (auto& x : loud) x *= 6.0f;    // +15.5 dB: where limiters and compressors work hard
+
+    // a voice for the vocal tools: a slightly flat sung line (a buzzy tone with vibrato) with "s"
+    // sounds between the notes
+    std::vector<float> voiceSig (sig.size(), 0.0f);
+    {
+        juce::Random rnd (3);
+        const float notes[] { 57.6f, 59.7f, 61.3f, 62.8f, 64.6f, 62.2f };
+        double ph = 0;
+        for (size_t i = 0; i < voiceSig.size(); ++i)
+        {
+            const double t = (double) i / sr;
+            const int k = (int) (t / 0.5) % 6;
+            const double within = std::fmod (t, 0.5);
+            const double hz = 440.0 * std::pow (2.0, (notes[k] - 69.0) / 12.0) * (1.0 + 0.004 * std::sin (6.0 * juce::MathConstants<double>::twoPi * t));
+            ph += hz / sr;
+            float v = 0;
+            for (int h = 1; h <= 8; ++h) v += (float) std::sin (juce::MathConstants<double>::twoPi * ph * h) / (float) h;
+            v *= 0.12f * (within < 0.42 ? 1.0f : 0.0f);
+            if (within >= 0.42) v = 0.1f * (rnd.nextFloat() - 0.5f);   // the "s"
+            voiceSig[i] = v;
+        }
+    }
+    auto loudVoice = voiceSig;
+    for (auto& x : loudVoice) x *= 4.0f;
+    Engine e;
+    e.prepare (sr, 128);
+    int dead = 0, checked = 0;
+    for (auto t : allBuiltIns())
+    {
+        if (t == NodeType::Tuner) continue;
+        auto probeNode = e.createNode (t);
+        auto* probe = dynamic_cast<Block*> (probeNode.get());
+        if (probe == nullptr) continue;
+        auto* pedal = dynamic_cast<PedalBlock*> (probe);
+        const bool amp = t == NodeType::Amp;
+        const int modelParam = pedal != nullptr ? (int) PedalBlock::pModel : amp ? (int) AmpBlock::pModel : probe->getModelParam();
+        const int numModels = pedal != nullptr ? (int) pedal->models().size() : amp ? (int) AmpBlock::models().size() : (int) fxModelsFor (t).size();
+
+        struct Setup { juce::String label; std::vector<float> values; std::vector<int> panel; };
+        std::vector<Setup> setups;
+        auto snapshot = [&] (Block& b, const juce::String& label)
+        {
+            Setup s; s.label = label;
+            for (int k = 0; k < b.numParams(); ++k) s.values.push_back (b.getBase (k));
+            s.panel = b.panelOrder();
+            if (s.panel.empty()) for (int k = 0; k < b.numParams(); ++k) s.panel.push_back (k);
+            setups.push_back (std::move (s));
+        };
+        for (int m = 0; m < juce::jmax (1, numModels); ++m)
+        {
+            auto n = e.createNode (t); auto& b = dynamic_cast<Block&> (*n);
+            if (modelParam >= 0 && numModels > 0) { b.set (modelParam, (float) m); b.onChoiceChanged (modelParam); }
+            const juce::String name = numModels > 0 ? (pedal != nullptr ? pedal->models()[(size_t) m].name
+                                                       : amp ? AmpBlock::models()[(size_t) m].name : fxModelsFor (t)[(size_t) m].name) : juce::String ("default");
+            snapshot (b, name);
+            if (m != 0) continue;
+            // the studio model: each selector setting changes which knobs matter
+            for (int c = 0; c < b.numParams(); ++c)
+            {
+                const auto& sp = b.getSpecs()[(size_t) c];
+                if (! sp.isChoice() || c == modelParam || sp.choices.size() > 8) continue;
+                for (int v = 1; v < sp.choices.size(); ++v)
+                {
+                    auto n2 = e.createNode (t); auto& b2 = dynamic_cast<Block&> (*n2);
+                    b2.set (c, (float) v); b2.onChoiceChanged (c);
+                    snapshot (b2, name + ", " + sp.name + " " + sp.choices[v]);
+                }
+            }
+        }
+        for (auto& s : setups)
+        {
+            for (int k : s.panel)
+            {
+                if (k == modelParam) continue;
+                // what can't be heard from one block alone: a key from elsewhere, an auto-off that waits for the pedal to stop
+                const auto id = probe->getSpecs()[(size_t) k].id;
+                if ((t == NodeType::Gate && (id == "key" || id == "view" || id == "listen")) || (t == NodeType::Wah && id == "auto")) continue;
+                const auto& sp = probe->getSpecs()[(size_t) k];
+                auto lo = s.values, hi = s.values;
+                if (sp.isChoice() || sp.toggle) { lo[(size_t) k] = 0; hi[(size_t) k] = sp.isChoice() ? (float) (sp.id == "key" ? 3 : sp.choices.size() - 1) : 1.0f; }
+                else { lo[(size_t) k] = sp.fromProportion (0.1f); hi[(size_t) k] = sp.fromProportion (0.9f); }
+                // some knobs only act on what another sets (an EQ band's frequency at 0 dB, the gate's
+                // key with no other input in the test): those are given a setting where they act
+                auto useful = [&] (std::vector<float>& v)
+                {
+                    if (t == NodeType::Eq)
+                        for (auto id : { "low", "mid", "high" }) { const int g = probe->indexOf (id); if (g >= 0 && g != k) v[(size_t) g] = 6.0f; }
+                    if (pedal != nullptr && k != PedalBlock::pMid) v[(size_t) PedalBlock::pMid] = juce::jmax (v[(size_t) PedalBlock::pMid], 8.0f);
+                    if (t == NodeType::Harmonizer && k != HarmonizerBlock::pVoice2) v[(size_t) HarmonizerBlock::pVoice2] = 2.0f;
+                    if (t == NodeType::AcousticPre)
+                    {
+                        if (k != AcousticPreBlock::pNotchDepth) v[(size_t) AcousticPreBlock::pNotchDepth] = -12.0f;
+                        if (k != AcousticPreBlock::pMid) v[(size_t) AcousticPreBlock::pMid] = -6.0f;
+                    }
+                };
+                useful (lo); useful (hi);
+                const bool vocal = t == NodeType::PitchCorrect || t == NodeType::Harmonizer || t == NodeType::DeEsser || t == NodeType::VoiceStrip;
+                const auto& s1 = vocal ? voiceSig : sig;
+                const auto& s2 = vocal ? loudVoice : loud;
+                const double d = juce::jmax (differenceDb (render (e, t, lo, s1, sr), render (e, t, hi, s1, sr)),
+                                             differenceDb (render (e, t, lo, s2, sr), render (e, t, hi, s2, sr)));
+                ++checked;
+                // (a gate's release only touches the quiet ends of notes, so anything audible counts)
+                const bool isDead = d < -90.0;
+                if (isDead) ++dead;
+                if (isDead || verbose)
+                    std::printf ("%s %-10s %-44s %-16s %6.1f dB\n", isDead ? "DEAD" : "    ", builtInShortName (t).toRawUTF8(),
+                                 s.label.substring (0, 44).toRawUTF8(), probe->getParamName (k).substring (0, 16).toRawUTF8(), d);
+            }
+        }
+    }
+    std::printf ("\n%d of %d knobs made no difference\n", dead, checked);
+    return dead;
 }

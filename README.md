@@ -20,6 +20,31 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 ![A randomised rig: three NAM amps with their cabs in parallel, then delay and shimmer reverb](docs/screenshot-random.png)
 
+## New in 0.14
+
+**A built-in amp.** 26 amps in one Amp block, each modelled as its circuit is built: triode preamp stages that clip, compress and bias-shift as they're pushed, each amp's real passive tone stack (the Fender / Marshall / Vox "FMV" stack with that amp's parts, so the knobs interact as they do on the amp), and a push-pull power amp with negative feedback, Presence and Depth working through it, sag and its output transformer. 4x oversampled, about 1.5-2% of one core.
+
+- **Clean:** Fender '65 Twin Reverb, '65 Deluxe Reverb, Vox AC30 Top Boost, Roland JC-120, Dumble Overdrive Special
+- **Crunch:** Fender '59 Bassman, Marshall JTM45, 1959 Super Lead "Plexi", JCM800 2203, Hiwatt DR103, Orange Rockerverb 50
+- **High gain:** Friedman BE-100, Mesa/Boogie Mark IIC+ and Dual Rectifier, Soldano SLO-100, Peavey 5150, EVH 5150III, Bogner Uberschall, ENGL Powerball, Diezel VH4
+- **Bass:** Ampeg SVT-CL and B-15N, Gallien-Krueger 800RB, Orange AD200
+- **Studio:** every control (Gain, Bass, Mid, Treble, Presence, Depth, Master, Bright, Tight, Sag) with a choice of tone stack
+
+Each amp shows only its own knobs, with its own names (Pre-amp, Lead Drive, Resonance, Cut...) and its switches (Bright, Jumped inputs, Rectifier Raw / Vintage / Modern, the IIC+'s graphic EQ V, the SVT's Ultra Lo / Hi). Every amp and switch is level-matched at its stock settings; 33 presets. With no NAM captures in your library the starting rigs use it, so Rigsmith sounds like a rig the first time you play.
+
+**Inputs and outputs per split path.** Each path of a split has an **In** and an **Out** picker. In: the signal arriving at the split, or any input of your audio interface (Input 1-8, or a stereo pair). Out: back into the rig, or straight to Out 3/4, 5/6 or 7/8 (or both). So one Rigsmith can run a guitar and a bass, or an acoustic and a vocal mic, side by side. The standalone app now offers up to 8 inputs and 8 outputs (switch them on in Audio/MIDI Settings); the plug-in has an optional second stereo input and three optional extra stereo outputs for separate DAW tracks.
+
+**Acoustic and vocal blocks** (in the new Acoustic & Vocal group):
+
+- **Acoustic Sim:** your electric as a dreadnought, jumbo, small-body, parlour, nylon-string, 12-string (with the octave strings) or resonator
+- **Acoustic Preamp / DI:** for an acoustic's own pickup: EQ, a feedback notch, a body image for piezos, a compressor and polarity. Models: LR Baggs Venue DI, Fishman Platinum Pro EQ and Aura Spectrum DI, Grace Design Felix, Radial PZ-Pre
+- **Vocal Strip:** mic gain, low cut, tube warmth, one-knob compressor, de-esser, body / presence / air, gate. Models: Neve 1073, API 512c + 550A, SSL 4000 E, Avalon VT-737sp, UA 610
+- **De-Esser**, **Pitch Correct** (key and scale; slow and natural to the instant robot) and **Harmonizer** (one or two voices a 3rd, 4th, 5th, 6th or octave away, in key)
+
+**New starting rigs:** Acoustic Rig, Electric to Acoustic, Vocal Rig, Guitar + Vocal (2 inputs), Guitar + Bass (2 inputs).
+
+**Fixed.** The delay's Low Cut and High Cut now shape every repeat (they only acted on the feedback, so at low Feedback they did nearly nothing); Spread is now the Ping-Pong width (it did nothing in Ping-Pong) and is hidden in the modes where it can't do anything. Harmonic tremolo now pans in stereo. The pitch block hides Semitones and Detune in modes that don't use them. A new test turns every knob a panel shows, on every block, model and mode (1,300 of them), and checks each one changes the sound.
+
 ## New in 0.13
 
 **A new look.** Near-black, one accent colour, and gear that looks like what it is: stompboxes are tall with their knobs, name and footswitch; amp heads are wide with a grille; cabinets show their speakers. Inter, IBM Plex Mono and Michroma are built in, so it looks the same on every machine. Pick the accent in the menu (Amber, Ember, Gold, Ice, Mint, Violet, Silver).

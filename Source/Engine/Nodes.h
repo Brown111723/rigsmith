@@ -19,7 +19,9 @@ enum class NodeType
     // v0.12
     Distortion,
     // v0.13: a cabinet + microphone without an IR, and the bass preamps / drives
-    Cab, BassDrive
+    Cab, BassDrive,
+    // v0.14: a built-in tube amp; acoustic guitar and vocal tools
+    Amp, AcousticBody, AcousticPre, VoiceStrip, DeEsser, PitchCorrect, Harmonizer
 };
 
 juce::String nodeTypeToString (NodeType);
@@ -65,6 +67,25 @@ struct RigKey
     static inline thread_local const float* data = nullptr;
     static inline thread_local int length = 0;
 };
+
+/** The audio interface's own channels during this callback, for split paths that take their own
+    input (a second guitar, a bass, a mic) or send to their own output (a DAW's extra outs).
+    Set by the Engine around each chunk; audio thread only. */
+struct RigIo
+{
+    static constexpr int maxChannels = 8;
+    static inline thread_local const float* const* inputs = nullptr;   // every input channel, untouched
+    static inline thread_local int numInputs = 0;
+    static inline thread_local float* const* outputs = nullptr;        // the extra outputs: [0] is "Out 3", [1] "Out 4"...
+    static inline thread_local int numOutputs = 0;
+    static inline thread_local int offset = 0;                         // where the current chunk starts
+};
+
+/** A split path's input: 0 the signal arriving at the split; 1..8 one input channel (mono);
+    9..12 a stereo pair (1+2, 3+4, 5+6, 7+8). */
+juce::StringArray pathInputNames();
+/** A split path's output: 0 back into the rig; 1..3 only to Out 3/4, 5/6, 7/8; 4..6 both. */
+juce::StringArray pathOutputNames();
 
 //==============================================================================
 /** Anything that processes a stereo buffer in place. Owned by a Chain or Split.
@@ -251,7 +272,7 @@ float pedalTrimDb (NodeType, int model, int voice);
 /** How a block's display draws what its knobs are doing. */
 enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope, Tuner, Gate, Modulator, Cab };
 
-struct DelayTap { float timeSec, gain; int side; };   // side: -1 left, 0 centre, 1 right
+struct DelayTap { float timeSec, gain; float side; };   // side: -1 left, 0 centre, 1 right
 
 class Block : public Node
 {
@@ -287,6 +308,8 @@ public:
     virtual juce::String getParamName (int i) const;
     /** A choice's options right now (a model's own switch positions). */
     virtual juce::StringArray getChoiceNames (int i) const { return specs[(size_t) i].choices; }
+    /** Headings to show in a long selector's list: (first choice index, heading). */
+    virtual std::vector<std::pair<int, juce::String>> getChoiceSections (int) const { return {}; }
     /** Message thread: a choice was picked on the panel (a wah model sets its sweep, say). */
     virtual void onChoiceChanged (int param);
 
@@ -368,6 +391,7 @@ public:
         std::atomic<float> level { 1.0f };   // 0..1 (shown as %)
         std::atomic<float> pan { 0.0f };     // -1..1
         std::atomic<bool> mute { false }, phase { false };
+        std::atomic<int> input { 0 }, output { 0 };   // see pathInputNames / pathOutputNames
 
         // audio-thread state
         juce::AudioBuffer<float> buffer;

@@ -120,7 +120,8 @@ void showKnobMenu (Engine&, Block&, const juce::String& target, int param, juce:
 class ChoiceControl : public juce::Component
 {
 public:
-    ChoiceControl (const juce::String& name, const juce::StringArray& choices, juce::Colour colour);
+    ChoiceControl (const juce::String& name, const juce::StringArray& choices, juce::Colour colour,
+                   const std::vector<std::pair<int, juce::String>>& sections = {});
     void setSelected (int index);
     std::function<void (int)> onChange;
     void resized() override;

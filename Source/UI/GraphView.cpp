@@ -109,6 +109,7 @@ BlockCard::Form BlockCard::form() const
     }
     if (auto* ir = dynamic_cast<const IrBlock*> (&node)) return ir->getGear() == Gear::Space ? Form::Pedal : Form::Cab;
     if (node.getType() == NodeType::Cab) return Form::Cab;
+    if (node.getType() == NodeType::Amp) return Form::Head;
     return Form::Pedal;
 }
 
@@ -335,7 +336,10 @@ static juce::String shortLabel (juce::String name)
         { "Presence", "PRES" }, { "Intensity", "INTENS" }, { "Semitones", "SEMI" }, { "Midrange", "MID" }, { "Distortion", "DIST" }, { "Auto makeup", "AUTO" },
         { "Mic Position", "MIC" }, { "Mic Distance", "DIST" }, { "Predelay", "PRE" }, { "Pre-delay", "PRE" }, { "Resonance", "RES" }, { "Hysteresis", "HYST" },
         { "Lookahead", "LOOK" }, { "Crossover", "XOVER" }, { "Color Low", "LOW" }, { "Color High", "HIGH" }, { "Treble", "TREBLE" }, { "LFO Rate", "RATE" },
-        { "Bass Freq", "LO F" }, { "Treble Freq", "HI F" }, { "Sustain", "SUST" }, { "Attack", "ATTACK" }, { "Release", "REL" } };
+        { "Bass Freq", "LO F" }, { "Treble Freq", "HI F" }, { "Sustain", "SUST" }, { "Attack", "ATTACK" }, { "Release", "REL" },
+        { "Voice 1 Level", "VOICE 1" }, { "Voice 2 Level", "VOICE 2" }, { "Humanize", "HUMAN" }, { "Transpose", "TRANS" }, { "Body Resonance", "BODY" },
+        { "Top Sparkle", "TOP" }, { "Notch Depth", "NOTCH" }, { "Body Image", "IMAGE" }, { "Mic Gain", "GAIN" }, { "Pre-amp", "PRE-AMP" },
+        { "Lead Drive", "DRIVE" }, { "Normal Vol", "VOLUME" }, { "Post Gain", "POST" }, { "Pre Gain", "GAIN" }, { "Lead Gain", "GAIN" } };
     for (auto& [full, brief] : known) if (name.equalsIgnoreCase (full)) return brief;
     name = name.upToFirstOccurrenceOf (" (", false, false).toUpperCase();
     if (name.length() > 7 && name.containsChar (' ')) name = name.fromLastOccurrenceOf (" ", false, false);
@@ -1298,9 +1302,30 @@ void SplitView::paint (juce::Graphics& g)
         const float lv = b.level.load();
         const auto c = branchColour (i);
         const float py = (float) pills[i]->getBounds().getCentreY();
-        drawCurve (g, from, { (float) pills[i]->getX(), py }, c, lv, muted);
+        const int in = b.input.load(), out = b.output.load();
+        // a path with its own input or output: a tag where the wire would have been
+        auto tag = [&g, c, muted] (juce::Rectangle<float> r, const juce::String& text)
+        {
+            g.setColour (juce::Colour (0xff0c0c0e));
+            g.fillRoundedRectangle (r, 3.0f);
+            g.setColour (c.withAlpha (muted ? 0.35f : 0.9f));
+            g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+            g.setFont (mono (9.5f));
+            g.drawText (text, r, juce::Justification::centred);
+        };
+        if (in == 0) drawCurve (g, from, { (float) pills[i]->getX(), py }, c, lv, muted);
+        else
+        {
+            const auto label = pathInputNames()[juce::jlimit (0, 12, in)].replace ("Inputs ", "IN ").replace ("Input ", "IN ");
+            tag ({ (float) pills[i]->getX(), py - 30.0f, (float) pills[i]->getWidth(), 14.0f }, label);
+        }
         drawWire (g, (float) pills[i]->getRight(), (float) rows[i]->getX(), py, c, muted ? 0.0f : lv, false);
-        drawCurve (g, { (float) rows[i]->getRight(), py }, to, c, lv, muted);
+        if (out == 0 || out >= 4) drawCurve (g, { (float) rows[i]->getRight(), py }, to, c, lv, muted);
+        if (out > 0)
+        {
+            const auto label = juce::String ("OUT ") + pathOutputNames()[juce::jlimit (0, 6, out)].fromFirstOccurrenceOf ("Out ", false, false).upToFirstOccurrenceOf (" ", false, false);
+            tag ({ (float) rows[i]->getRight() + 4.0f, py - (out >= 4 ? 22.0f : 7.0f), 50.0f, 14.0f }, label);
+        }
     }
 }
 
@@ -1468,7 +1493,10 @@ juce::uint64 SplitView::signature() const
     mix ((juce::uint64) split.mode.load());
     mix ((juce::uint64) juce::roundToInt (split.xoverLow.load()) * 100000u + (juce::uint64) juce::roundToInt (split.xoverHigh.load()));
     for (auto& b : split.branches)
+    {
         mix ((juce::uint64) juce::roundToInt (b->level.load() * 1000.0f) * 8u + (b->mute.load() ? 1u : 0u) + (b->phase.load() ? 2u : 0u));
+        mix ((juce::uint64) (b->input.load() * 16 + b->output.load()));
+    }
     return h;
 }
 

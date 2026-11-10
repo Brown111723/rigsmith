@@ -1,4 +1,5 @@
 #include "FactoryPresets.h"
+#include "Amp.h"
 
 namespace rig
 {
@@ -6,6 +7,16 @@ namespace
 {
     using V = std::vector<std::pair<juce::String, float>>;
     FactoryPreset fp (const char* name, const char* blurb, V v) { return { name, blurb, std::move (v) }; }
+
+    /** An amp model's index by (part of) its name. */
+    float amp (const char* name)
+    {
+        const auto& ms = AmpBlock::models();
+        for (int i = 0; i < (int) ms.size(); ++i)
+            if (ms[(size_t) i].name.containsIgnoreCase (name)) return (float) i;
+        jassertfalse;
+        return 0.0f;
+    }
 
     std::map<NodeType, std::vector<FactoryPreset>> build()
     {
@@ -325,6 +336,94 @@ namespace
             fp ("Tone Hammer: warm DI", "Flat and round, no grit", { { "model", 8 }, { "voice", 0 }, { "drive", 3 }, { "bass", 5.5f }, { "mid", 5 }, { "midfreq", 500 }, { "treble", 5 }, { "blend", 0 } }),
             fp ("Tone Hammer: AGS on", "The saturated second gain stage", { { "model", 8 }, { "voice", 1 }, { "drive", 5.5f }, { "bass", 5.5f }, { "mid", 6 }, { "midfreq", 650 }, { "treble", 4.5f }, { "blend", 0 } }),
             fp ("Brassmaster: synth bass", "Brassy fuzz against a clean low end", { { "model", 9 }, { "voice", 0 }, { "drive", 7 }, { "tone", 6 }, { "blend", 40 } }),
+        };
+        m[NodeType::Amp] = {
+            fp ("Twin: glassy clean", "Bright on, mids scooped a touch: country, funk, jazz-pop", { { "model", amp ("Twin") }, { "voice", 1 }, { "gain", 4 }, { "treble", 6.5f }, { "mid", 4 }, { "bass", 4 } }),
+            fp ("Twin: warm jazz", "Bright off, treble down, volume low", { { "model", amp ("Twin") }, { "voice", 0 }, { "gain", 3 }, { "treble", 3.5f }, { "mid", 6 }, { "bass", 6 } }),
+            fp ("Deluxe: edge of breakup", "Clean when you play soft, hair when you dig in", { { "model", amp ("Deluxe") }, { "gain", 5.5f }, { "treble", 6 }, { "bass", 4 } }),
+            fp ("Deluxe: cranked", "Volume on 8: Neil Young's little amp roar", { { "model", amp ("Deluxe") }, { "gain", 8 }, { "treble", 5.5f }, { "bass", 4 } }),
+            fp ("AC30: chime", "Top Boost jangle: Rickenbackers, The Byrds", { { "model", amp ("AC30") }, { "voice", 0 }, { "gain", 4 }, { "treble", 7 }, { "bass", 4 }, { "presence", 2 } }),
+            fp ("AC30: Brian May", "Cranked with a treble booster in front", { { "model", amp ("AC30") }, { "voice", 0 }, { "gain", 9 }, { "treble", 6 }, { "bass", 5 }, { "presence", 4 } }),
+            fp ("JC-120: pristine", "Spotless and wide: add the chorus after it", { { "model", amp ("JC-120") }, { "voice", 1 }, { "gain", 4 }, { "treble", 6 }, { "mid", 5 }, { "bass", 5 } }),
+            fp ("ODS: clean", "Fat, sweet and touchy", { { "model", amp ("Overdrive Special") }, { "voice", 0 }, { "gain", 5 }, { "treble", 5 }, { "mid", 6 }, { "bass", 4 } }),
+            fp ("ODS: singing lead", "The overdrive channel: liquid, vocal sustain", { { "model", amp ("Overdrive Special") }, { "voice", 1 }, { "gain", 5 }, { "treble", 5 }, { "mid", 7 }, { "bass", 4 }, { "presence", 4 } }),
+            fp ("Bassman: tweed blues", "Jumped, cranked and saggy", { { "model", amp ("Bassman") }, { "voice", 2 }, { "gain", 7 }, { "treble", 6 }, { "mid", 6 }, { "bass", 3 }, { "presence", 5 } }),
+            fp ("Plexi: classic rock", "Jumped channels, everything up", { { "model", amp ("Plexi") }, { "voice", 2 }, { "gain", 8 }, { "treble", 6 }, { "mid", 8 }, { "bass", 3 }, { "presence", 6 } }),
+            fp ("Plexi: 'Brown sound'", "Cranked, bass low, presence up (add a boost)", { { "model", amp ("Plexi") }, { "voice", 2 }, { "gain", 10 }, { "treble", 6.5f }, { "mid", 7 }, { "bass", 2.5f }, { "presence", 7 } }),
+            fp ("JCM800: rock rhythm", "AC/DC to Guns N' Roses", { { "model", amp ("JCM800") }, { "voice", 0 }, { "gain", 6 }, { "master", 6 }, { "treble", 6 }, { "mid", 6 }, { "bass", 4 }, { "presence", 6 } }),
+            fp ("JCM800: 80s metal", "Gain up, mids forward: put a Tube Screamer before it", { { "model", amp ("JCM800") }, { "voice", 0 }, { "gain", 9 }, { "master", 5 }, { "treble", 6.5f }, { "mid", 7 }, { "bass", 5 }, { "presence", 6.5f } }),
+            fp ("Hiwatt: huge clean", "Loud and clear: Pink Floyd's cleans", { { "model", amp ("DR103") }, { "gain", 4 }, { "treble", 6 }, { "mid", 5 }, { "bass", 5 }, { "presence", 5 }, { "master", 6 } }),
+            fp ("Rockerverb: stoner", "Low-mid fuzz and weight", { { "model", amp ("Rockerverb") }, { "gain", 7.5f }, { "bass", 6.5f }, { "mid", 6.5f }, { "treble", 4.5f }, { "master", 5 } }),
+            fp ("BE-100: modern rock", "Tight and huge", { { "model", amp ("BE-100") }, { "voice", 2 }, { "gain", 6.5f }, { "bass", 5 }, { "mid", 6 }, { "treble", 6 }, { "presence", 5 } }),
+            fp ("IIC+: Puppets", "V scoop, lead drive up", { { "model", amp ("Mark IIC+") }, { "voice", 1 }, { "gain", 7.5f }, { "treble", 7 }, { "bass", 3 }, { "mid", 4 }, { "presence", 5 } }),
+            fp ("IIC+: liquid lead", "Flat EQ, mids up: sustain for days", { { "model", amp ("Mark IIC+") }, { "voice", 0 }, { "gain", 8 }, { "treble", 6 }, { "bass", 3 }, { "mid", 7 }, { "presence", 4.5f } }),
+            fp ("Recto: nu-metal", "Modern mode, mids scooped, tons of sag", { { "model", amp ("Rectifier") }, { "voice", 2 }, { "gain", 7 }, { "bass", 6 }, { "mid", 3.5f }, { "treble", 6.5f }, { "sag", 7 } }),
+            fp ("SLO: 80s lead", "Smooth and vocal", { { "model", amp ("SLO") }, { "gain", 7 }, { "bass", 4 }, { "mid", 7 }, { "treble", 6 }, { "presence", 5 } }),
+            fp ("5150: metalcore", "Pre gain 6 and a Tube Screamer: tight chugs", { { "model", amp ("5150 /") }, { "gain", 6 }, { "bass", 6 }, { "mid", 5 }, { "treble", 6.5f }, { "depth", 6 }, { "presence", 6 } }),
+            fp ("5150III: djent", "Tight, bright and articulate", { { "model", amp ("5150III") }, { "gain", 5.5f }, { "bass", 5 }, { "mid", 6 }, { "treble", 6.5f }, { "depth", 4 }, { "presence", 6 } }),
+            fp ("Uberschall: doom", "Bass up, gain up, slow and heavy", { { "model", amp ("Uberschall") }, { "gain", 8 }, { "bass", 7 }, { "mid", 4 }, { "treble", 5.5f }, { "depth", 6 } }),
+            fp ("Powerball: modern metal", "Scooped and razor-tight", { { "model", amp ("Powerball") }, { "gain", 7 }, { "bass", 5.5f }, { "mid", 4 }, { "treble", 6.5f }, { "depth", 5 } }),
+            fp ("VH4: thick lead", "Mids up, deep on", { { "model", amp ("VH4") }, { "gain", 7 }, { "bass", 5 }, { "mid", 7 }, { "treble", 6 }, { "depth", 6 } }),
+            fp ("Studio: edge of breakup", "Fender stack, low gain, sag up", { { "voice", 1 }, { "gain", 4 }, { "bass", 4.5f }, { "mid", 5 }, { "treble", 6.5f }, { "sag", 7 }, { "tight", 1 } }),
+            fp ("Studio: modern high gain", "Tight, Mesa stack, gain way up", { { "voice", 3 }, { "gain", 8.5f }, { "bass", 5 }, { "mid", 4.5f }, { "treble", 6.5f }, { "tight", 7 }, { "sag", 2 }, { "depth", 6 } }),
+            fp ("Bass: SVT rock", "The fridge's head, pushed", { { "model", amp ("SVT") }, { "voice", 0 }, { "gain", 6.5f }, { "bass", 6 }, { "mid", 6 }, { "treble", 5 } }),
+            fp ("Bass: SVT Ultra Lo", "Scooped and subby", { { "model", amp ("SVT") }, { "voice", 1 }, { "gain", 5 }, { "bass", 6 }, { "mid", 5 }, { "treble", 5.5f } }),
+            fp ("Bass: Motown B-15", "Warm, woody and round", { { "model", amp ("B-15") }, { "gain", 5 }, { "bass", 6.5f }, { "treble", 3.5f } }),
+            fp ("Bass: GK slap", "Contour in, presence up", { { "model", amp ("800RB") }, { "voice", 1 }, { "gain", 5 }, { "bass", 6.5f }, { "mid", 4 }, { "treble", 7 }, { "presence", 7 } }),
+            fp ("Bass: Orange grit", "Pushed until it growls", { { "model", amp ("AD200") }, { "gain", 7 }, { "bass", 6 }, { "mid", 6 }, { "treble", 5 } }),
+        };
+        m[NodeType::AcousticBody] = {
+            fp ("Strummer's dreadnought", "Big, full rhythm acoustic", { { "body", 0 }, { "resonance", 65 }, { "top", 5.5f }, { "width", 45 }, { "mix", 100 } }),
+            fp ("Jumbo boom", "Huge low end for sparse strumming", { { "body", 1 }, { "resonance", 75 }, { "top", 5 }, { "width", 50 }, { "mix", 100 } }),
+            fp ("Fingerstyle OM", "Balanced and clear for picking", { { "body", 2 }, { "resonance", 55 }, { "top", 6 }, { "width", 35 }, { "mix", 100 } }),
+            fp ("Parlour blues", "Small, boxy, mid-forward", { { "body", 3 }, { "resonance", 60 }, { "top", 4.5f }, { "width", 20 }, { "mix", 100 } }),
+            fp ("Nylon string", "Soft classical warmth", { { "body", 4 }, { "resonance", 60 }, { "top", 3 }, { "width", 35 }, { "mix", 100 } }),
+            fp ("12-string jangle", "Octave strings shimmering on top", { { "body", 5 }, { "resonance", 55 }, { "top", 7 }, { "width", 70 }, { "mix", 100 } }),
+            fp ("Resonator slide", "Metallic, honky dobro", { { "body", 6 }, { "resonance", 70 }, { "top", 5 }, { "width", 20 }, { "mix", 100 } }),
+            fp ("Electric + acoustic blend", "Half and half: an electric with acoustic sparkle", { { "body", 0 }, { "resonance", 50 }, { "top", 6 }, { "width", 60 }, { "mix", 50 } }),
+        };
+        m[NodeType::AcousticPre] = {
+            fp ("Natural stage", "Gentle cut of the boom and quack", { { "lowcut", 70 }, { "bass", 0 }, { "mid", -3 }, { "midfreq", 800 }, { "treble", 1 }, { "presence", 1 }, { "notchdepth", 0 }, { "bodyimage", 30 }, { "comp", 2 } }),
+            fp ("Feedback fighter", "Deep notch on the body boom, lows trimmed", { { "lowcut", 100 }, { "bass", -2 }, { "mid", -2 }, { "midfreq", 700 }, { "treble", 1 }, { "notch", 120 }, { "notchdepth", -18 }, { "bodyimage", 10 }, { "comp", 3 } }),
+            fp ("Piezo tamer", "Smooths the harsh quack and adds the body back", { { "lowcut", 60 }, { "bass", 1 }, { "mid", -5 }, { "midfreq", 1300 }, { "treble", -1 }, { "presence", -2 }, { "bodyimage", 70 }, { "comp", 2 } }),
+            fp ("Bright strummer", "Cuts through a band", { { "lowcut", 120 }, { "bass", -3 }, { "mid", -2 }, { "midfreq", 500 }, { "treble", 4 }, { "presence", 3 }, { "bodyimage", 20 }, { "comp", 5 } }),
+            fp ("Studio fingerpicking", "Warm and even, lightly compressed", { { "lowcut", 50 }, { "bass", 1 }, { "mid", 0 }, { "treble", 2 }, { "presence", 1 }, { "bodyimage", 50 }, { "comp", 4 } }),
+            fp ("Upright bass DI", "Round, woody, with the boom notched", { { "lowcut", 35 }, { "bass", 2 }, { "mid", -3 }, { "midfreq", 600 }, { "treble", -2 }, { "notch", 90 }, { "notchdepth", -8 }, { "bodyimage", 40 }, { "comp", 3 } }),
+        };
+        m[NodeType::VoiceStrip] = {
+            fp ("Pop vocal", "Bright, compressed, upfront", { { "lowcut", 100 }, { "warmth", 3 }, { "comp", 6 }, { "deess", 5 }, { "body", -1 }, { "presence", 3 }, { "air", 5 }, { "gate", -70 } }),
+            fp ("Warm ballad", "Tube warmth, gentle comp, body", { { "lowcut", 80 }, { "warmth", 6 }, { "comp", 4 }, { "deess", 3 }, { "body", 2 }, { "presence", 1 }, { "air", 3 }, { "gate", -90 } }),
+            fp ("Rock vocal", "Squashed and edgy, sits on loud guitars", { { "lowcut", 120 }, { "warmth", 5 }, { "comp", 8 }, { "deess", 4 }, { "body", -2 }, { "presence", 5 }, { "air", 3 }, { "gate", -60 } }),
+            fp ("Spoken word / podcast", "Clear and even, room gated", { { "lowcut", 90 }, { "warmth", 2 }, { "comp", 6 }, { "deess", 5 }, { "body", 1 }, { "presence", 2 }, { "air", 2 }, { "gate", -55 } }),
+            fp ("Live stage mic", "Low cut high, feedback-safe, compressed", { { "lowcut", 150 }, { "warmth", 2 }, { "comp", 6 }, { "deess", 4 }, { "body", -3 }, { "presence", 3 }, { "air", 1 }, { "gate", -50 } }),
+            fp ("Vintage radio", "Dark, saturated, narrow", { { "lowcut", 300 }, { "warmth", 10 }, { "comp", 7 }, { "deess", 0 }, { "body", -6 }, { "presence", 6 }, { "air", -12 }, { "gate", -90 } }),
+            fp ("Breathy & airy", "Silky top, light comp", { { "lowcut", 90 }, { "warmth", 4 }, { "comp", 3 }, { "deess", 6 }, { "body", 0 }, { "presence", 1 }, { "air", 8 }, { "gate", -90 } }),
+        };
+        m[NodeType::DeEsser] = {
+            fp ("Gentle", "Just the sharpest 's'", { { "threshold", -26 }, { "freq", 7000 }, { "range", -6 }, { "mode", 0 } }),
+            fp ("Standard", "Most voices", { { "threshold", -32 }, { "freq", 6500 }, { "range", -10 }, { "mode", 0 } }),
+            fp ("Male voice", "Lower sibilance", { { "threshold", -32 }, { "freq", 5000 }, { "range", -10 }, { "mode", 0 } }),
+            fp ("Female voice", "Higher sibilance", { { "threshold", -32 }, { "freq", 8000 }, { "range", -10 }, { "mode", 0 } }),
+            fp ("Heavy", "Strong reduction for harsh mics", { { "threshold", -40 }, { "freq", 6500 }, { "range", -18 }, { "mode", 0 } }),
+            fp ("Wideband", "Ducks the whole voice on an 's'", { { "threshold", -30 }, { "freq", 6500 }, { "range", -6 }, { "mode", 1 } }),
+            fp ("Acoustic string squeak", "Takes the edge off fret squeaks and pick click", { { "threshold", -34 }, { "freq", 4500 }, { "range", -8 }, { "mode", 0 } }),
+        };
+        m[NodeType::PitchCorrect] = {
+            fp ("Natural touch-up", "Slow and humanised: nobody will know", { { "scale", 0 }, { "speed", 120 }, { "humanize", 60 }, { "mix", 100 } }),
+            fp ("Modern pop", "Tight but still human", { { "scale", 1 }, { "speed", 35 }, { "humanize", 30 }, { "mix", 100 } }),
+            fp ("Hard tune (robot)", "Instant snap: the T-Pain / Cher effect", { { "scale", 1 }, { "speed", 0 }, { "humanize", 0 }, { "mix", 100 } }),
+            fp ("Minor key snap", "Fast, in a minor key", { { "scale", 2 }, { "speed", 10 }, { "humanize", 10 }, { "mix", 100 } }),
+            fp ("Chromatic safety net", "Every note allowed, gentle pull to centre", { { "scale", 0 }, { "speed", 80 }, { "humanize", 50 }, { "mix", 100 } }),
+            fp ("Octave down monster", "Corrected and an octave lower", { { "scale", 0 }, { "speed", 20 }, { "humanize", 0 }, { "transpose", -12 }, { "mix", 100 } }),
+        };
+        m[NodeType::Harmonizer] = {
+            fp ("Third above", "The classic harmony part", { { "scale", 1 }, { "voice1", 1 }, { "voice2", 0 }, { "level1", 60 }, { "spread", 40 } }),
+            fp ("Thirds and fifths", "A full three-part chord", { { "scale", 1 }, { "voice1", 1 }, { "voice2", 3 }, { "level1", 55 }, { "level2", 45 }, { "spread", 80 } }),
+            fp ("Third below", "Warm low harmony", { { "scale", 1 }, { "voice1", 6 }, { "voice2", 0 }, { "level1", 60 }, { "spread", 30 } }),
+            fp ("Octaves", "Above and below: huge unison", { { "scale", 0 }, { "voice1", 5 }, { "voice2", 10 }, { "level1", 45 }, { "level2", 50 }, { "spread", 70 } }),
+            fp ("Guitar twin leads", "Thin Lizzy / Iron Maiden thirds (minor key)", { { "scale", 2 }, { "voice1", 1 }, { "voice2", 0 }, { "level1", 80 }, { "spread", 90 }, { "glide", 10 } }),
+            fp ("Sixths", "Sweet, country-ish", { { "scale", 1 }, { "voice1", 4 }, { "voice2", 0 }, { "level1", 55 }, { "spread", 50 } }),
+            fp ("Choir", "Fourth and sixth, wide and soft", { { "scale", 1 }, { "voice1", 2 }, { "voice2", 4 }, { "level1", 40 }, { "level2", 40 }, { "spread", 100 }, { "glide", 60 } }),
         };
         m[NodeType::Ir] = {
             fp ("Mix-ready", "80 Hz - 7.5 kHz: the standard cab cleanup", { { "lowcut", 80 }, { "highcut", 7500 }, { "mix", 100 }, { "level", 0 } }),

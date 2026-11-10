@@ -3,6 +3,8 @@
 #include "Nodes.h"
 #include "Blocks.h"
 #include "Pedals.h"
+#include "Amp.h"
+#include "Voice.h"
 #include "Cab.h"
 #include "NamBlock.h"
 #include "PluginBlock.h"
@@ -43,7 +45,17 @@ public:
 
     //--- Audio -----------------------------------------------------------------
     void prepare (double sampleRate, int maxBlockSize);
-    void process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) noexcept;
+    /** The interface's channels beyond the main stereo pair, for split paths with their own input or output. */
+    struct IoChannels
+    {
+        const float* const* inputs = nullptr; int numInputs = 0;   // every input channel, before anything touches them
+        float* const* outputs = nullptr; int numOutputs = 0;       // Out 3, Out 4, ... (cleared by the caller)
+    };
+    void process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, const IoChannels* io = nullptr) noexcept;
+    /** Peak of each input channel since the last call (for the input pickers' meters). */
+    float takeInputPeak (int channel) noexcept { return juce::isPositiveAndBelow (channel, RigIo::maxChannels) ? inputPeaks[(size_t) channel].exchange (0.0f) : 0.0f; }
+    /** How many input / output channels the last callback had. */
+    std::atomic<int> ioInputs { 2 }, ioOutputs { 2 };
     double getSampleRate() const noexcept { return sampleRate; }
     int getBlockSize() const noexcept { return blockSize; }
     int getLatency() const noexcept;
@@ -337,6 +349,7 @@ private:
     double sampleRate = 48000.0;
     int blockSize = 512;
     std::vector<float> keyBuffer;   // the rig's input, for keyed gates and the modulators
+    std::array<std::atomic<float>, RigIo::maxChannels> inputPeaks {};
     double hostPpq = -1.0;
     bool safeStart = false, firstRun = false;
     juce::String loadHangNotice;
