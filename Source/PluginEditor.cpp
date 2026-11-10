@@ -133,6 +133,8 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
       header (engine), graph (*this), inspector (*this), library (*this), tunerOverlay (engine)
 {
     trace ("editor: start");
+    rig::theme::setAccent (engine.getIntSetting ("accent", 0));
+    lnf.refreshColours();
     setLookAndFeel (&lnf);
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
 
@@ -159,6 +161,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     modPanel.onSelectBlock = [this] (const juce::String& id) { select (id); };
     addChildComponent (ioPanel);
     ioPanel.onResetOvers = [this] { levels.inOvers = levels.outOvers = 0; };
+    showPanelFor ({});
     addAndMakeVisible (library);
     addAndMakeVisible (divider);
     statusLabel.setFont (mono (11.0f));
@@ -196,6 +199,13 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     header.onRandomMenu = [this] { showRigRandomMenu(); };
     header.onLibrary = [this] { setLibraryVisible (! libraryVisible); };
     header.onMod = [this] { setModVisible (! modVisible); };
+    header.onInstrument = [this]
+    {
+        engine.setBass (! engine.isBass());
+        tunerOverlay.syncTuning();
+        showMessage (engine.isBass() ? "Bass: bass tuner, bass cabs and drives first. Starting points > Bass Rig is all built in"
+                                     : "Guitar: guitar tuner, guitar cabs and drives first");
+    };
     header.onFullScreen = [this] { setFullScreen (! isFullScreen()); };
     header.showFullScreenButton = processor.isStandalone();
     header.library.setToggleState (libraryVisible, juce::dontSendNotification);
@@ -454,7 +464,8 @@ void RigsmithEditor::resized()
     library.setVisible (libraryVisible);
     if (libraryVisible) library.setBounds (r.removeFromRight (300));
     const int modH = modPanel.getPreferredHeight();
-    const int ih = juce::jlimit (220, juce::jmax (220, r.getHeight() - 160 - modH), inspectorHeight);
+    // the rig keeps room for a row of gear and the map under it; the panel below gives way first
+    const int ih = juce::jlimit (220, juce::jmax (220, r.getHeight() - 308 - modH), inspectorHeight);
     inspector.setBounds (r.removeFromBottom (ih));
     ioPanel.setBounds (inspector.getBounds());
     modPanel.setBounds (r.removeFromBottom (modH));
@@ -708,7 +719,7 @@ void RigsmithEditor::timerCallback()
     if (tick % 10 == 0) header.setStatus (sr, engine.getBlockSize(), lat, (float) processor.getCpuLoad());
 
     if (tick % 2 == 0)
-        graph.repaint();
+        graph.refreshLive();
 
     if (toast.isNotEmpty() && ! engine.isLearning() && juce::Time::getMillisecondCounter() - toastTime > 5000)
         toast.clear();
@@ -760,8 +771,10 @@ void RigsmithEditor::nodeWillBeDeleted (Node& n)
 //==============================================================================
 void RigsmithEditor::showPanelFor (const juce::String& id)
 {
-    const bool io = id == kInputId || id == kOutputId;
-    if (io) ioPanel.setOutput (id == kOutputId);
+    // nothing selected: the master output, so the bottom of the window is never an empty page
+    const bool io = id == kInputId || id == kOutputId || id.isEmpty();
+    ioPanel.setIdle (id.isEmpty());
+    if (io) ioPanel.setOutput (id != kInputId);
     ioPanel.setVisible (io);
     inspector.setVisible (! io);
 }
@@ -1576,6 +1589,14 @@ void RigsmithEditor::showMainMenu()
         m.addItem (18, "Full screen  (F11)", true, isFullScreen());
     m.addItem (19, "Show library  (L)", true, libraryVisible);
     m.addItem (20, "Tooltips", true, tooltips != nullptr);
+    {
+        juce::PopupMenu colours;
+        const auto& choices = rig::theme::accentChoices();
+        for (int i = 0; i < (int) choices.size(); ++i)
+            colours.addItem (400 + i, choices[(size_t) i].name, true, rig::theme::getAccentIndex() == i);
+        m.addSubMenu ("Accent colour", colours);
+    }
+    m.addItem (28, engine.isBass() ? "Instrument: Bass  (switch to guitar)" : "Instrument: Guitar  (switch to bass)");
     if (const int skipped = engine.getSkippedPlugins().size(); skipped > 0)
         m.addItem (24, "Retry skipped plug-ins (" + juce::String (skipped) + " crashed while being scanned)");
     m.addItem (3, "Output safety limiter", true, engine.limiterOn.load());
@@ -1606,8 +1627,18 @@ void RigsmithEditor::showMainMenu()
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&header.menu), [this] (int r)
     {
         auto learn = [this] (MidiMapping::Target t) { MidiMapping mm; mm.target = t; engine.startLearn (mm); };
+        if (r >= 400 && r < 400 + (int) rig::theme::accentChoices().size())
+        {
+            rig::theme::setAccent (r - 400);
+            engine.setIntSetting ("accent", r - 400);
+            lnf.refreshColours();
+            sendLookAndFeelChange();
+            if (auto* top = getTopLevelComponent()) top->repaint();
+            return;
+        }
         switch (r)
         {
+            case 28: if (header.onInstrument) header.onInstrument(); break;
             case 1:
                #if RIGSMITH_HAS_STANDALONE_HOLDER
                 if (auto* h = juce::StandalonePluginHolder::getInstance()) h->showAudioSettingsDialog();

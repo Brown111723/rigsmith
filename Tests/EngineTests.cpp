@@ -123,6 +123,11 @@ static float runNoise (Engine& e, int blocks, int blockSize, bool* finite, float
     return peak;
 }
 
+int runBench (const juce::File& models);
+int checkLevels();
+int runAudit (const juce::File& models);
+int runCalibrate (const juce::File& models);
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -138,6 +143,12 @@ int main (int argc, char** argv)
    #endif
     const juce::File models (argc > 1 ? argv[1] : "");
     const auto model = models.getChildFile ("wavenet_a1_standard.nam");
+    for (int a = 2; a < argc; ++a)
+    {
+        if (juce::String (argv[a]) == "--bench") return runBench (models);
+        if (juce::String (argv[a]) == "--audit") return runAudit (models);
+        if (juce::String (argv[a]) == "--calibrate") return runCalibrate (models);
+    }
 
     for (double sr : { 48000.0, 44100.0, 96000.0 })
     {
@@ -1675,6 +1686,7 @@ int main (int argc, char** argv)
                 for (int v = 0; v < juce::jmax (1, ms[(size_t) mi].voices.size()); ++v)
                 {
                     std::unique_ptr<PedalBlock> pb (type == NodeType::Overdrive ? (PedalBlock*) new OverdriveBlock() : (PedalBlock*) new DistortionBlock());
+                    pb->calibrated = false;   // as in a rig saved by 0.12: the level it had then
                     pb->set (PedalBlock::pModel, (float) mi);
                     pb->set (PedalBlock::pVoice, (float) v);
                     const float db = levelOf (*pb, 0.2f, 110.0f);
@@ -1687,7 +1699,7 @@ int main (int argc, char** argv)
                     allOk &= std::abs (db) < 3.0f && std::abs (dbMax) < 10.0f && dbMin > -26.0f && dbMin < 6.0f;
                 }
         }
-        CHECK (allOk, "every pedal model makes sound at a sensible level (within a few dB of unity at drive 5)");
+        CHECK (allOk, "pedals in rigs saved by 0.12 keep the level they had (within a few dB of unity at drive 5)");
         DistortionBlock d;
         d.set (PedalBlock::pModel, 1.0f);
         CHECK (d.getParamName (PedalBlock::pDrive) == "Distortion" && d.getParamName (PedalBlock::pTone) == "Filter"
@@ -1798,6 +1810,162 @@ int main (int argc, char** argv)
         CompBlock d;
         d.set (d.getModelParam(), 1.0f);
         CHECK (d.getParamName (d.indexOf ("threshold")) == "Sensitivity", "and names the knobs as the real unit does");
+    }
+
+    std::printf ("--- v0.13: levels, cabinet, bass\n");
+    {
+        CHECK (checkLevels() == 0, "every block, model, pedal voice and cabinet comes out at its target level against a played guitar or bass");
+
+        // the filter watcher took 11 values into room for 8 (it wrote past its end)
+        ChangeWatch w;
+        CHECK (w.changed ({ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }) && ! w.changed ({ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 })
+               && w.changed ({ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13 }) && sizeof (w.last) / sizeof (float) >= 12, "the filter watcher holds every value it's given");
+
+        CabBlock cab;
+        cab.prepare (48000.0, 256);
+        cab.set (CabBlock::pCab, 6.0f);   // 4x12 V30
+        const float mid = cab.responseDb (1000.0);
+        CHECK (cab.responseDb (30.0) < mid - 12.0f && cab.responseDb (12000.0) < mid - 18.0f, "a guitar cab rolls off below its resonance and above the cone's reach");
+        cab.set (CabBlock::pPosition, 0.0f);
+        const float capBright = cab.responseDb (4000.0) - cab.responseDb (400.0);
+        cab.set (CabBlock::pPosition, 100.0f);
+        const float edgeBright = cab.responseDb (4000.0) - cab.responseDb (400.0);
+        CHECK (capBright > edgeBright + 5.0f, "the mic is bright on the dust cap and dark at the cone's edge");
+        cab.set (CabBlock::pPosition, 30.0f);
+        cab.set (CabBlock::pMic, 2.0f);   // ribbon
+        cab.set (CabBlock::pDistance, 0.0f);
+        const float close = cab.responseDb (100.0) - cab.responseDb (1000.0);
+        cab.set (CabBlock::pDistance, 100.0f);
+        CHECK (close > cab.responseDb (100.0) - cab.responseDb (1000.0) + 4.0f, "a ribbon up close gains bass (proximity), and loses it pulled back");
+        CabBlock bassCab;
+        bassCab.set (CabBlock::pCab, (float) CabBlock::firstBassCab());
+        CHECK (bassCab.cab().bass && bassCab.responseDb (55.0) - bassCab.responseDb (500.0) > cab.responseDb (55.0) - cab.responseDb (500.0) + 6.0f,
+               "bass cabs reach an octave lower than guitar cabs");
+        bool cabFinite = true;
+        {
+            juce::AudioBuffer<float> buf (2, 256);
+            cab.set (CabBlock::pRoom, 40.0f);
+            for (int k = 0; k < 40; ++k)
+            {
+                for (int i = 0; i < 256; ++i) { const float x = 0.3f * std::sin ((float) (k * 256 + i) * 0.03f); buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                cab.set (CabBlock::pPosition, (float) (k * 2));   // the mic moving while it plays
+                cab.process (buf, 256);
+                for (int i = 0; i < 256; ++i) cabFinite &= std::isfinite (buf.getSample (0, i)) && std::abs (buf.getSample (0, i)) < 4.0f;
+            }
+        }
+        CHECK (cabFinite, "the cabinet stays stable while the mic is dragged");
+        const auto cabState = cab.toState();
+        CabBlock cab2;
+        cab2.fromState (cabState);
+        CHECK (cab2.getChoice (CabBlock::pCab) == 6 && cab2.getChoice (CabBlock::pMic) == 2 && std::abs (cab2.getBase (CabBlock::pRoom) - 40.0f) < 0.01f,
+               "and saves with the rig");
+
+        // bass drives keep the bottom end under the grit
+        auto toneLevel = [] (PedalBlock& pb, float hz)
+        {
+            pb.prepare (48000.0, 512);
+            juce::AudioBuffer<float> buf (2, 512);
+            double sIn = 0, sOut = 0; int t = 0;
+            for (int blk = 0; blk < 60; ++blk)
+            {
+                for (int i = 0; i < 512; ++i, ++t)
+                {
+                    const float x = 0.1f * std::sin (juce::MathConstants<float>::twoPi * hz * (float) t / 48000.0f);
+                    buf.setSample (0, i, x); buf.setSample (1, i, x);
+                    if (blk >= 20) sIn += x * x;
+                }
+                pb.process (buf, 512);
+                if (blk >= 20) for (int i = 0; i < 512; ++i) sOut += buf.getSample (0, i) * buf.getSample (0, i);
+            }
+            return (float) (10.0 * std::log10 ((sOut + 1e-20) / (sIn + 1e-20)));
+        };
+        bool lowsKept = true;
+        for (int m = 0; m < (int) PedalBlock::bassModels().size(); ++m)
+        {
+            BassDriveBlock bd;
+            bd.set (PedalBlock::pModel, (float) m); bd.onChoiceChanged (PedalBlock::pModel);
+            const float low = toneLevel (bd, 45.0f);
+            std::printf ("    %-26s 45 Hz: %+5.1f dB\n", PedalBlock::bassModels()[(size_t) m].name.toRawUTF8(), low);
+            lowsKept &= low > -6.0f && low < 12.0f;
+        }
+        CHECK (lowsKept, "every bass drive passes a low E's fundamental at a solid level");
+        OverdriveBlock ts;
+        CHECK (toneLevel (ts, 45.0f) < -8.0f, "(a Tube Screamer, by contrast, thins it out)");
+        BassDriveBlock b3k;
+        b3k.set (PedalBlock::pModel, 1.0f); b3k.onChoiceChanged (PedalBlock::pModel);
+        CHECK (b3k.getParamName (PedalBlock::pVoice) == "Grunt" && b3k.getChoiceNames (PedalBlock::pVoice).size() == 3
+               && b3k.getBase (PedalBlock::pBlend) > 20.0f, "a bass drive has its own switch and starts with clean blend");
+
+        // the bass rigs are all built in and make sound straight away
+        Engine e;
+        e.prepare (48000.0, 256);
+        const int wasInstrument = e.getIntSetting ("instrument", 0), wasTuning = e.getIntSetting ("tunerTuning", 0);
+        bool rigsOk = true;
+        for (int rig = 3; rig <= 4; ++rig)
+        {
+            e.loadFactory (rig);
+            juce::AudioBuffer<float> buf (2, 256); juce::MidiBuffer midi;
+            double out = 0; bool finite = true;
+            for (int k = 0; k < 200; ++k)
+            {
+                for (int i = 0; i < 256; ++i) { const float x = 0.2f * std::sin ((float) (k * 256 + i) * juce::MathConstants<float>::twoPi * 55.0f / 48000.0f); buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                e.process (buf, midi);
+                for (int i = 0; i < 256; ++i) { finite &= std::isfinite (buf.getSample (0, i)); if (k > 100) out += buf.getSample (0, i) * buf.getSample (0, i); }
+            }
+            const double db = 10.0 * std::log10 (out / (99.0 * 256.0) + 1e-20) - 10.0 * std::log10 (0.02);
+            std::printf ("    %-16s A1 through it: %+5.1f dB\n", Engine::getFactoryNames()[rig].toRawUTF8(), db);
+            rigsOk &= finite && db > -9.0 && db < 9.0 && e.sceneNames[1] == "Grit";
+            e.setScene (2);   // Fuzz
+            for (int k = 0; k < 50; ++k) { buf.clear(); e.process (buf, midi); for (int i = 0; i < 256; ++i) finite &= std::isfinite (buf.getSample (0, i)); }
+            rigsOk &= finite;
+        }
+        CHECK (rigsOk, "Bass Rig and Bass Bi-Amp Rig load, play at a sensible level and have their scenes");
+
+        e.setBass (true);
+        auto bassNode = e.createNode (NodeType::Cab);
+        const bool bassTuner = PolyTuner::tunings()[(size_t) e.getIntSetting ("tunerTuning", 0)].name.startsWith ("Bass");
+        e.setBass (false);
+        auto guitarNode = e.createNode (NodeType::Cab);
+        CHECK (bassTuner && dynamic_cast<CabBlock&> (*bassNode).cab().bass && ! dynamic_cast<CabBlock&> (*guitarNode).cab().bass
+               && PolyTuner::tunings()[(size_t) e.getIntSetting ("tunerTuning", 0)].name.startsWith ("Standard"),
+               "Bass mode: the tuner and new cabinets follow the instrument, and back");
+        e.setIntSetting ("instrument", wasInstrument);
+        e.setIntSetting ("tunerTuning", wasTuning);
+
+        // a 5-string bass, strummed: B0 is 31 Hz
+        int five = 0;
+        for (int i = 0; i < (int) PolyTuner::tunings().size(); ++i) if (PolyTuner::tunings()[(size_t) i].name.startsWith ("5-string")) five = i;
+        PolyTuner pt;
+        pt.prepare (48000.0);
+        pt.tuning = five;
+        const auto& midi = PolyTuner::tunings()[(size_t) five].midi;
+        const std::vector<float> detune { 6.0f, -8.0f, 0.0f, 4.0f, -5.0f };
+        std::vector<float> buf (480);
+        for (int b = 0; b < 160; ++b)
+        {
+            for (int i = 0; i < 480; ++i)
+            {
+                const float t = (float) (b * 480 + i) / 48000.0f;
+                float x = 0.0f;
+                for (size_t s = 0; s < midi.size(); ++s)
+                {
+                    const float f = 440.0f * std::pow (2.0f, ((float) midi[s] - 69.0f + detune[s] / 100.0f) / 12.0f);
+                    for (int h = 1; h <= 6; ++h)
+                        x += 0.05f / (float) h * std::exp (-t * 1.0f) * std::sin (juce::MathConstants<float>::twoPi * f * (float) h * t + (float) ((int) s * 7 + h));
+                }
+                buf[(size_t) i] = x;
+            }
+            pt.push (buf.data(), 480);
+        }
+        const auto r = pt.analyse();
+        float worst = 0.0f; bool heard = r.strings.size() == 5;
+        for (size_t s = 0; s < r.strings.size(); ++s)
+        {
+            std::printf ("    %-3s heard %d  %+6.2f cents (true %+5.1f)\n", r.strings[s].note.toRawUTF8(), (int) r.strings[s].heard, r.strings[s].cents, detune[s]);
+            heard &= r.strings[s].heard;
+            worst = juce::jmax (worst, std::abs (r.strings[s].cents - detune[s]));
+        }
+        CHECK (heard && worst < 3.0f, "poly tuner: a strummed 5-string bass, every string within 3 cents");
     }
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);

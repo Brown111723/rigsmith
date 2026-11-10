@@ -147,11 +147,14 @@ private:
 /** Coefficients are only recomputed when a watched value actually changes. */
 struct ChangeWatch
 {
-    float last[8] { -1e9f, -1e9f, -1e9f, -1e9f, -1e9f, -1e9f, -1e9f, -1e9f };
+    static constexpr int capacity = 16;
+    float last[capacity];
+    ChangeWatch() noexcept { invalidate(); }
     bool changed (std::initializer_list<float> v) noexcept
     {
+        jassert ((int) v.size() <= capacity);
         bool c = false; int i = 0;
-        for (auto x : v) { if (last[i] != x) { last[i] = x; c = true; } ++i; }
+        for (auto x : v) { if (i >= capacity) break; if (last[i] != x) { last[i] = x; c = true; } ++i; }
         return c;
     }
     void invalidate() noexcept { for (auto& l : last) l = -1e9f; }

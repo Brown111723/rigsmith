@@ -46,6 +46,8 @@ struct PedalCircuit
     float cleanDrop = 0.0f;       // Klon-style: a clean path that fades as the gain comes up (0..1)
     int eqStyle = 0;              // ThreeBand: 0 parametric mid (MT-2), 1 contour cut (Shredmaster), 2 bass/treble/presence (BE-OD)
     float makeupDb = 0.0f;        // so models sit at similar levels
+    float lowKeepHz = 0.0f;       // bass pedals: everything below this also passes clean, so the bottom stays solid
+    float lowKeep = 0.0f;         // ...at this gain
 };
 
 /** One modelled pedal: what its knobs are called, and its circuit. */
@@ -57,6 +59,7 @@ struct PedalModel
     juce::String voiceName;                      // its switch, if any ("Mode", "Version", "Clipping")
     juce::StringArray voices;
     PedalCircuit c;
+    std::vector<std::pair<int, float>> stock;    // knob settings the pedal starts with (a bass drive's blend, say)
 };
 
 /** A drive pedal with several famous circuits inside, picked with the Model selector:
@@ -83,7 +86,13 @@ public:
 
     static const std::vector<PedalModel>& overdriveModels();
     static const std::vector<PedalModel>& distortionModels();
-    const std::vector<PedalModel>& models() const { return getType() == NodeType::Distortion ? distortionModels() : overdriveModels(); }
+    static const std::vector<PedalModel>& bassModels();
+    static const std::vector<PedalModel>& modelsFor (NodeType t)
+    {
+        return t == NodeType::Distortion ? distortionModels() : t == NodeType::BassDrive ? bassModels() : overdriveModels();
+    }
+    const std::vector<PedalModel>& models() const { return modelsFor (getType()); }
+    void onChoiceChanged (int param) override;
     const PedalModel& model() const;
     /** The circuit as the switch sets it (a TS9 is a brighter TS808, Turbo RAT has LEDs...). */
     PedalCircuit circuit() const noexcept;
@@ -98,7 +107,7 @@ private:
     double osRate = 96000.0;
     Biquad inHp, clipHp, bw, bw2, eqLow, eqMid, eqHigh, eqPres, preLow, preHigh, fixLow, fixMid;
     bool useClipHp = false, useBw2 = false, usePre = false, useFixLow = false, useFixMid = false;
-    dsp::OnePole toneLp[2], toneLp2[2], muffHp[2];
+    dsp::OnePole toneLp[2], toneLp2[2], muffHp[2], dcBlock[2], lowLp[2];
     float toneMix = 0.5f, gainLin = 1.0f, makeup = 1.0f;
     PedalCircuit cur;
     ChangeWatch watch;
@@ -107,5 +116,8 @@ private:
 
 class OverdriveBlock : public PedalBlock { public: OverdriveBlock() : PedalBlock (NodeType::Overdrive) {} };
 class DistortionBlock : public PedalBlock { public: DistortionBlock() : PedalBlock (NodeType::Distortion) {} };
+/** Bass preamps and drives: the same engine, voiced for bass - the lows stay clean and solid under
+    the grit, and every model starts with some clean blend. */
+class BassDriveBlock : public PedalBlock { public: BassDriveBlock() : PedalBlock (NodeType::BassDrive) {} };
 
 } // namespace rig

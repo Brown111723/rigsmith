@@ -32,13 +32,17 @@ namespace
             fp ("Funk clean", "Tight and percussive for 16th-note strumming", { { "threshold", -28 }, { "ratio", 6 }, { "attack", 5 }, { "release", 80 }, { "knee", 4 }, { "mix", 85 } }),
             fp ("Lead before drive", "More sustain into the amp without more gain", { { "threshold", -26 }, { "ratio", 5 }, { "attack", 15 }, { "release", 250 }, { "knee", 6 }, { "mix", 100 } }),
             fp ("Slap guard", "Only catches the loudest peaks", { { "threshold", -12 }, { "ratio", 6 }, { "attack", 0.5f }, { "release", 60 }, { "knee", 2 }, { "mix", 100 } }),
+            fp ("Bass: even fingers", "Levels out fingerstyle without squashing the note", { { "threshold", -22 }, { "ratio", 4 }, { "attack", 18 }, { "release", 180 }, { "knee", 8 }, { "mix", 100 } }),
+            fp ("Bass: slap", "Fast and firm: catches pops, lets thumbs punch", { { "threshold", -18 }, { "ratio", 8 }, { "attack", 2 }, { "release", 90 }, { "knee", 3 }, { "mix", 100 } }),
+            fp ("Bass: pick rock", "Slow attack keeps the click, long release holds the note", { { "threshold", -26 }, { "ratio", 5 }, { "attack", 30 }, { "release", 300 }, { "knee", 6 }, { "mix", 100 } }),
+            fp ("Bass: parallel", "Crushed and blended under the clean bass", { { "threshold", -38 }, { "ratio", 12 }, { "attack", 5 }, { "release", 150 }, { "knee", 4 }, { "mix", 45 } }),
             fp ("Ambient swell sustain", "Long release for pads into reverb", { { "threshold", -32 }, { "ratio", 6 }, { "attack", 40 }, { "release", 800 }, { "knee", 10 }, { "mix", 100 } }),
         };
         m[NodeType::Limiter] = {
             fp ("Safety", "Catches stray peaks only", { { "drive", 0 }, { "ceiling", -1 }, { "release", 80 } }),
             fp ("Loud and even", "Pushes the level up 6 dB, flattens peaks", { { "drive", 6 }, { "ceiling", -1 }, { "release", 50 } }),
             fp ("Brickwall", "Hard ceiling for live rigs", { { "drive", 3 }, { "ceiling", -3 }, { "release", 30 } }),
-            fp ("Smash", "Obvious, pumping limiting as an effect", { { "drive", 14 }, { "ceiling", -2 }, { "release", 15 } }),
+            fp ("Smash", "Obvious, pumping limiting as an effect", { { "drive", 14 }, { "ceiling", -8 }, { "release", 15 } }),
             fp ("Transparent glue", "Slow release, a dB or two of catch", { { "drive", 2 }, { "ceiling", -0.5f }, { "release", 250 } }),
         };
         m[NodeType::Expander] = {
@@ -72,7 +76,7 @@ namespace
             fp ("TS9 Texas lead", "SRV: drive low, tone up, into a loud clean amp", { { "model", 0 }, { "voice", 1 }, { "drive", 3 }, { "tone", 6.5f }, { "level", 4 } }),
             fp ("Klon: clean boost", "Gain low, output up: the 'always on' Klon", { { "model", 1 }, { "drive", 1.5f }, { "tone", 5.5f }, { "level", 6 } }),
             fp ("Klon: edge of breakup", "Gain at 10 o'clock", { { "model", 1 }, { "drive", 4 }, { "tone", 6 }, { "level", 3 } }),
-            fp ("Klon: lead", "Gain up, treble up", { { "model", 1 }, { "drive", 8 }, { "tone", 6.5f }, { "level", 0 } }),
+            fp ("Klon: lead", "Gain up, treble up", { { "model", 1 }, { "drive", 8 }, { "tone", 6.5f }, { "level", -4 } }),
             fp ("SD-1 into a Marshall", "Zakk / EVH: drive low, level up", { { "model", 2 }, { "drive", 2.5f }, { "tone", 6 }, { "level", 6 } }),
             fp ("SD-1 crunch", "Rhythm crunch on a clean amp", { { "model", 2 }, { "drive", 6.5f }, { "tone", 5.5f } }),
             fp ("OCD LP: classic rock", "Drive at noon, vintage voice", { { "model", 3 }, { "voice", 0 }, { "drive", 5 }, { "tone", 5 } }),
@@ -129,7 +133,7 @@ namespace
             fp ("Mid push", "More presence in the mix", { { "gain", 4 }, { "tight", 120 }, { "bright", 1 } }),
             fp ("Fat boost", "Full-range level up", { { "gain", 8 }, { "tight", 20 }, { "bright", -2 } }),
             fp ("EP-3 sparkle", "Always-on preamp sweetener", { { "gain", 3 }, { "tight", 30 }, { "bright", 2 } }),
-            fp ("Max smash", "Drives the amp as hard as it goes", { { "gain", 20 }, { "tight", 150 }, { "bright", 3 } }),
+            fp ("Max smash", "Drives the amp as hard as it goes", { { "gain", 16 }, { "tight", 150 }, { "bright", 3 } }),
         };
         m[NodeType::Crusher] = {
             fp ("8-bit", "Chiptune grit", { { "bits", 8 }, { "down", 4 }, { "tone", 10000 }, { "mix", 100 } }),
@@ -142,6 +146,7 @@ namespace
 
         //--- Filter ---------------------------------------------------------------
         m[NodeType::Wah] = {
+            fp ("Bass: envelope funk", "Opens when you dig in: Bootsy-style auto-wah that keeps the lows", { { "model", 0 }, { "mode", 1 }, { "sens", 65 }, { "low", 200 }, { "high", 1500 }, { "q", 5.5f }, { "mix", 75 } }),
             fp ("Cry Baby GCB95", "The stock Cry Baby sweep", { { "model", 0 }, { "mode", 0 }, { "low", 350 }, { "high", 2200 }, { "q", 6.5f }, { "mix", 100 } }),
             fp ("Vox V847A", "Smoother, vocal: Clapton in Cream", { { "model", 1 }, { "mode", 0 }, { "low", 450 }, { "high", 1800 }, { "q", 4.2f }, { "mix", 100 } }),
             fp ("535Q: deep and boosted", "Range 2, high Q, +6 dB for solos", { { "model", 2 }, { "mode", 0 }, { "range", 1 }, { "q", 9 }, { "boost", 6 }, { "mix", 100 } }),
@@ -158,6 +163,7 @@ namespace
 
         //--- Modulation ------------------------------------------------------------
         m[NodeType::Chorus] = {
+            fp ("Bass chorus", "Slow and gentle: movement without losing the low end", { { "rate", 0.5f }, { "depth", 30 }, { "delay", 9 }, { "width", 100 }, { "mix", 28 } }),
             fp ("CE-2", "Warm 80s chorus", { { "rate", 0.8f }, { "depth", 55 }, { "delay", 12 }, { "width", 80 }, { "mix", 50 } }),
             fp ("Subtle shimmer", "Slow and shallow, always-on", { { "rate", 0.35f }, { "depth", 25 }, { "delay", 10 }, { "width", 100 }, { "mix", 35 } }),
             fp ("80s clean", "Wide, lush, Andy Summers", { { "rate", 0.6f }, { "depth", 70 }, { "delay", 15 }, { "width", 100 }, { "mix", 50 } }),
@@ -246,6 +252,7 @@ namespace
 
         //--- Pitch -------------------------------------------------------------------
         m[NodeType::Pitch] = {
+            fp ("Bass: sub octave", "A dark octave under the bass, OC-2 style synth lines", { { "mode", 0 }, { "mix", 45 }, { "tone", 1800 } }),
             fp ("Octave down (bass)", "Fake bass under your riffs", { { "mode", 0 }, { "mix", 50 }, { "tone", 6000 } }),
             fp ("Octave up", "Bright, 12-string-ish", { { "mode", 1 }, { "mix", 40 }, { "tone", 9000 } }),
             fp ("Harmony: fifth", "Power-chord from single notes", { { "mode", 2 }, { "semis", 7 }, { "mix", 45 } }),
@@ -280,6 +287,44 @@ namespace
             fp ("+6 dB solo", "Solo level", { { "gain", 6 }, { "pan", 0 } }),
             fp ("Pan left", "Hard left (use in a split)", { { "gain", 0 }, { "pan", -1 } }),
             fp ("Pan right", "Hard right (use in a split)", { { "gain", 0 }, { "pan", 1 } }),
+        };
+        m[NodeType::Cab] = {
+            fp ("Modern metal", "V30 4x12, a 57 just off the cap, tight low cut", { { "cab", 6 }, { "mic", 0 }, { "position", 22 }, { "distance", 5 }, { "room", 0 }, { "lowcut", 90 }, { "highcut", 9500 } }),
+            fp ("Classic rock stack", "Greenbacks with a 421, a little further out", { { "cab", 5 }, { "mic", 1 }, { "position", 35 }, { "distance", 12 }, { "room", 8 }, { "lowcut", 70 }, { "highcut", 20000 } }),
+            fp ("Glassy clean", "Blackface 1x12, condenser, some air", { { "cab", 0 }, { "mic", 3 }, { "position", 30 }, { "distance", 35 }, { "room", 15 }, { "lowcut", 60 }, { "highcut", 20000 } }),
+            fp ("British chime", "Alnico Blues with a 57 on the cap", { { "cab", 2 }, { "mic", 0 }, { "position", 15 }, { "distance", 8 }, { "room", 5 }, { "lowcut", 80 }, { "highcut", 20000 } }),
+            fp ("Smooth lead (ribbon)", "Creambacks and a ribbon: thick, no fizz", { { "cab", 8 }, { "mic", 2 }, { "position", 25 }, { "distance", 15 }, { "room", 6 }, { "lowcut", 80 }, { "highcut", 20000 } }),
+            fp ("Scooped 80s", "T75s, mic on the cap", { { "cab", 7 }, { "mic", 0 }, { "position", 10 }, { "distance", 5 }, { "room", 0 }, { "lowcut", 85 }, { "highcut", 11000 } }),
+            fp ("Tweed breakup", "Small tweed combo, mic at the edge", { { "cab", 1 }, { "mic", 1 }, { "position", 60 }, { "distance", 20 }, { "room", 12 }, { "lowcut", 70 }, { "highcut", 20000 } }),
+            fp ("Pedal platform", "Jazz clean 2x12: flat and wide", { { "cab", 3 }, { "mic", 3 }, { "position", 30 }, { "distance", 25 }, { "room", 10 }, { "lowcut", 60 }, { "highcut", 20000 } }),
+            fp ("Dark & woolly", "Mic at the edge of the cone, pulled back", { { "cab", 5 }, { "mic", 2 }, { "position", 85 }, { "distance", 40 }, { "room", 10 }, { "lowcut", 60 }, { "highcut", 6500 } }),
+            fp ("Room mic", "Far back: the cab in a space", { { "cab", 6 }, { "mic", 3 }, { "position", 40 }, { "distance", 100 }, { "room", 45 }, { "lowcut", 80 }, { "highcut", 20000 } }),
+            fp ("Bass: rock 8x10", "The fridge with a bass dynamic", { { "cab", 10 }, { "mic", 4 }, { "position", 30 }, { "distance", 15 }, { "room", 0 }, { "lowcut", 20 }, { "highcut", 20000 } }),
+            fp ("Bass: modern slap", "4x10 with a horn, condenser", { { "cab", 11 }, { "mic", 3 }, { "position", 25 }, { "distance", 20 }, { "room", 5 }, { "lowcut", 20 }, { "highcut", 20000 } }),
+            fp ("Bass: Motown", "The flip-top 1x15: round and soft", { { "cab", 12 }, { "mic", 2 }, { "position", 45 }, { "distance", 20 }, { "room", 8 }, { "lowcut", 20 }, { "highcut", 20000 } }),
+            fp ("Bass: dub", "2x15s, everything below", { { "cab", 13 }, { "mic", 4 }, { "position", 60 }, { "distance", 25 }, { "room", 0 }, { "lowcut", 20 }, { "highcut", 4000 } }),
+            fp ("Bass: driven", "Neo 2x12 and a 421: takes distortion without fizz", { { "cab", 14 }, { "mic", 1 }, { "position", 30 }, { "distance", 10 }, { "room", 0 }, { "lowcut", 30 }, { "highcut", 9000 } }),
+        };
+        m[NodeType::BassDrive] = {
+            fp ("SansAmp: rock DI", "The Bass Driver's classic: drive at 11, presence up", { { "model", 0 }, { "voice", 0 }, { "drive", 5 }, { "bass", 6 }, { "treble", 5.5f }, { "presence", 6 }, { "blend", 10 } }),
+            fp ("SansAmp: fat tube", "Rounder: less presence, more bass", { { "model", 0 }, { "voice", 0 }, { "drive", 3.5f }, { "bass", 7 }, { "treble", 4.5f }, { "presence", 3.5f }, { "blend", 20 } }),
+            fp ("B3K: djent grind", "Bright and tight over a clean low end", { { "model", 1 }, { "voice", 1 }, { "drive", 6.5f }, { "tone", 7 }, { "blend", 40 } }),
+            fp ("B3K: fat growl", "Grunt on Fat, less top", { { "model", 1 }, { "voice", 0 }, { "drive", 5 }, { "tone", 4.5f }, { "blend", 30 } }),
+            fp ("B7K: modern metal", "Scooped mids, clanky top, half clean", { { "model", 2 }, { "voice", 1 }, { "drive", 6 }, { "bass", 6 }, { "mid", 4 }, { "midfreq", 500 }, { "treble", 7 }, { "blend", 45 } }),
+            fp ("B7K: prog punch", "Mids forward at 1 kHz", { { "model", 2 }, { "voice", 0 }, { "drive", 4.5f }, { "bass", 5.5f }, { "mid", 6.5f }, { "midfreq", 1000 }, { "treble", 5.5f }, { "blend", 40 } }),
+            fp ("Alpha: tight", "Punchy and defined", { { "model", 3 }, { "voice", 0 }, { "drive", 5.5f }, { "bass", 5.5f }, { "treble", 5.5f }, { "blend", 30 } }),
+            fp ("Omega: brutal", "Raw, wide-open distortion", { { "model", 3 }, { "voice", 1 }, { "drive", 7 }, { "bass", 6 }, { "treble", 6 }, { "blend", 25 } }),
+            fp ("SVT: clean and huge", "Gain low: the big warm clean", { { "model", 4 }, { "voice", 0 }, { "drive", 3 }, { "bass", 6 }, { "mid", 5.5f }, { "midfreq", 800 }, { "treble", 5 }, { "blend", 0 } }),
+            fp ("SVT: dug in", "Gain up until it growls", { { "model", 4 }, { "voice", 0 }, { "drive", 7 }, { "bass", 5.5f }, { "mid", 6 }, { "midfreq", 800 }, { "treble", 5.5f }, { "blend", 0 } }),
+            fp ("SVT: Ultra Lo", "The scooped, sub-heavy switch", { { "model", 4 }, { "voice", 1 }, { "drive", 4 }, { "bass", 5.5f }, { "mid", 5 }, { "midfreq", 800 }, { "treble", 5 }, { "blend", 0 } }),
+            fp ("M80: slap (Color)", "Mid scoop in, a touch of gain", { { "model", 5 }, { "voice", 1 }, { "drive", 2.5f }, { "bass", 5.5f }, { "mid", 5 }, { "treble", 6 }, { "blend", 60 } }),
+            fp ("M80: pick grit", "Distortion channel blended half and half", { { "model", 5 }, { "voice", 0 }, { "drive", 6 }, { "bass", 5.5f }, { "mid", 5.5f }, { "treble", 5.5f }, { "blend", 45 } }),
+            fp ("Bass Muff: wall of fuzz", "Sustain up, bass boost in", { { "model", 6 }, { "voice", 1 }, { "drive", 7.5f }, { "tone", 4.5f }, { "blend", 0 } }),
+            fp ("Bass Muff: fuzz + dry", "Fuzz on top of your clean bass", { { "model", 6 }, { "voice", 2 }, { "drive", 6.5f }, { "tone", 5.5f }, { "blend", 0 } }),
+            fp ("ODB-3: punk buzz", "Gain up, highs up", { { "model", 7 }, { "drive", 7 }, { "bass", 6 }, { "treble", 6.5f }, { "blend", 30 } }),
+            fp ("Tone Hammer: warm DI", "Flat and round, no grit", { { "model", 8 }, { "voice", 0 }, { "drive", 3 }, { "bass", 5.5f }, { "mid", 5 }, { "midfreq", 500 }, { "treble", 5 }, { "blend", 0 } }),
+            fp ("Tone Hammer: AGS on", "The saturated second gain stage", { { "model", 8 }, { "voice", 1 }, { "drive", 5.5f }, { "bass", 5.5f }, { "mid", 6 }, { "midfreq", 650 }, { "treble", 4.5f }, { "blend", 0 } }),
+            fp ("Brassmaster: synth bass", "Brassy fuzz against a clean low end", { { "model", 9 }, { "voice", 0 }, { "drive", 7 }, { "tone", 6 }, { "blend", 40 } }),
         };
         m[NodeType::Ir] = {
             fp ("Mix-ready", "80 Hz - 7.5 kHz: the standard cab cleanup", { { "lowcut", 80 }, { "highcut", 7500 }, { "mix", 100 }, { "level", 0 } }),

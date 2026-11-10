@@ -22,7 +22,12 @@ FxDisplay::FxDisplay (Engine& e, Block& b)
 FxDisplay::~FxDisplay() { stopTimer(); }
 
 //==============================================================================
-juce::Rectangle<float> FxDisplay::plot() const { return getLocalBounds().toFloat().reduced (10.0f, 10.0f).withTrimmedBottom (12.0f); }
+juce::Rectangle<float> FxDisplay::plot() const
+{
+    auto p = getLocalBounds().toFloat().reduced (10.0f, 10.0f).withTrimmedBottom (12.0f);
+    if (visual == Visual::Cab) p = p.withTrimmedLeft (cabArea().getWidth() + 14.0f);   // the speaker sits beside the curve
+    return p;
+}
 
 float FxDisplay::xForHz (float hz) const
 {
@@ -101,7 +106,7 @@ void FxDisplay::timerCallback()
         std::move (centsHistory.begin() + 1, centsHistory.end(), centsHistory.begin());
         centsHistory.back() = tunerReading.valid ? target : -1000.0f;
     }
-    if (visual == Visual::Spectrum || visual == Visual::Response)
+    if (visual == Visual::Spectrum || visual == Visual::Response || visual == Visual::Cab)
         pullSpectrum();
     if (visual == Visual::Gate)
         if (auto* gb = dynamic_cast<GateBlock*> (&block))
@@ -605,9 +610,7 @@ void FxDisplay::drawGate (juce::Graphics& g)
 
 void FxDisplay::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff111215));
-    g.setColour (border);
-    g.drawRect (getLocalBounds());
+    drawGlass (g, getLocalBounds().toFloat(), 7.0f);
 
     switch (visual)
     {
@@ -620,6 +623,7 @@ void FxDisplay::paint (juce::Graphics& g)
         case Visual::Envelope: drawEnvelope (g); break;
         case Visual::Tuner:    drawTuner (g); break;
         case Visual::Gate:     drawGate (g); break;
+        case Visual::Cab:      drawResponse (g); drawCab (g); break;
         case Visual::Modulator:
         case Visual::Spectrum: drawGrid (g, true, 18.0f); drawSpectrum (g); break;
         case Visual::None:     break;
@@ -769,8 +773,90 @@ int FxDisplay::hitHandle (juce::Point<float> pt) const
     return best;
 }
 
+juce::Rectangle<float> FxDisplay::cabArea() const
+{
+    const auto b = getLocalBounds().toFloat().reduced (10.0f);
+    const float side = juce::jmin (b.getHeight(), b.getWidth() * 0.42f);
+    return b.withWidth (side).withSizeKeepingCentre (side, side);
+}
+
+void FxDisplay::moveMic (juce::Point<float> at)
+{
+    // across the cone: where on the speaker. Up and down: how far back from the grille.
+    const auto a = cabArea();
+    const float R = a.getWidth() * 0.5f * 0.86f;
+    const float pos = juce::jlimit (0.0f, 1.0f, std::abs (at.x - a.getCentreX()) / R);
+    const float dist = juce::jlimit (0.0f, 1.0f, (a.getCentreY() + R * 0.55f - at.y) / (R * 1.4f));
+    block.set (CabBlock::pPosition, std::round (pos * 100.0f));
+    block.set (CabBlock::pDistance, std::round (dist * 100.0f));
+    highlight = "Mic  " + block.formatValue (CabBlock::pPosition) + "   " + block.formatValue (CabBlock::pDistance);
+    if (onEdited) onEdited();
+    repaint();
+}
+
+void FxDisplay::drawCab (juce::Graphics& g)
+{
+    auto* cb = dynamic_cast<CabBlock*> (&block);
+    if (cb == nullptr) return;
+    const auto a = cabArea();
+    const auto ctr = a.getCentre();
+    const float R = a.getWidth() * 0.5f;
+    const auto& spec = cb->cab();
+
+    // the baffle and the speaker, front on
+    g.setColour (juce::Colour (0xff0a0a0c));
+    g.fillRoundedRectangle (a, 8.0f);
+    g.setColour (juce::Colour (0xff1f1f25));
+    g.drawRoundedRectangle (a.reduced (0.5f), 8.0f, 1.0f);
+    for (int i = 0; i < 4; ++i)   // mounting bolts
+        drawScrew (g, { ctr.x + (i % 2 == 0 ? -1.0f : 1.0f) * R * 0.86f, ctr.y + (i < 2 ? -1.0f : 1.0f) * R * 0.86f }, 2.6f);
+    const float rim = R * 0.90f, cone = R * 0.80f, cap = R * 0.27f;
+    {
+        juce::ColourGradient frame (juce::Colour (0xff2b2b32), ctr.x, ctr.y - rim, juce::Colour (0xff111114), ctr.x, ctr.y + rim, false);
+        g.setGradientFill (frame);
+        g.fillEllipse (ctr.x - rim, ctr.y - rim, rim * 2.0f, rim * 2.0f);
+        juce::ColourGradient paper (juce::Colour (0xff09090b), ctr.x, ctr.y, juce::Colour (0xff222228), ctr.x, ctr.y + cone, true);
+        g.setGradientFill (paper);
+        g.fillEllipse (ctr.x - cone, ctr.y - cone, cone * 2.0f, cone * 2.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.045f));
+        for (float k : { 0.42f, 0.56f, 0.70f, 0.84f })
+            g.drawEllipse (ctr.x - cone * k, ctr.y - cone * k, cone * k * 2.0f, cone * k * 2.0f, 1.0f);
+        juce::ColourGradient dome (juce::Colour (0xff34343c), ctr.x - cap * 0.4f, ctr.y - cap, juce::Colour (0xff0d0d10), ctr.x + cap * 0.3f, ctr.y + cap, false);
+        g.setGradientFill (dome);
+        g.fillEllipse (ctr.x - cap, ctr.y - cap, cap * 2.0f, cap * 2.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.7f));
+        g.drawEllipse (ctr.x - cap, ctr.y - cap, cap * 2.0f, cap * 2.0f, 1.0f);
+    }
+
+    // the mic: a dot where it points, bigger as it comes closer, with a ring that widens as it backs off
+    const float pos = cb->get (CabBlock::pPosition) * 0.01f, dist = cb->get (CabBlock::pDistance) * 0.01f;
+    const float reach = R * 0.86f;
+    const juce::Point<float> mic (ctr.x + pos * reach, ctr.y + reach * 0.55f - dist * reach * 1.4f);
+    g.setColour (colour.withAlpha (0.25f));
+    g.drawLine (ctr.x, mic.y, mic.x, mic.y, 1.0f);
+    const float spread = 9.0f + dist * 26.0f;
+    g.setColour (colour.withAlpha (0.10f));
+    g.fillEllipse (mic.x - spread, mic.y - spread, spread * 2.0f, spread * 2.0f);
+    g.setColour (colour.withAlpha (0.45f));
+    g.drawEllipse (mic.x - spread, mic.y - spread, spread * 2.0f, spread * 2.0f, 1.0f);
+    drawLed (g, mic, draggingMic ? 6.5f : 5.5f, colour, true);
+
+    g.setColour (muted);
+    g.setFont (font (9.5f, true).withExtraKerningFactor (0.08f));
+    g.drawText (juce::String (spec.cones) + " x " + juce::String ((int) spec.inches) + "\"   " + spec.speakers.toUpperCase(),
+                a.toNearestInt().reduced (8, 5).removeFromTop (12), juce::Justification::centredLeft);
+    g.setColour (dim);
+    g.setFont (font (9.5f));
+    g.drawText ("drag the mic: across = cap to edge, up = further back", a.toNearestInt().reduced (8, 4).removeFromBottom (12), juce::Justification::centredLeft);
+}
+
 void FxDisplay::mouseMove (const juce::MouseEvent& e)
 {
+    if (visual == Visual::Cab)
+    {
+        setMouseCursor (cabArea().contains (e.position) ? juce::MouseCursor::CrosshairCursor : juce::MouseCursor::NormalCursor);
+        return;
+    }
     if (visual == Visual::Gate)
     {
         setMouseCursor (std::abs (e.position.y - gateY (block.getBase (GateBlock::pThreshold))) < 10.0f ? juce::MouseCursor::UpDownResizeCursor
@@ -786,6 +872,8 @@ void FxDisplay::mouseDown (const juce::MouseEvent& e)
     dragHandle = hitHandle (e.position);
     draggingThreshold = visual == Visual::Gate && std::abs (e.position.y - gateY (block.getBase (GateBlock::pThreshold))) < 10.0f;
     if (draggingThreshold) mouseDrag (e);
+    draggingMic = visual == Visual::Cab && cabArea().contains (e.position);
+    if (draggingMic) { engine.checkpoint(); moveMic (e.position); }
 }
 
 void FxDisplay::mouseDrag (const juce::MouseEvent& e)
@@ -799,6 +887,7 @@ void FxDisplay::mouseDrag (const juce::MouseEvent& e)
         repaint();
         return;
     }
+    if (draggingMic) { moveMic (e.position); return; }
     if (dragHandle < 0) return;
     const auto h = eqHandles()[(size_t) dragHandle];
     block.set (h.freqParam, hzForX (e.position.x));
@@ -811,7 +900,8 @@ void FxDisplay::mouseDrag (const juce::MouseEvent& e)
 
 void FxDisplay::mouseUp (const juce::MouseEvent&)
 {
-    if (dragHandle >= 0 || draggingThreshold) { highlight.clear(); repaint(); }
+    if (dragHandle >= 0 || draggingThreshold || draggingMic) { highlight.clear(); repaint(); }
+    draggingMic = false;
     dragHandle = -1;
     draggingThreshold = false;
 }

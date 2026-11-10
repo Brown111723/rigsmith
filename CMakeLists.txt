@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.12.1 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.13.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -72,6 +72,8 @@ else()
     target_compile_options(nam_core PRIVATE -O3 -w)
 endif()
 
+option(RIGSMITH_LTO "Link-time optimisation (slow to link; switch off while developing)" ON)
+
 # ---------------------------------------------------------------------------
 # The plug-in: one engine, two formats (Standalone .exe + VST3)
 # ---------------------------------------------------------------------------
@@ -103,7 +105,9 @@ target_sources(Rigsmith PRIVATE
     Source/Engine/Blocks.cpp
     Source/Engine/Modulation.cpp
     Source/Engine/Pedals.cpp
+    Source/Engine/Cab.cpp
     Source/Engine/FxModels.cpp
+    Source/Engine/Calibration.cpp
     Source/Engine/PolyTuner.cpp
     Source/Engine/FactoryPresets.cpp
     Source/Engine/NamBlock.cpp
@@ -130,6 +134,19 @@ target_sources(Rigsmith PRIVATE
     Source/UI/Tone3000Panel.cpp)
 
 target_include_directories(Rigsmith PRIVATE Source)
+
+# The typefaces are built in (all SIL Open Font License; see Resources/fonts): Inter for text,
+# IBM Plex Mono for numbers, Michroma for wordmarks. Subset to Latin, about 300 KB together.
+juce_add_binary_data(RigsmithFonts
+    HEADER_NAME RigFonts.h
+    NAMESPACE RigFonts
+    SOURCES
+        Resources/fonts/Inter-Regular.ttf
+        Resources/fonts/Inter-Medium.ttf
+        Resources/fonts/Inter-SemiBold.ttf
+        Resources/fonts/IBMPlexMono-Regular.ttf
+        Resources/fonts/Michroma-Regular.ttf)
+set_target_properties(RigsmithFonts PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_compile_definitions(Rigsmith PUBLIC
     JUCE_PLUGINHOST_VST3=1
@@ -183,9 +200,10 @@ target_link_libraries(Rigsmith
         juce::juce_dsp
         juce::juce_gui_extra
         juce::juce_cryptography
+        RigsmithFonts
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
+        $<$<BOOL:${RIGSMITH_LTO}>:juce::juce_recommended_lto_flags>
         juce::juce_recommended_warning_flags)
 
 # ---------------------------------------------------------------------------
@@ -196,11 +214,14 @@ if(RIGSMITH_TESTS)
     juce_add_console_app(RigsmithTests PRODUCT_NAME "RigsmithTests")
     target_sources(RigsmithTests PRIVATE
         Tests/EngineTests.cpp
+        Tests/Bench.cpp
         Source/Engine/Nodes.cpp
         Source/Engine/Blocks.cpp
         Source/Engine/Modulation.cpp
         Source/Engine/Pedals.cpp
+    Source/Engine/Cab.cpp
         Source/Engine/FxModels.cpp
+        Source/Engine/Calibration.cpp
         Source/Engine/PolyTuner.cpp
         Source/Engine/FactoryPresets.cpp
         Source/Engine/NamBlock.cpp

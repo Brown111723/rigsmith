@@ -20,6 +20,43 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 ![A randomised rig: three NAM amps with their cabs in parallel, then delay and shimmer reverb](docs/screenshot-random.png)
 
+## New in 0.13
+
+**A new look.** Near-black, one accent colour, and gear that looks like what it is: stompboxes are tall with their knobs, name and footswitch; amp heads are wide with a grille; cabinets show their speakers. Inter, IBM Plex Mono and Michroma are built in, so it looks the same on every machine. Pick the accent in the menu (Amber, Ember, Gold, Ice, Mint, Violet, Silver).
+
+![The Classic Rig in 0.13: pedals, an amp head with its grille, a cab with its speaker](docs/screenshot-013-rig.png)
+
+- **Turn knobs right on the rig.** Every card shows its block's own knobs where they're set (they move with modulation too). Drag one up or down to turn it, Shift for fine, double-click to reset - no need to open the panel.
+- **A line of light under each block** shows the signal leaving it, so you can see where a rig goes quiet or clips.
+- **Nothing selected? The master is there.** The bottom panel shows the output meters, master volume, width and limiter whenever no block is selected.
+
+**Cabinet block: a cab and a mic with no IR file.** Ten guitar cabs (1x12 Blackface and Tweed, 2x12 Alnico Blue, Jazz Clean and Creamback, 4x10 Tweed, 4x12 Greenback, Vintage 30 and T75, 1x12 EVM Thiele), five bass cabs (8x10 Fridge, 4x10 with a horn, 1x15 Flip-top, 2x15, 2x12 Neo) and five mics (57, 421, ribbon 121, condenser 87, bass dynamic). **Drag the mic** on the speaker: across the cone goes from bright on the dust cap to dark at the edge, up pulls it back from the grille (less proximity bass). Room adds early reflections. It's built from filters, so it has no latency and costs almost nothing; a captured IR of one particular cab still has more of that cab's fine detail. With no IRs in your library, the starting points now use it, so there's a speaker from the first note.
+
+![The Cabinet block: the speaker with the mic on it, beside its response](docs/screenshot-013-cab.png)
+
+**Bass.**
+- The **GUITAR / BASS** switch in the top bar: Bass moves the tuner to a bass tuning, and new cabinets and the dice reach for bass cabs and bass drives.
+- **Bass Preamp / Drive**: ten models - Tech 21 SansAmp Bass Driver DI, Darkglass Microtubes B3K, B7K Ultra and Alpha-Omega, Ampeg SVT preamp, MXR M80 Bass D.I.+, EHX Bass Big Muff Pi, Boss ODB-3, Aguilar Tone Hammer, Maestro Brassmaster - each with its own knobs and switch (Grunt, Ultra Lo / Hi, Color, AGS...). Everything below the model's crossover also passes clean, so the bottom stays solid under the grit, and each starts with some clean blend.
+- Two all-built-in starting points: **Bass Rig** (compressor, octave, B7K, Bass Muff, SVT preamp, 8x10, chorus, with Clean / Grit / Fuzz / Chorus scenes) and **Bass Bi-Amp Rig** (clean lows and driven highs on a crossover split).
+- Tunings for 4-string (standard, drop D, Eb, D), 5-string and 6-string bass; in tests the poly tuner reads a strummed 5-string to within a cent.
+- Bass presets on the compressor, chorus, wah (envelope funk) and octaver.
+
+![The Bass Rig starting point](docs/screenshot-013-bass.png)
+
+**Sound, measured.** Every block, model, pedal voice and cabinet (259 of them) is now played a strummed guitar or bass and checked against a target level, and that check is part of the test suite:
+- Overdrive models used to come out anywhere from 7 to 14 dB above bypass at their stock settings (some presets 18 dB). Every overdrive, distortion and fuzz model is now about 4 dB up - a drive pedal's usual place - whichever one you pick.
+- **Clean Blend** on the drive pedals now blends at its own level (the model's make-up gain used to turn the clean signal down with the distortion).
+- The compressor's auto make-up is worked out at a real playing level, not at full scale (it ran about 7 dB hot).
+- Chorus and flanger sit at the same level at any Mix (they were 3 dB loud); tremolo, phaser and Uni-Vibe make up the level their dips take away.
+- Asymmetric pedals (SD-1, OD-1, OCD) no longer leave a DC offset.
+- Rigs and presets saved by earlier versions keep the levels they were saved with; a block switches to the new levels when you pick a model or preset on it.
+
+**CPU.**
+- NAM models run with the same fast activation functions the Neural Amp Modeler plug-in itself uses: a standard WaveNet capture went from about 22% of a core to under 7% here (LSTM and A2 captures change less).
+- The rig view repaints only the cards that changed, instead of the whole rig many times a second.
+
+**Fixed.** The drive pedals' filter-update check wrote three values past the end of a small array (harmless in practice, but wrong). The poly tuner no longer lets strings a fourth apart pull each other's readings (4 x E and 3 x A are the same note).
+
 ## Features
 
 **Amp & cab**
@@ -174,13 +211,15 @@ git tag v0.10.1 && git push origin v0.10.1
 | Action | How |
 |---|---|
 | Bypass a block | Click its footswitch, or select it and press `Space` |
+| Turn a knob | Drag it on the block's card or in the panel (`Shift` = fine, double-click = reset) |
+| Move the mic on a Cabinet | Drag it on the speaker in the panel |
 | Reorder a block | Drag it, including into or out of a split's paths |
 | Set a path's level | Drag its coloured pill up or down, or use the inspector |
 | Mute a path | Double-click its pill |
 | More options | Right-click any block, pill, scene or knob |
 | MIDI learn | Right-click a control, choose **MIDI learn**, then press a footswitch or move a pedal |
 | Switch scenes | Keys `1`–`4` |
-| Change presets | `Page Up` / `Page Down` (Init, Classic Rig, Dual Amp Rig, then yours) |
+| Change presets | `Page Up` / `Page Down` (Init, Classic Rig, Dual Amp Rig, Bass Rig, Bass Bi-Amp Rig, then yours) |
 | Add a block between two others | Click the small **+** on the wire |
 | Save | `Ctrl+S` |
 | Tuner | `T` |
@@ -220,11 +259,11 @@ build/RigsmithTests_artefacts/Release/RigsmithTests build/_deps/namcore-src/exam
 
 ```
 Source/
-  Engine/   audio graph: Node, Chain, Split, NAM/IR blocks, 22 built-in effects (Fx.cpp, Dsp.h),
+  Engine/   audio graph: Node, Chain, Split, NAM/IR blocks, the built-in effects (Fx.cpp, Pedals.cpp, Cab.cpp, Dsp.h),
             VST3 hosting, scenes, MIDI, presets, undo, randomiser, tuner (no UI code)
   UI/       look & feel, icons, graph view, inspector + effect displays, I/O panel, library, settings, header
   PluginProcessor.*  /  PluginEditor.*   JUCE glue shared by the exe and the VST3
-Tests/      headless engine tests
+Tests/      headless engine tests; Bench.cpp measures CPU (--bench) and levels (--audit, --calibrate)
 installer/  Inno Setup script used by CI
 ```
 
@@ -232,4 +271,4 @@ installer/  Inno Setup script used by CI
 
 Rigsmith is released under the **GNU AGPLv3** (see `LICENSE`), because it's built on the open-source edition of [JUCE](https://juce.com), which is AGPLv3. Distributing a closed-source build would require a commercial JUCE licence.
 
-NeuralAmpModelerCore is © Steven Atkinson, MIT licence. The TONE3000 sign-in code is adapted from TONE3000's MIT-licensed API examples (github.com/tone-3000/api); TONE3000 is a trademark of its owners, and tones belong to their creators under the licence shown on each tone. VST is a registered trademark of Steinberg Media Technologies GmbH.
+NeuralAmpModelerCore is © Steven Atkinson, MIT licence. The built-in typefaces - Inter, IBM Plex Mono and Michroma - are under the SIL Open Font License (see `Resources/fonts`). The TONE3000 sign-in code is adapted from TONE3000's MIT-licensed API examples (github.com/tone-3000/api); TONE3000 is a trademark of its owners, and tones belong to their creators under the licence shown on each tone. VST is a registered trademark of Steinberg Media Technologies GmbH.

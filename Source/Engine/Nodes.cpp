@@ -11,7 +11,8 @@ static const std::pair<NodeType, const char*> typeNames[] = {
     { NodeType::Chorus, "chorus" }, { NodeType::Flanger, "flanger" }, { NodeType::Phaser, "phaser" },
     { NodeType::Tremolo, "tremolo" }, { NodeType::Vibe, "vibe" }, { NodeType::Rotary, "rotary" },
     { NodeType::Delay, "delay" }, { NodeType::Reverb, "reverb" }, { NodeType::Pitch, "pitch" },
-    { NodeType::Tuner, "tuner" }, { NodeType::Modulator, "modulator" }, { NodeType::Distortion, "distortion" }
+    { NodeType::Tuner, "tuner" }, { NodeType::Modulator, "modulator" }, { NodeType::Distortion, "distortion" },
+    { NodeType::Cab, "cab" }, { NodeType::BassDrive, "bassdrive" }
 };
 
 const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups()
@@ -19,6 +20,8 @@ const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups
     static const std::vector<std::pair<juce::String, std::vector<NodeType>>> groups {
         { "Dynamics",       { NodeType::Gate, NodeType::Comp, NodeType::Limiter, NodeType::Expander, NodeType::Transient, NodeType::Swell } },
         { "Drive",          { NodeType::Overdrive, NodeType::Distortion, NodeType::Fuzz, NodeType::Boost, NodeType::Crusher } },
+        { "Bass",           { NodeType::BassDrive } },
+        { "Cabinet",        { NodeType::Cab } },
         { "EQ & Filter",    { NodeType::Eq, NodeType::Wah } },
         { "Modulation",     { NodeType::Chorus, NodeType::Flanger, NodeType::Phaser, NodeType::Tremolo, NodeType::Vibe, NodeType::Rotary } },
         { "Delay & Reverb", { NodeType::Delay, NodeType::Reverb } },
@@ -39,6 +42,8 @@ juce::String builtInMenuName (NodeType t)
         case NodeType::Swell:     return "Auto Swell (violin swells)";
         case NodeType::Overdrive: return "Overdrive";
         case NodeType::Distortion: return "Distortion";
+        case NodeType::BassDrive: return "Bass Preamp / Drive";
+        case NodeType::Cab:       return "Cabinet (speaker + mic, no IR needed)";
         case NodeType::Fuzz:      return "Fuzz";
         case NodeType::Boost:     return "Clean Boost";
         case NodeType::Crusher:   return "Bit Crusher";
@@ -77,6 +82,8 @@ juce::String builtInBlurb (NodeType t)
         case NodeType::Swell:     return "Violin-style volume swells";
         case NodeType::Overdrive: return "10 classic overdrives: Tube Screamer, Klon, SD-1, OCD, Timmy, Soul Food, Morning Glory, OD-1, King of Tone, Lightspeed";
         case NodeType::Distortion: return "10 classic distortions: DS-1, RAT, Tube Screamer, Big Muff, Metal Zone, HM-2, Shredmaster, OCD, Distortion+, BE-OD";
+        case NodeType::BassDrive: return "10 bass preamps and drives: SansAmp, Darkglass B3K / B7K / Alpha-Omega, SVT, M80, Bass Big Muff, ODB-3, Tone Hammer, Brassmaster";
+        case NodeType::Cab:       return "10 guitar and 5 bass cabinets, 5 mics: drag the mic across the cone. No IR file needed";
         case NodeType::Fuzz:      return "Thick fuzz, optional octave";
         case NodeType::Boost:     return "Clean level and tone boost";
         case NodeType::Crusher:   return "Lo-fi bits and sample rate";
@@ -160,7 +167,8 @@ Category categoryForBuiltIn (NodeType t)
         case NodeType::Gate: case NodeType::Comp: case NodeType::Limiter: case NodeType::Expander:
         case NodeType::Transient: case NodeType::Swell:                         return Category::Dynamics;
         case NodeType::Overdrive: case NodeType::Distortion: case NodeType::Fuzz: case NodeType::Boost:
-        case NodeType::Crusher:                                                  return Category::Drive;
+        case NodeType::Crusher: case NodeType::BassDrive:                        return Category::Drive;
+        case NodeType::Cab:                                                      return Category::Cab;
         case NodeType::Nam:                                                      return Category::Amp;
         case NodeType::Ir:                                                       return Category::Cab;
         case NodeType::Eq:                                                       return Category::Eq;
@@ -293,11 +301,18 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
         while (v > cur && ! a.compare_exchange_weak (cur, v, std::memory_order_relaxed)) {}
     };
 
+    auto flowTo = [this, n] (float pk)
+    {
+        const float fall = std::exp (-(float) n / (0.3f * (float) sampleRate));
+        flow.store (juce::jmax (pk, flow.load (std::memory_order_relaxed) * fall), std::memory_order_relaxed);
+    };
+
     if (! wetGain.isSmoothing() && wetGain.getCurrentValue() < 0.5f)
     {
         const float pk = peakOf();
         hold (peakIn, pk);
         hold (peakOut, pk);
+        flowTo (pk);
         if (t != nullptr) t->push (true, buffer, n);
         return;  // fully bypassed: untouched
     }
@@ -394,7 +409,9 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
         }
     }
 
-    hold (peakOut, peakOf());
+    const float pkOut = peakOf();
+    hold (peakOut, pkOut);
+    flowTo (pkOut);
     if (t != nullptr) t->push (true, buffer, n);
 }
 
@@ -564,6 +581,7 @@ juce::String Block::getModelBlurb() const { auto* m = currentModel(); return m !
 
 void Block::applyModelStock()
 {
+    calibrated.store (true);
     auto* m = currentModel();
     if (m == nullptr) return;
     for (auto& [pid, v] : m->stock)
@@ -573,6 +591,7 @@ void Block::applyModelStock()
 void Block::onChoiceChanged (int param)
 {
     if (param == modelParam) applyModelStock();
+    else if (juce::isPositiveAndBelow (param, numParams()) && specs[(size_t) param].id == "model") calibrated.store (true);
 }
 
 std::vector<int> Block::modelPanel (std::vector<int> order) const
@@ -592,27 +611,35 @@ void Block::afterProcess (juce::AudioBuffer<float>& b, int n) noexcept
 {
     if (fxModels == nullptr) return;
     const int m = juce::roundToInt (getBase (modelParam));
-    if (m != charModel || sampleRate != charRate)
+    const bool cal = calibrated.load (std::memory_order_relaxed);
+    if (m != charModel || sampleRate != charRate || cal != charCal)
     {
         charModel = m;
         charRate = sampleRate;
+        charCal = cal;
         charNow = m > 0 && m < (int) fxModels->size() ? (*fxModels)[(size_t) m].c : FxCharacter();
         if (charNow.darkHz > 0.0f) charLp.setLowPass (sampleRate, juce::jmin ((double) charNow.darkHz, sampleRate * 0.45), 0.707);
         charLp.reset();
+        charTrim = cal ? dbToGain (fxTrimDb (getType(), m)) : 1.0f;
     }
-    if (charNow.darkHz <= 0.0f && charNow.drive <= 0.0f) return;
-    const float k = 1.0f + 3.0f * charNow.drive;
-    for (int ch = 0; ch < 2; ++ch)
+    if (charNow.darkHz > 0.0f || charNow.drive > 0.0f)
     {
-        auto* d = b.getWritePointer (ch);
-        for (int i = 0; i < n; ++i)
+        const float k = 1.0f + 3.0f * charNow.drive;
+        for (int ch = 0; ch < 2; ++ch)
         {
-            float y = d[i];
-            if (charNow.drive > 0.0f) y = std::tanh (y * k) / k;
-            if (charNow.darkHz > 0.0f) y = charLp.process (y, ch);
-            d[i] = y;
+            auto* d = b.getWritePointer (ch);
+            for (int i = 0; i < n; ++i)
+            {
+                float y = d[i];
+                if (charNow.drive > 0.0f) y = std::tanh (y * k) / k;
+                if (charNow.darkHz > 0.0f) y = charLp.process (y, ch);
+                d[i] = y;
+            }
         }
     }
+    if (charTrim != 1.0f)
+        for (int ch = 0; ch < 2; ++ch)
+            juce::FloatVectorOperations::multiply (b.getWritePointer (ch), charTrim, n);
 }
 
 void Block::modulate (int i, float offset) noexcept
@@ -676,6 +703,7 @@ juce::ValueTree Block::toState() const
     auto v = Node::toState();
     for (size_t i = 0; i < specs.size(); ++i)
         v.setProperty ("p_" + specs[i].id, getBase ((int) i), nullptr);
+    if (calibrated.load()) v.setProperty ("cal", 1, nullptr);
     return v;
 }
 
@@ -684,6 +712,7 @@ void Block::fromState (const juce::ValueTree& v)
     Node::fromState (v);
     for (size_t i = 0; i < specs.size(); ++i)
         set ((int) i, (float) v.getProperty ("p_" + specs[i].id, specs[i].def));
+    calibrated.store ((int) v.getProperty ("cal", 0) != 0);   // saved before 0.13: the level it was saved with
 }
 
 //==============================================================================

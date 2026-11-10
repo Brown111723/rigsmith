@@ -15,15 +15,16 @@ Knob::Knob (const juce::String& name, juce::Colour colour)
     slider.setMouseDragSensitivity (220);
     addAndMakeVisible (slider);
 
-    nameLabel.setText (name, juce::dontSendNotification);
+    nameLabel.setText (name.toUpperCase(), juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centred);
-    nameLabel.setFont (font (12.0f, true));
+    nameLabel.setFont (medium (10.0f).withExtraKerningFactor (0.09f));
+    nameLabel.setColour (juce::Label::textColourId, theme::text.withAlpha (0.78f));
     nameLabel.setMinimumHorizontalScale (0.7f);
     nameLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (nameLabel);
 
     valueLabel.setJustificationType (juce::Justification::centred);
-    valueLabel.setFont (mono (11.0f));
+    valueLabel.setFont (mono (10.5f));
     valueLabel.setColour (juce::Label::textColourId, muted);
     valueLabel.setMinimumHorizontalScale (0.6f);
     valueLabel.setInterceptsMouseClicks (false, false);
@@ -276,7 +277,7 @@ void TrimMeter::paint (juce::Graphics& g)
     g.drawText (held > 1.0e-5f ? juce::String (heldDb, 1) : juce::String ("-inf"), top, juce::Justification::centred);
 
     // the signal: -60 .. +6 dBFS up the track, with a scale beside it
-    g.setColour (juce::Colour (0xff0b0c0e));
+    g.setColour (juce::Colour (0xff17171b));
     g.fillRoundedRectangle (t, 2.5f);
     auto levelY = [&t] (float lin)
     {
@@ -292,8 +293,8 @@ void TrimMeter::paint (juce::Graphics& g)
     const auto fill = juce::Rectangle<float> (t.getX() + 1.5f, y, t.getWidth() - 3.0f, t.getBottom() - y - 1.5f);
     if (fill.getHeight() > 0.5f)
     {
-        juce::ColourGradient grad (teal, 0.0f, t.getBottom(), red, 0.0f, zeroY, false);
-        grad.addColour (0.8, accent);
+        juce::ColourGradient grad (accent.withMultipliedBrightness (0.75f), 0.0f, t.getBottom(), red, 0.0f, zeroY, false);
+        grad.addColour (0.85, accent);
         g.setGradientFill (grad);
         g.fillRoundedRectangle (fill, 1.5f);
     }
@@ -344,8 +345,9 @@ void TrimMeter::mouseDoubleClick (const juce::MouseEvent&)
 //==============================================================================
 ChoiceControl::ChoiceControl (const juce::String& name, const juce::StringArray& options, juce::Colour colour)
 {
-    label.setText (name, juce::dontSendNotification);
-    label.setFont (font (12.0f, true));
+    label.setText (name.toUpperCase(), juce::dontSendNotification);
+    label.setFont (medium (10.0f).withExtraKerningFactor (0.09f));
+    label.setColour (juce::Label::textColourId, theme::text.withAlpha (0.78f));
     addAndMakeVisible (label);
     int total = 0;
     for (auto& o : options) total += juce::GlyphArrangement::getStringWidthInt (font (13.0f, true), o) + 26;
@@ -637,8 +639,8 @@ void Inspector::setNode (Node* n)
     {
         title.setText ("Rigsmith", juce::dontSendNotification);
         subtitle.setText ("NOTHING SELECTED", juce::dontSendNotification);
-        info.setText ("Click a block to edit it. Drag blocks to reorder, or drop a block, model, IR or plug-in onto the middle "
-                      "of another block to replace it. Right-click for options (lock, presets, MIDI learn). "
+        info.setText ("Click a block to edit it here, or just turn its knobs right on the rig. Drag blocks to reorder, or drop a block, "
+                      "model, IR or plug-in onto the middle of another to replace it. Right-click for options (lock, presets, MIDI learn). "
                       "Roll the dice at the top for a whole new rig - Ctrl+Z takes it back.",
                       juce::dontSendNotification);
         resized();
@@ -775,6 +777,23 @@ void Inspector::buildBlock (Block& b)
                 t->onClick = [this, ir, t]
                 {
                     ir->skipAfterFullRig = t->getToggleState();
+                    host.getEngine().updateAutoSkips();
+                    host.getEngine().markDirty();
+                };
+                controls.addAndMakeVisible (t);
+                toggleParam.push_back (-1);
+            }
+            break;
+        case NodeType::Cab:
+            if (auto* cb = dynamic_cast<CabBlock*> (&b))
+            {
+                auto* t = toggles.add (new juce::ToggleButton ("Switch off after an Amp + Cab model"));
+                t->setTooltip ("Amp + Cab captures already include a cabinet, so a second one would muffle the sound. "
+                               "With this on, the cabinet turns itself off whenever the amp before it is an Amp + Cab model.");
+                t->setToggleState (cb->skipAfterFullRig.load(), juce::dontSendNotification);
+                t->onClick = [this, cb, t]
+                {
+                    cb->skipAfterFullRig = t->getToggleState();
                     host.getEngine().updateAutoSkips();
                     host.getEngine().markDirty();
                 };
@@ -1345,6 +1364,24 @@ static int knobPriority (const juce::String& id, const juce::String& name)
     return 2;
 }
 
+std::vector<int> panelKnobs (const Block& b)
+{
+    std::vector<int> order = b.panelOrder();
+    if (order.empty())
+        for (int i = 0; i < b.numParams(); ++i) order.push_back (i);
+    std::stable_sort (order.begin(), order.end(), [&b] (int x, int y)
+    {
+        const auto& sx = b.getSpecs()[(size_t) x];
+        const auto& sy = b.getSpecs()[(size_t) y];
+        return knobPriority (sx.id, sx.name) < knobPriority (sy.id, sy.name);
+    });
+    std::vector<int> knobsOnly;
+    for (int i : order)
+        if (const auto& sp = b.getSpecs()[(size_t) i]; ! sp.toggle && ! sp.isChoice())
+            knobsOnly.push_back (i);
+    return knobsOnly;
+}
+
 void Inspector::buildPluginParams (PluginBlock& pb)
 {
     auto* inst = pb.getInstance();
@@ -1455,7 +1492,13 @@ void Inspector::timerCallback()
         return;
     }
 
-    title.setText (node->getName(), juce::dontSendNotification);
+    {
+        // built-in effects wear their name like a pedal does; models, IRs and plug-ins keep their own names readable
+        const bool builtIn = dynamic_cast<Block*> (node) != nullptr && dynamic_cast<PluginBlock*> (node) == nullptr
+                             && node->getType() != NodeType::Nam && node->getType() != NodeType::Ir;
+        title.setFont (builtIn ? theme::display (13.5f, 0.16f) : font (17.0f, true));
+        title.setText (builtIn ? node->getName().toUpperCase() : node->getName(), juce::dontSendNotification);
+    }
     if (meters != nullptr)
     {
         float in = node->peakIn.exchange (0.0f), out = node->peakOut.exchange (0.0f);
@@ -1594,6 +1637,11 @@ void Inspector::timerCallback()
     {
         inf << "Reduction " << juce::String (gb->getReduction(), 1) << " dB";
     }
+    else if (auto* cab = dynamic_cast<CabBlock*> (node))
+    {
+        sub = cab->cab().speakers.toUpperCase();
+        inf << cab->cab().blurb << "\n" << cab->mic().name << ": " << cab->mic().blurb;
+    }
 
     if (dynamic_cast<Split*> (node) == nullptr)
         inf = inf.replace ("\n", "   -   ");
@@ -1623,10 +1671,22 @@ void Inspector::timerCallback()
 void Inspector::paint (juce::Graphics& g)
 {
     g.fillAll (panel);
-    if (node != nullptr)
+    if (node == nullptr) return;
+    // the block as a piece of hardware: one faceplate, its screen on the left, its controls on the right
+    const auto plate = getLocalBounds().toFloat().reduced (6.0f, 4.0f).withTrimmedBottom (3.0f);
+    drawShadow (g, plate, 12.0f, 6.0f, 0.6f);
+    drawPlate (g, plate, 12.0f, border);
+    // the light on its top-left corner says it's on, in the block's colour
+    drawLed (g, { (float) title.getX() - 9.0f, (float) title.getBounds().getCentreY() }, 3.5f, colourFor (*node),
+             ! node->bypassed.load() && ! node->autoSkipped.load());
+    // a groove between the screen and the controls
+    if (controlsView.getX() > 60)
     {
-        g.setColour (colourFor (*node));
-        g.fillRoundedRectangle ((float) title.getX() - 12.0f, (float) title.getY() + 5.0f, 5.0f, (float) title.getHeight() - 10.0f, 2.5f);
+        const float x = (float) controlsView.getX() - 9.0f;
+        g.setColour (juce::Colours::black.withAlpha (0.5f));
+        g.fillRect (x, plate.getY() + 12.0f, 1.0f, plate.getHeight() - 24.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.035f));
+        g.fillRect (x + 1.0f, plate.getY() + 12.0f, 1.0f, plate.getHeight() - 24.0f);
     }
 }
 
@@ -1645,8 +1705,9 @@ void Inspector::layoutControls()
         int r = juce::jmax (1, (availH + 6) / (96 + 6));
         if (ks.size() <= 5) r = 1;                     // a few knobs: one row
         else if (ks.size() <= 10) r = juce::jmin (r, 2);   // two rows read best for a handful of knobs
-        const int kH = juce::jlimit (92, 128, (availH - (r - 1) * 6) / r);
-        const int kW = kH < 104 ? 74 : kw;
+        // a pedal with a few knobs gets big ones
+        const int kH = juce::jlimit (92, r == 1 ? 150 : 128, (availH - (r - 1) * 6) / r);
+        const int kW = kH < 104 ? 74 : (kH > 134 ? 100 : kw);
         const int cols = juce::jmax (1, (ks.size() + r - 1) / r);
         for (int i = 0; i < ks.size(); ++i)
             ks[i]->setBounds (startX + (i % cols) * (kW + 4), startY + (i / cols) * (kH + 6), kW, kH);
@@ -1749,7 +1810,8 @@ void Inspector::layoutIcons (juce::Rectangle<int> row)
 
 void Inspector::resized()
 {
-    auto r = getLocalBounds().reduced (14, 10);
+    auto r = getLocalBounds().reduced (18, 13);
+    r.removeFromBottom (2);
     const bool isSplit = dynamic_cast<Split*> (node) != nullptr;
     const int meterW = meters != nullptr ? 84 : 0;
     auto left = r.removeFromLeft (node == nullptr || isSplit ? 300 : juce::jlimit (330, 600, (int) ((float) getWidth() * 0.36f)) + meterW);
@@ -1757,7 +1819,7 @@ void Inspector::resized()
 
     auto top = left.removeFromTop (28);
     subtitle.setBounds (top.removeFromRight (juce::jmin (top.getWidth() / 2, 220)));
-    title.setBounds (top.withTrimmedLeft (12));
+    title.setBounds (top.withTrimmedLeft (16));
     left.removeFromTop (6);
     if (node != nullptr)
     {

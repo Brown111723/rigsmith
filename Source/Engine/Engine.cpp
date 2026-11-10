@@ -55,6 +55,8 @@ namespace
         { "inspectorHeight",  "Window",    "PanelHeight" },
         { "randomUsePlugins", "Randomise", "UsePlugins" },
         { "randomSplits",     "Randomise", "AllowSplits" },
+        { "instrument",       "General",   "Instrument" },
+        { "accent",           "Window",    "Accent" },
     };
 
     std::pair<juce::String, juce::String> iniLocation (const juce::String& key)
@@ -503,6 +505,24 @@ void Engine::setSetting (const juce::String& key, bool value)
 {
     const auto [section, name] = iniLocation (key);
     ini.setBool (section, name, value);
+}
+
+void Engine::setBass (bool bass)
+{
+    if (bass == isBass()) return;
+    setIntSetting ("instrument", bass ? 1 : 0);
+    // the tuner follows: a guitar tuning becomes the bass's and the other way round
+    const auto& tunings = PolyTuner::tunings();
+    const int now = juce::jlimit (0, (int) tunings.size() - 1, getIntSetting ("tunerTuning", 0));
+    const bool bassTuning = tunings[(size_t) now].midi.front() < 34;
+    if (bass != bassTuning)
+    {
+        int pick = 0;
+        for (int i = 0; i < (int) tunings.size(); ++i)
+            if (tunings[(size_t) i].name.startsWith (bass ? "Bass (E A D G)" : "Standard")) { pick = i; break; }
+        setIntSetting ("tunerTuning", pick);
+        polyTuner.tuning.store (pick);
+    }
 }
 
 int Engine::getIntSetting (const juce::String& key, int def) const
@@ -1150,6 +1170,13 @@ std::unique_ptr<Node> Engine::createNode (NodeType type) const
         case NodeType::Swell:     return std::make_unique<SwellBlock>();
         case NodeType::Overdrive: return std::make_unique<OverdriveBlock>();
         case NodeType::Distortion: return std::make_unique<DistortionBlock>();
+        case NodeType::BassDrive: return std::make_unique<BassDriveBlock>();
+        case NodeType::Cab:
+        {
+            auto c = std::make_unique<CabBlock>();
+            if (isBass()) { c->set (CabBlock::pCab, (float) CabBlock::firstBassCab()); c->set (CabBlock::pMic, 4.0f); }
+            return c;
+        }
         case NodeType::Fuzz:      return std::make_unique<FuzzBlock>();
         case NodeType::Boost:     return std::make_unique<BoostBlock>();
         case NodeType::Crusher:   return std::make_unique<CrusherBlock>();
@@ -1470,6 +1497,12 @@ bool Engine::updateAutoSkips()
                 const bool skip = ir->skipAfterFullRig.load() && gearIncludesCab (upstream) && ir->getGear() != Gear::Space;
                 if (ir->autoSkipped.exchange (skip) != skip) changed = true;
                 if (! skip && ! ir->bypassed.load() && ir->getFile() != juce::File()) upstream = Gear::Cab;
+            }
+            else if (auto* cb = dynamic_cast<CabBlock*> (n.get()))
+            {
+                const bool skip = cb->skipAfterFullRig.load() && gearIncludesCab (upstream);
+                if (cb->autoSkipped.exchange (skip) != skip) changed = true;
+                if (! skip && ! cb->bypassed.load()) upstream = Gear::Cab;
             }
             else if (auto* sp = dynamic_cast<Split*> (n.get()))
             {
@@ -1793,7 +1826,7 @@ void Engine::loadDefaultRig() { loadFactory (0); }
 
 const juce::StringArray& Engine::getFactoryNames()
 {
-    static const juce::StringArray names { initName, "Classic Rig", "Dual Amp Rig" };
+    static const juce::StringArray names { initName, "Classic Rig", "Dual Amp Rig", "Bass Rig", "Bass Bi-Amp Rig" };
     return names;
 }
 
@@ -1803,6 +1836,8 @@ juce::String Engine::getFactoryDescription (int index)
     {
         case 1:  return "gate, drive, amp, cab, chorus, delay, reverb";
         case 2:  return "the same, with two amps + cabs in parallel";
+        case 3:  return "compressor, drive, fuzz, octave, SVT preamp, 8x10, chorus - all built in";
+        case 4:  return "clean lows and driven highs on a crossover split";
         default: return "gate, amp, cab";
     }
 }
@@ -1861,11 +1896,81 @@ std::unique_ptr<Chain> Engine::buildFactory (int index, juce::StringArray& scene
     sceneLabels = { "A", "B", "C", "D" };
     juce::String err;
 
+    // no IRs in the library yet: the built-in Cabinet stands in, so there's a speaker from the first note
+    auto makeCab = [this] (bool haveIrs) -> std::unique_ptr<Node>
+    {
+        if (haveIrs) return std::make_unique<IrBlock>();
+        return createNode (NodeType::Cab);
+    };
+
     if (index <= 0)
     {
         r->nodes.push_back (std::make_unique<GateBlock>());
         r->nodes.push_back (std::make_unique<NamBlock>());
-        r->nodes.push_back (std::make_unique<IrBlock>());
+        r->nodes.push_back (makeCab (! pickLibraryFiles (false, 1).isEmpty()));
+        return r;
+    }
+
+    if (index >= 3)
+    {
+        // the bass rigs are all built in: nothing to download before they make a sound
+        auto comp = std::make_unique<CompBlock>();
+        comp->set (CompBlock::pThr, -22.0f); comp->set (CompBlock::pRatio, 4.0f); comp->set (CompBlock::pAtt, 18.0f);
+        comp->set (CompBlock::pRel, 180.0f); comp->set (CompBlock::pMix, 100.0f);
+        auto grit = std::make_unique<BassDriveBlock>();
+        grit->set (PedalBlock::pModel, 2.0f); grit->onChoiceChanged (PedalBlock::pModel);          // B7K
+        auto fuzz = std::make_unique<BassDriveBlock>();
+        fuzz->set (PedalBlock::pModel, 6.0f); fuzz->onChoiceChanged (PedalBlock::pModel);          // Bass Big Muff
+        fuzz->set (PedalBlock::pVoice, 1.0f); fuzz->set (PedalBlock::pBlend, 25.0f);
+        auto octave = std::make_unique<PitchBlock>();
+        octave->set (PitchBlock::pMode, 0.0f); octave->set (PitchBlock::pMix, 40.0f); octave->set (PitchBlock::pTone, 2500.0f);
+        auto pre = std::make_unique<BassDriveBlock>();
+        pre->set (PedalBlock::pModel, 4.0f); pre->onChoiceChanged (PedalBlock::pModel);            // SVT
+        auto cab = std::make_unique<CabBlock>();
+        cab->set (CabBlock::pCab, (float) CabBlock::firstBassCab()); cab->set (CabBlock::pMic, 4.0f);
+        cab->set (CabBlock::pPosition, 35.0f); cab->set (CabBlock::pDistance, 15.0f);
+        auto chorus = std::make_unique<ChorusBlock>();
+        chorus->set (ChorusBlock::pRate, 0.5f); chorus->set (ChorusBlock::pDepth, 30.0f); chorus->set (ChorusBlock::pMix, 30.0f);
+
+        auto* gritP = grit.get(); auto* fuzzP = fuzz.get(); auto* octaveP = octave.get(); auto* chorusP = chorus.get();
+        r->nodes.push_back (std::move (comp));
+        if (index == 3)
+        {
+            r->nodes.push_back (std::move (octave));
+            r->nodes.push_back (std::move (grit));
+            r->nodes.push_back (std::move (fuzz));
+            r->nodes.push_back (std::move (pre));
+            r->nodes.push_back (std::move (cab));
+        }
+        else
+        {
+            // bi-amp: everything under the crossover stays clean and centred, the grit lives above it
+            auto split = std::make_unique<Split>();
+            auto lows = split->makeBranch();
+            auto lowComp = std::make_unique<LimiterBlock>();
+            lows->chain->nodes.push_back (std::move (lowComp));
+            auto highs = split->makeBranch();
+            grit->set (PedalBlock::pBlend, 0.0f); fuzz->set (PedalBlock::pBlend, 0.0f);
+            highs->chain->nodes.push_back (std::move (octave));
+            highs->chain->nodes.push_back (std::move (grit));
+            highs->chain->nodes.push_back (std::move (fuzz));
+            highs->chain->nodes.push_back (std::move (cab));
+            split->branches.push_back (std::move (lows));
+            split->branches.push_back (std::move (highs));
+            split->setMode (SplitMode::Crossover);
+            split->xoverLow = 180.0f;
+            r->nodes.push_back (std::move (split));
+            r->nodes.push_back (std::move (pre));
+        }
+        r->nodes.push_back (std::move (chorus));
+
+        sceneLabels = { "Clean", "Grit", "Fuzz", "Chorus" };
+        factoryScenes = { { gritP->id, fuzzP->id, octaveP->id, chorusP->id } };
+        //                    grit   fuzz   octave chorus
+        factorySceneOn = { { { false, false, false, false },
+                             { true,  false, false, false },
+                             { false, true,  true,  false },
+                             { false, false, false, true  } } };
         return r;
     }
 
@@ -1879,8 +1984,9 @@ std::unique_ptr<Chain> Engine::buildFactory (int index, juce::StringArray& scene
         // the second amp falls back to the first model (or IR) if the library only has one
         if (! models.isEmpty()) loadGear (*nam, models[juce::jmin (which, models.size() - 1)], err);
         c.nodes.push_back (std::move (nam));
-        auto cab = std::make_unique<IrBlock>();
-        if (! irFiles.isEmpty()) loadGear (*cab, irFiles[juce::jmin (which, irFiles.size() - 1)], err);
+        auto cab = makeCab (! irFiles.isEmpty());
+        if (auto* ir = dynamic_cast<IrBlock*> (cab.get())) loadGear (*ir, irFiles[juce::jmin (which, irFiles.size() - 1)], err);
+        else if (auto* cb = dynamic_cast<CabBlock*> (cab.get()); cb != nullptr && which == 1 && ! isBass()) cb->set (CabBlock::pCab, 5.0f);   // a Greenback beside the V30
         c.nodes.push_back (std::move (cab));
     };
 
@@ -1938,6 +2044,11 @@ std::unique_ptr<Chain> Engine::buildFactory (int index, juce::StringArray& scene
         //  drive  chorus delay  reverb  (true = on)
         { driveP->id, chorusP->id, delayP->id, reverbP->id },
     };
+    //                    drive  chorus delay  reverb
+    factorySceneOn = { { { false, true,  true,  true  },    // Clean: chorus, delay, reverb
+                         { true,  false, false, true  },    // Crunch: drive, reverb
+                         { true,  false, true,  true  },    // Lead: drive, delay, reverb
+                         { false, false, false, false } } }; // Dry: just the amp
     return r;
 }
 
@@ -1945,6 +2056,7 @@ void Engine::loadFactory (int index)
 {
     if (dirty) checkpoint();
     index = juce::jlimit (0, getFactoryNames().size() - 1, index);
+    if (index >= 3) setBass (true);   // a bass rig: the tuner and the dice follow
 
     factoryScenes.clear();
     juce::StringArray labels;
@@ -1963,14 +2075,8 @@ void Engine::loadFactory (int index)
 
     if (! factoryScenes.empty())
     {
-        const auto& ids = factoryScenes[0];   // drive, chorus, delay, reverb
-        static constexpr bool on[kNumScenes][4] =
-        {
-            { false, true,  true,  true  },   // Clean: chorus, delay, reverb
-            { true,  false, false, true  },   // Crunch: drive, reverb
-            { true,  false, true,  true  },   // Lead: drive, delay, reverb
-            { false, false, false, false },   // Dry: just the amp
-        };
+        const auto& ids = factoryScenes[0];
+        const auto& on = factorySceneOn;
         for (int sc = kNumScenes - 1; sc >= 0; --sc)
         {
             for (int k = 0; k < 4; ++k)
@@ -2178,6 +2284,7 @@ bool Engine::applyFactoryPreset (const juce::String& id, int index)
     }
     for (auto& [pid, v] : p.values)
         if (const int i = b->indexOf (pid); i >= 0) b->set (i, v);
+    b->calibrated.store (true);
     markDirty();
     message (b->getName() + ": " + p.name);
     return true;

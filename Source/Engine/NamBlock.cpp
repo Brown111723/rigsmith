@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <thread>
 #include "NAM/dsp.h"
+#include "NAM/activations.h"
 #include "NAM/get_dsp.h"
 // AudioDSPTools' resampler comes from iPlug2 and expects a couple of its constants.
 namespace iplug { static constexpr double PI = 3.14159265358979323846; }
@@ -96,6 +97,10 @@ NamBlock::NamBlock()
         P ("capture", "Capture", 0.0f, 1.0f, 0.0f).dec (2).fixed() }),
       bank (std::make_unique<Bank>())
 {
+    // the same fast tanh / sigmoid the Neural Amp Modeler plug-in itself runs with: models sound
+    // as they do there, for a good deal less CPU than the exact functions
+    static const bool fast = [] { nam::activations::Activation::enable_fast_tanh(); return true; }();
+    juce::ignoreUnused (fast);
 }
 
 void NamBlock::designToneStack (Biquad& b, Biquad& m, Biquad& t, Biquad& p, double sr) const

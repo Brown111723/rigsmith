@@ -47,10 +47,18 @@ float CompBlock::staticGr (float in) const noexcept
     return slope * over;
 }
 
+float CompBlock::autoMakeupDb() const
+{
+    if (get (pAuto) <= 0.5f) return 0.0f;
+    // What the compressor takes off a guitar played normally (strums peaking around -12 dBFS spend most
+    // of their time well under that), so switching it in doesn't jump in level. Rigs saved before 0.13
+    // keep the old rule (half the reduction at full scale), which ran several dB hot.
+    return calibrated.load (std::memory_order_relaxed) ? -0.55f * staticGr (-15.0f) : -0.5f * staticGr (0.0f);
+}
+
 float CompBlock::transferDb (float in) const
 {
-    const float makeup = get (pMakeup) + (get (pAuto) > 0.5f ? -0.5f * staticGr (0.0f) : 0.0f);
-    return in + staticGr (in) + makeup;
+    return in + staticGr (in) + get (pMakeup) + autoMakeupDb();
 }
 
 void CompBlock::prepareImpl (double, int) { grState = 0; }
@@ -60,7 +68,7 @@ void CompBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     const float sr = (float) sampleRate;
     const float att = std::exp (-1.0f / (get (pAtt) * 0.001f * sr));
     const float rel = std::exp (-1.0f / (get (pRel) * 0.001f * sr));
-    const float makeupDb = get (pMakeup) + (get (pAuto) > 0.5f ? -0.5f * staticGr (0.0f) : 0.0f);
+    const float makeupDb = get (pMakeup) + autoMakeupDb();
     float dryG, wetG;
     mixGains (get (pMix) * 0.01f * 0.5f + (get (pMix) >= 100.0f ? 0.5f : 0.0f), dryG, wetG);
     const float wet = get (pMix) * 0.01f;
@@ -641,6 +649,7 @@ void ChorusBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     const float off = get (pWidth) * 0.01f * 0.25f;
     float dg, wg;
     mixGains (get (pMix) * 0.01f, dg, wg);
+    if (calibrated.load (std::memory_order_relaxed)) { const float norm = 1.0f / std::sqrt (dg * dg + wg * wg); dg *= norm; wg *= norm; }   // at level whatever the mix
     auto* l = b.getWritePointer (0);
     auto* r = b.getWritePointer (1);
     for (int i = 0; i < n; ++i)
@@ -684,6 +693,7 @@ void FlangerBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     const float feed = get (pFeedback) * 0.01f;
     float dg, wg;
     mixGains (get (pMix) * 0.01f, dg, wg);
+    if (calibrated.load (std::memory_order_relaxed)) { const float norm = 1.0f / std::sqrt (dg * dg + wg * wg); dg *= norm; wg *= norm; }   // at level whatever the mix
     float* ch[2] = { b.getWritePointer (0), b.getWritePointer (1) };
     for (int i = 0; i < n; ++i)
     {
@@ -806,6 +816,10 @@ void TremoloBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     const float depth = get (pDepth) * 0.01f;
     const int shape = getChoice (pShape);
     const bool stereo = get (pStereo) > 0.5f;
+    // a tremolo only ever turns down, so it sounds quieter when it's switched in: make up the average
+    // (rigs saved before 0.13 keep the level they had)
+    const float makeup = calibrated.load (std::memory_order_relaxed)
+                           ? juce::jmin (1.6f, 1.0f / std::sqrt ((1.0f - depth * 0.5f) * (1.0f - depth * 0.5f) + depth * depth * 0.125f)) : 1.0f;
     auto* l = b.getWritePointer (0);
     auto* r = b.getWritePointer (1);
     for (int i = 0; i < n; ++i)
@@ -813,6 +827,7 @@ void TremoloBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
         const double ph = lfo.tick();
         const float w = lfoShape (ph);
         const float wr = stereo ? lfoShape (ph + 0.5) : w;
+        l[i] *= makeup; r[i] *= makeup;
         if (shape == 3)
         {
             // harmonic tremolo: lows and highs pulse in opposition

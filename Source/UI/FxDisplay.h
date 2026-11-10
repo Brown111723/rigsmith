@@ -52,6 +52,11 @@ private:
     void drawEnvelope (juce::Graphics&);
     void drawTuner (juce::Graphics&);
     void drawGate (juce::Graphics&);
+    void drawCab (juce::Graphics&);
+    /** The speaker picture on a Cabinet's display: its square, the cone's centre and radius. */
+    juce::Rectangle<float> cabArea() const;
+    bool draggingMic = false;
+    void moveMic (juce::Point<float>);
     float gateY (float db) const;
     bool draggingThreshold = false;
     std::vector<char> gateOpen;   // per history column

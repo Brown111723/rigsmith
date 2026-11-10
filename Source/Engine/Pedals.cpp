@@ -201,11 +201,137 @@ const std::vector<PedalModel>& PedalBlock::distortionModels()
     return m;
 }
 
+const std::vector<PedalModel>& PedalBlock::bassModels()
+{
+    static const std::vector<PedalModel> m = []
+    {
+        std::vector<PedalModel> v;
+        auto stock = [&v] (std::vector<std::pair<int, float>> s) { v.back().stock = std::move (s); };
+        {
+            PedalCircuit c;
+            c.inHp = 18; c.gainMinDb = 6; c.gainMaxDb = 40;
+            c.clip = ClipKind::Mosfet; c.threshold = 0.6f; c.asym = 1.2f;
+            c.bandwidth = 6500; c.tone = ToneKind::ThreeBand; c.toneA = 80; c.toneB = 3200; c.eqStyle = 2;
+            c.midPeakDb = -4.0f; c.midPeakHz = 750;   // its tube-amp voicing: a fixed mid scoop
+            c.lowKeepHz = 110; c.lowKeep = 0.3f; c.makeupDb = -6.0f;
+            v.push_back (makeModel ("SansAmp Bass Driver DI", "Tech 21", "1994", "The DI box that became the sound of rock bass: tube-amp growl and a scooped, punchy voice straight to the desk",
+                                { pDrive, pBass, pTreble, pPresence },
+                                { { pDrive, "Drive" }, { pBass, "Bass" }, { pTreble, "Treble" }, { pPresence, "Presence" }, { pBlend, "Blend (clean)" }, { pLevel, "Level" } }, c));
+            stock ({ { pDrive, 4.5f }, { pBass, 6.0f }, { pTreble, 5.5f }, { pPresence, 5.0f }, { pBlend, 15.0f } });
+        }
+        {
+            PedalCircuit c;
+            c.inHp = 20; c.clipHp = 220; c.gainMinDb = 12; c.gainMaxDb = 50;
+            c.clip = ClipKind::HardSilicon; c.threshold = 0.55f; c.asym = 1.1f;
+            c.bandwidth = 7500; c.tone = ToneKind::LowPassSweep; c.toneA = 2200; c.toneB = 9000;
+            c.lowKeepHz = 160; c.lowKeep = 1.4f; c.makeupDb = -9.0f;
+            v.push_back (makeModel ("Microtubes B3K", "Darkglass", "2011", "Modern metal bass: a bright, tight, grinding CMOS overdrive on top of a clean low end",
+                                { pDrive, pTone }, { { pDrive, "Drive" }, { pTone, "Tone" }, { pBlend, "Blend (clean)" }, { pLevel, "Level" } }, c,
+                                "Grunt", { "Fat", "Thin", "Raw" }));
+            stock ({ { pDrive, 5.0f }, { pTone, 6.0f }, { pBlend, 35.0f } });
+        }
+        {
+            PedalCircuit c;
+            c.inHp = 20; c.clipHp = 220; c.gainMinDb = 12; c.gainMaxDb = 50;
+            c.clip = ClipKind::HardSilicon; c.threshold = 0.55f; c.asym = 1.1f;
+            c.bandwidth = 8000; c.tone = ToneKind::ThreeBand; c.toneA = 100; c.toneB = 5000; c.eqStyle = 0;
+            c.lowKeepHz = 160; c.lowKeep = 1.4f; c.makeupDb = -9.0f;
+            v.push_back (makeModel ("Microtubes B7K Ultra", "Darkglass", "2013", "The B3K with a four-band EQ: the modern metal and prog bass preamp",
+                                { pDrive, pBass, pMid, pMidFreq, pTreble },
+                                { { pDrive, "Drive" }, { pBass, "Low" }, { pMid, "Mids" }, { pMidFreq, "Mid Freq" }, { pTreble, "Treble" }, { pBlend, "Blend (clean)" }, { pLevel, "Master" } }, c,
+                                "Grunt", { "Fat", "Thin", "Raw" }));
+            stock ({ { pDrive, 5.0f }, { pBass, 5.5f }, { pMid, 5.5f }, { pMidFreq, 1000.0f }, { pTreble, 5.5f }, { pBlend, 35.0f } });
+        }
+        {
+            PedalCircuit c;
+            c.inHp = 20; c.clipHp = 120; c.gainMinDb = 14; c.gainMaxDb = 54;
+            c.clip = ClipKind::Mosfet; c.threshold = 0.5f; c.asym = 1.15f;
+            c.bandwidth = 7000; c.tone = ToneKind::ThreeBand; c.toneA = 90; c.toneB = 4200; c.eqStyle = 2;
+            c.midPeakDb = 3.0f; c.midPeakHz = 900;
+            c.lowKeepHz = 130; c.lowKeep = 1.4f; c.makeupDb = -10.0f;
+            v.push_back (makeModel ("Alpha-Omega", "Darkglass", "2016", "Two distortions in one: Alpha is tight and punchy, Omega is raw and brutal",
+                                { pDrive, pBass, pTreble }, { { pDrive, "Drive" }, { pBass, "Bass" }, { pTreble, "Treble" }, { pBlend, "Blend (clean)" }, { pLevel, "Level" } }, c,
+                                "Mod", { "Alpha", "Omega" }));
+            stock ({ { pDrive, 5.5f }, { pBass, 5.5f }, { pTreble, 5.5f }, { pBlend, 30.0f } });
+        }
+        {
+            PedalCircuit c;
+            c.inHp = 18; c.clipHp = 40; c.dryThru = 0.8f; c.gainMinDb = 4; c.gainMaxDb = 30;
+            c.clip = ClipKind::OpAmpSoft; c.threshold = 0.75f; c.asym = 1.3f;
+            c.bandwidth = 6000; c.tone = ToneKind::ThreeBand; c.toneA = 60; c.toneB = 4000; c.eqStyle = 0;
+            c.lowKeepHz = 90; c.lowKeep = 1.4f; c.makeupDb = -7.0f;
+            v.push_back (makeModel ("SVT preamp", "Ampeg", "1969", "The all-tube head behind fifty years of rock bass: warm, huge, and it growls when you dig in",
+                                { pDrive, pBass, pMid, pMidFreq, pTreble },
+                                { { pDrive, "Gain" }, { pBass, "Bass" }, { pMid, "Midrange" }, { pMidFreq, "Frequency" }, { pTreble, "Treble" }, { pBlend, "Clean Blend" }, { pLevel, "Master" } }, c,
+                                "Ultra", { "Flat", "Ultra Lo", "Ultra Hi" }));
+            stock ({ { pDrive, 4.5f }, { pBass, 5.5f }, { pMid, 5.5f }, { pMidFreq, 800.0f }, { pTreble, 5.0f }, { pBlend, 0.0f } });
+        }
+        {
+            PedalCircuit c;
+            c.inHp = 20; c.clipHp = 150; c.gainMinDb = 10; c.gainMaxDb = 44;
+            c.clip = ClipKind::HardSilicon; c.threshold = 0.5f;
+            c.bandwidth = 6500; c.tone = ToneKind::ThreeBand; c.toneA = 60; c.toneB = 4000; c.eqStyle = 0;
+            c.lowKeepHz = 140; c.lowKeep = 1.0f; c.makeupDb = -9.0f;
+            v.push_back (makeModel ("M80 Bass D.I.+", "MXR", "2004", "A clean DI and a distortion channel in one box. Color scoops the mids for slap and pick tones",
+                                { pDrive, pBass, pMid, pTreble },
+                                { { pDrive, "Gain" }, { pBass, "Bass" }, { pMid, "Mid" }, { pTreble, "Treble" }, { pBlend, "Blend (clean)" }, { pLevel, "Volume" } }, c,
+                                "Color", { "Off", "On" }));
+            stock ({ { pDrive, 5.0f }, { pBass, 5.5f }, { pMid, 5.0f }, { pMidFreq, 850.0f }, { pTreble, 5.5f }, { pBlend, 40.0f } });
+        }
+        {
+            PedalCircuit c;
+            c.inHp = 25; c.gainMinDb = 34; c.gainMaxDb = 66;
+            c.clip = ClipKind::Muff; c.threshold = 0.5f;
+            c.bandwidth = 6000; c.tone = ToneKind::MuffBlend; c.toneA = 300; c.toneB = 1100;
+            c.lowKeepHz = 120; c.lowKeep = 1.2f; c.makeupDb = -12.0f;
+            v.push_back (makeModel ("Bass Big Muff Pi", "Electro-Harmonix", "2008", "The wall of fuzz, rebuilt to keep the low end: Bass Boost adds weight, Dry mixes your clean bass back in",
+                                { pDrive, pTone }, { { pDrive, "Sustain" }, { pTone, "Tone" }, { pBlend, "Dry" }, { pLevel, "Volume" } }, c,
+                                "Switch", { "Normal", "Bass Boost", "Dry" }));
+            stock ({ { pDrive, 6.0f }, { pTone, 5.0f }, { pBlend, 0.0f } });
+        }
+        {
+            PedalCircuit c;
+            c.inHp = 25; c.clipHp = 180; c.gainMinDb = 16; c.gainMaxDb = 52;
+            c.clip = ClipKind::HardSilicon; c.threshold = 0.45f; c.asym = 1.25f;
+            c.bandwidth = 9000; c.tone = ToneKind::ThreeBand; c.toneA = 80; c.toneB = 3500; c.eqStyle = 2;
+            c.lowKeepHz = 120; c.lowKeep = 0.9f; c.makeupDb = -10.0f;
+            v.push_back (makeModel ("ODB-3 Bass OverDrive", "Boss", "1994", "Buzzy, aggressive and bright: from a gritty edge to all-out fuzzy punk bass",
+                                { pDrive, pBass, pTreble }, { { pDrive, "Gain" }, { pBass, "Low" }, { pTreble, "High" }, { pBlend, "Balance (dry)" }, { pLevel, "Level" } }, c));
+            stock ({ { pDrive, 5.0f }, { pBass, 5.5f }, { pTreble, 5.0f }, { pBlend, 40.0f } });
+        }
+        {
+            PedalCircuit c;
+            c.inHp = 18; c.clipHp = 80; c.dryThru = 0.5f; c.gainMinDb = 2; c.gainMaxDb = 32;
+            c.clip = ClipKind::OpAmpSoft; c.threshold = 0.7f;
+            c.bandwidth = 5500; c.tone = ToneKind::ThreeBand; c.toneA = 70; c.toneB = 4000; c.eqStyle = 0;
+            c.lowKeepHz = 90; c.lowKeep = 1.5f; c.makeupDb = -6.0f;
+            v.push_back (makeModel ("Tone Hammer", "Aguilar", "2009", "Smooth, round and musical: a preamp with a sweepable mid and a gain stage that fattens without fizz",
+                                { pDrive, pBass, pMid, pMidFreq, pTreble },
+                                { { pDrive, "Gain" }, { pBass, "Bass" }, { pMid, "Mid" }, { pMidFreq, "Mid Freq" }, { pTreble, "Treble" }, { pBlend, "Clean Blend" }, { pLevel, "Master" } }, c,
+                                "AGS", { "Off", "On" }));
+            stock ({ { pDrive, 4.0f }, { pBass, 5.5f }, { pMid, 5.0f }, { pMidFreq, 500.0f }, { pTreble, 5.0f }, { pBlend, 0.0f } });
+        }
+        {
+            PedalCircuit c;
+            c.inHp = 30; c.clipHp = 250; c.gainMinDb = 30; c.gainMaxDb = 64;
+            c.clip = ClipKind::HardGermanium; c.threshold = 0.35f; c.asym = 1.6f;
+            c.bandwidth = 5500; c.tone = ToneKind::Tilt; c.toneA = 900;
+            c.lowKeepHz = 150; c.lowKeep = 1.0f; c.makeupDb = -8.0f;
+            v.push_back (makeModel ("Brassmaster", "Maestro", "1971", "The rare 70s bass fuzz: a snarling, octave-tinged, brassy fuzz mixed against your clean bass",
+                                { pDrive, pTone }, { { pDrive, "Sensitivity" }, { pTone, "Brass" }, { pBlend, "Bass (clean)" }, { pLevel, "Volume" } }, c,
+                                "Harmonics", { "1", "2" }));
+            stock ({ { pDrive, 6.0f }, { pTone, 5.5f }, { pBlend, 40.0f } });
+        }
+        return v;
+    }();
+    return m;
+}
+
 //==============================================================================
 static juce::StringArray modelNames (NodeType t)
 {
     juce::StringArray s;
-    for (auto& m : t == NodeType::Distortion ? PedalBlock::distortionModels() : PedalBlock::overdriveModels())
+    for (auto& m : PedalBlock::modelsFor (t))
         s.add (m.maker + " " + m.name);
     return s;
 }
@@ -225,7 +351,19 @@ PedalBlock::PedalBlock (NodeType t)
         P ("tight", "Tight", 0.0f, 10.0f, 5.0f).rand (3.0f, 8.0f),
         P ("presence", "Presence", 0.0f, 10.0f, 5.0f).rand (3.0f, 7.0f) })
 {
+    if (t == NodeType::BassDrive) for (auto& [param, value] : model().stock) set (param, value);
     cur = circuit();
+}
+
+void PedalBlock::onChoiceChanged (int param)
+{
+    // picking a pedal puts its knobs where that pedal starts
+    if (param == pModel)
+    {
+        calibrated.store (true);
+        set (pVoice, 0.0f);
+        for (auto& [p, value] : model().stock) set (p, value);
+    }
 }
 
 const PedalModel& PedalBlock::model() const
@@ -234,7 +372,7 @@ const PedalModel& PedalBlock::model() const
     return ms[(size_t) juce::jlimit (0, (int) ms.size() - 1, getChoice (pModel))];
 }
 
-juce::String PedalBlock::getName() const { return getType() == NodeType::Distortion ? "Distortion" : "Overdrive"; }
+juce::String PedalBlock::getName() const { return getType() == NodeType::Distortion ? "Distortion" : getType() == NodeType::BassDrive ? "Bass Drive" : "Overdrive"; }
 
 juce::String PedalBlock::getDetail() const
 {
@@ -315,7 +453,28 @@ PedalCircuit PedalBlock::circuit() const noexcept
         if (v == 1) { c.toneA = 550; c.toneB = 2100; }
         if (v == 2) { c.toneA = 950; c.toneB = 1200; c.gainMaxDb -= 4; }
     }
+    else if (n.startsWith ("Microtubes"))            // Grunt: how much low end reaches the clipping
+    {
+        if (v == 0) { c.clipHp = 110; c.makeupDb -= 1.0f; }
+        if (v == 2) { c.clipHp = 40; c.lowKeep *= 0.6f; c.makeupDb -= 2.0f; }
+    }
+    else if (n.startsWith ("Alpha") && v == 1)      { c.clip = ClipKind::HardSilicon; c.clipHp = 60; c.gainMaxDb += 6; c.midPeakDb = 0.0f; c.threshold = 0.42f; c.makeupDb += 0.5f; }
+    else if (n.startsWith ("SVT"))
+    {
+        if (v == 1) { c.lowShelfDb = 6.0f; c.midPeakDb = -4.0f; c.midPeakHz = 500; c.makeupDb -= 2.0f; }
+        if (v == 2) { c.bandwidth = 9000; c.midPeakDb = 5.0f; c.midPeakHz = 4500; }
+    }
+    else if (n.startsWith ("M80") && v == 1)        { c.lowShelfDb = 4.0f; c.midPeakDb = -8.0f; c.midPeakHz = 800; c.makeupDb -= 0.5f; }
+    else if (n.startsWith ("Bass Big Muff"))
+    {
+        if (v == 1) { c.lowShelfDb = 5.0f; c.lowKeep = 1.6f; c.makeupDb -= 1.5f; }
+        if (v == 2) { c.lowKeepHz = 20000; c.lowKeep = 0.9f; c.makeupDb -= 2.0f; }
+    }
+    else if (n.startsWith ("Tone Hammer") && v == 1) { c.gainMinDb += 10; c.gainMaxDb += 12; c.threshold = 0.55f; c.midPeakDb = 2.0f; c.midPeakHz = 600; c.makeupDb -= 5.0f; }
+    else if (n.startsWith ("Brassmaster") && v == 1) { c.asym = 2.6f; c.clipHp = 400; c.makeupDb += 1.0f; }
     else if (n.startsWith ("HM-2") && v == 1)       { c.gainMaxDb += 6; c.toneA = 80; c.toneB = 1400; c.makeupDb += 1.8f; }
+    if (calibrated.load (std::memory_order_relaxed))
+        c.makeupDb += pedalTrimDb (getType(), juce::jlimit (0, (int) models().size() - 1, getChoice (pModel)), v);
     return c;
 }
 
@@ -423,15 +582,19 @@ void PedalBlock::design (const PedalCircuit& c) noexcept
     if (useFixLow) fixLow.setLowShelf (fs, 100.0, c.lowShelfDb);
     useFixMid = std::abs (c.midPeakDb) > 0.05f;
     if (useFixMid) fixMid.setPeak (fs, c.midPeakHz, 0.8, c.midPeakDb);
+    for (auto& o : lowLp) o.setCutoff (sampleRate, c.lowKeepHz > 0.0f ? c.lowKeepHz : 100.0);
 }
 
 float PedalBlock::shape (float x) const
 {
     const auto c = circuit();
-    const float g = dbToGain (c.gainMinDb + (c.gainMaxDb - c.gainMinDb) * get (pDrive) / 10.0f) * 0.05f;
-    float y = c.clip == ClipKind::Muff ? clipSample (clipSample (x * std::sqrt (g * 20.0f), c) * std::sqrt (g * 20.0f), c)
-                                       : clipSample (x * g * 20.0f, c);
-    y += c.dryThru * x;
+    // drawn for a guitar played hard (peaks about 12 dB under full scale), not a full-scale sine:
+    // a low-gain preamp should look as clean as it sounds
+    const float g = dbToGain (c.gainMinDb + (c.gainMaxDb - c.gainMinDb) * get (pDrive) / 10.0f);
+    const float in = x * 0.25f;
+    float y = c.clip == ClipKind::Muff ? clipSample (clipSample (in * std::sqrt (g), c) * std::sqrt (g), c)
+                                       : clipSample (in * g, c);
+    y += c.dryThru * in;
     return juce::jlimit (-1.0f, 1.0f, y / juce::jmax (0.2f, c.threshold * 1.2f));
 }
 
@@ -443,6 +606,7 @@ void PedalBlock::prepareImpl (double sr, int block)
     osRate = sr * 4.0;
     for (auto* b : { &inHp, &clipHp, &bw, &bw2, &eqLow, &eqMid, &eqHigh, &eqPres, &preLow, &preHigh, &fixLow, &fixMid }) b->reset();
     for (int ch = 0; ch < 2; ++ch) { toneLp[ch].reset(); toneLp2[ch].reset(); muffHp[ch].reset(); muffHp[ch].setCutoff (osRate, 100.0); }
+    for (int ch = 0; ch < 2; ++ch) { dcBlock[ch].reset(); dcBlock[ch].setCutoff (sampleRate, 12.0); lowLp[ch].reset(); }
     dry.setSize (2, block, false, true, true);
     watch.invalidate();
 }
@@ -450,13 +614,19 @@ void PedalBlock::prepareImpl (double sr, int block)
 void PedalBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 {
     if (watch.changed ({ (float) getChoice (pModel), (float) getChoice (pVoice), get (pDrive), get (pTone), get (pBass), get (pMid),
-                         get (pTreble), get (pMidFreq), get (pTight), get (pPresence) }))
+                         get (pTreble), get (pMidFreq), get (pTight), get (pPresence), calibrated.load (std::memory_order_relaxed) ? 1.0f : 0.0f }))
     {
         cur = circuit();
         design (cur);
     }
     const auto& c = cur;
-    const float level = dbToGain (get (pLevel)) * makeup;
+    // Level-calibrated pedals: the make-up gain belongs to the distorted path only, so the clean blend
+    // (and a bass pedal's clean lows) come through at their own level whatever the circuit needs.
+    // Rigs saved before 0.13 keep the old sum, where the make-up turned the clean blend down with it.
+    const bool cal = calibrated.load (std::memory_order_relaxed) || getType() == NodeType::BassDrive;
+    const float level = dbToGain (get (pLevel)) * (cal ? 1.0f : makeup);
+    const float wetGain = cal ? makeup : 1.0f, cleanGain = cal ? 1.4f : 2.0f;
+    const float lowGain = cal && c.lowKeepHz > 0.0f ? c.lowKeep : 0.0f;
     const float blend = get (pBlend) * 0.01f;
     const float muffStage = std::sqrt (gainLin);
     const float klonClean = c.cleanDrop > 0.0f ? 1.0f - c.cleanDrop * get (pDrive) / 10.0f : 0.0f;
@@ -520,8 +690,10 @@ void PedalBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
         auto* cl = dry.getReadPointer (ch);
         for (int i = 0; i < n; ++i)
         {
-            float y = d[i] + cl[i] * klonClean * 1.5f;
-            y = (y * (1.0f - blend) + cl[i] * blend * 2.0f) * level;
+            // asymmetric clipping (SD-1, OD-1, OCD...) leaves a DC offset: the output capacitor takes it off
+            float y = (dcBlock[ch].hp (d[i]) + cl[i] * klonClean * 1.5f) * wetGain;
+            if (lowGain > 0.0f) y += lowGain * lowLp[ch].lp (cl[i]);   // bass: the clean bottom, under whatever the clipping did
+            y = (y * (1.0f - blend) + cl[i] * blend * cleanGain) * level;
             d[i] = y;
             outPk = juce::jmax (outPk, std::abs (y));
         }

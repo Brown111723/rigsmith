@@ -15,6 +15,7 @@ public:
     juce::String getName() const override { return "Compressor"; }
     juce::String getDetail() const override;
     Visual getVisual() const override { return Visual::Dynamics; }
+    float autoMakeupDb() const;
     float transferDb (float inDb) const override;
     enum { pThr, pRatio, pAtt, pRel, pKnee, pMakeup, pAuto, pMix };
 protected:

@@ -52,7 +52,7 @@ namespace
         t[NodeType::Comp] = {
             studio ("compressor"),
             M ("MXR", "Dyna Comp", "1972", "The squishy orange box: country snap and funk sustain",
-               { { "ratio", 12 }, { "attack", 2 }, { "release", 300 }, { "knee", 4 }, { "auto", 0 }, { "makeup", 6 }, { "threshold", -36 }, { "mix", 100 } },
+               { { "ratio", 12 }, { "attack", 2 }, { "release", 300 }, { "knee", 4 }, { "auto", 0 }, { "makeup", 12 }, { "threshold", -36 }, { "mix", 100 } },
                { "ratio", "attack", "release", "knee", "auto", "mix" }, { { "threshold", "Sensitivity" }, { "makeup", "Output" } }, dark (4800, 0.2f)),
             M ("Boss", "CS-3 Compression Sustainer", "1986", "Sustain, attack, tone, level: bright, clean and practical",
                { { "ratio", 8 }, { "attack", 6 }, { "release", 200 }, { "knee", 6 }, { "auto", 0 }, { "makeup", 5 }, { "threshold", -30 }, { "mix", 100 } },

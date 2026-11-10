@@ -378,12 +378,12 @@ void Library::drawDice (juce::Graphics& g, juce::Rectangle<int> area, Dice state
     // a row with a dark die still loads and plays like any other.
     const auto r = area.toFloat();
     if (state == Dice::All)
-        drawIcon (g, Icon::Dice, r, accent);
+        drawIcon (g, Icon::Dice, r.reduced (1.0f), muted.withAlpha (0.75f));
     else if (state == Dice::None)
-        drawIcon (g, Icon::Dice, r, dim.withAlpha (0.45f));
+        drawIcon (g, Icon::Dice, r.reduced (1.0f), dim.withAlpha (0.28f));
     else
     {
-        drawIcon (g, Icon::Dice, r, accent.withAlpha (0.55f));
+        drawIcon (g, Icon::Dice, r.reduced (1.0f), muted.withAlpha (0.5f));
         g.setColour (muted);
         g.setFont (mono (9.0f));
         g.drawText (juce::String (in) + "/" + juce::String (of), area.translated (-30, 0).withWidth (28), juce::Justification::centredRight);
@@ -504,15 +504,22 @@ void Library::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool s
         }
     }
 
-    // colour stripe (amp + cab: two-tone)
+    // a light in the gear's colour, like the one on its card (amp + cab: two lights)
     const bool childRow = textX == 46;
-    const float sx = childRow ? 36.0f : 12.0f, sw = childRow ? 3.0f : 4.0f;
-    g.setColour (childRow ? c.withAlpha (0.7f) : c);
-    g.fillRoundedRectangle (sx, (float) h * 0.5f - (childRow ? 7.0f : 9.0f), sw, childRow ? 14.0f : 18.0f, 2.0f);
-    if (! secondColour.isTransparent() && ! childRow)
     {
-        g.setColour (secondColour);
-        g.fillRoundedRectangle (sx, (float) h * 0.5f + 1.0f, sw, 8.0f, 2.0f);
+        const float cy = (float) h * 0.5f;
+        const bool two = ! secondColour.isTransparent() && ! childRow;
+        const float rad = childRow ? 2.2f : (two ? 2.6f : 3.0f);
+        const float lx = childRow ? 37.0f : (two ? 10.0f : 14.0f);
+        g.setColour (c.withAlpha (childRow ? 0.16f : 0.2f));
+        g.fillEllipse (lx - rad * 2.0f, cy - rad * 2.0f, rad * 4.0f, rad * 4.0f);
+        g.setColour (childRow ? c.withAlpha (0.75f) : c);
+        g.fillEllipse (lx - rad, cy - rad, rad * 2.0f, rad * 2.0f);
+        if (two)
+        {
+            g.setColour (secondColour);
+            g.fillEllipse (lx + 7.0f - rad, cy - rad, rad * 2.0f, rad * 2.0f);
+        }
     }
 
     // the name is never dimmed: the die only says whether the dice may pick it

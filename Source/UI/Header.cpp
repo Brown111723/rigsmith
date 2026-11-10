@@ -5,7 +5,7 @@ namespace rig
 using namespace theme;
 
 static const juce::String logoText ("RIGSMITH");
-static juce::Font logoFont() { return font (15.0f, true).withExtraKerningFactor (0.14f); }
+static juce::Font logoFont() { return display (12.5f, 0.2f); }
 
 Header::Header (Engine& e) : engine (e)
 {
@@ -19,6 +19,10 @@ Header::Header (Engine& e) : engine (e)
     redo.onClick = [this] { if (onRedo) onRedo(); };
     random.setHighlighted (true);
     random.onClick = [this] { if (onRandom) onRandom(); };
+    instrument.onClick = [this] { if (onInstrument) onInstrument(); };
+    instrument.setTooltip ("Guitar or bass: what's plugged in. Bass switches the tuner to a bass tuning, and new cabinets and the dice "
+                           "reach for bass cabs and bass drives");
+    addAndMakeVisible (instrument);
     random.onRightClick = [this] { if (onRandomMenu) onRandomMenu(); };
     tunerButton.onClick = [this] { if (onTuner) onTuner(); };
     modButton.onClick = [this] { if (onMod) onMod(); };
@@ -46,6 +50,7 @@ void Header::refresh (const Tuner::Reading& r, const juce::String& s)
     reading = r;
     status = s;
 
+    if (const juce::String inst = engine.isBass() ? "BASS" : "GUITAR"; instrument.getButtonText() != inst) instrument.setButtonText (inst);
     juce::String name = engine.presetName + (engine.dirty ? " *" : "");
     if (presetButton.getButtonText() != name) { presetButton.setButtonText (name); presetButton.setTooltip (name + " - presets (Init is always first)"); }
 
@@ -127,7 +132,7 @@ void Header::drawStatus (juce::Graphics& g)
 
     // line 2: a little CPU bar that turns amber then red, plus plug-in delay compensation
     const int pct = juce::roundToInt (cpu * 100.0f);
-    const auto c = pct >= 85 ? juce::Colour (0xffef5350) : pct >= 60 ? accent : teal;
+    const auto c = pct >= 85 ? red : pct >= 60 ? accent : muted;
     juce::String right = "CPU " + juce::String (pct) + "%";
     if (latency > 0) right = "PDC " + juce::String (latency) + "   " + right;
     const float textW = (float) juce::GlyphArrangement::getStringWidthInt (mono (11.0f), right) + 4.0f;
@@ -145,15 +150,21 @@ void Header::drawStatus (juce::Graphics& g)
 
 void Header::paint (juce::Graphics& g)
 {
-    g.fillAll (panel);
-    g.setColour (border);
+    {
+        juce::ColourGradient grad (juce::Colour (0xff131316), 0.0f, 0.0f, panel, 0.0f, (float) getHeight(), false);
+        g.setGradientFill (grad);
+        g.fillAll();
+    }
+    g.setColour (juce::Colours::black.withAlpha (0.7f));
     g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
 
     // logo: the mark, plus the name whenever its full width fits (never cut short)
     auto l = logoArea.toFloat();
     const auto mark = l.removeFromLeft (30.0f).withSizeKeepingCentre (26.0f, 26.0f);
+    g.setColour (accent.withAlpha (0.12f));
+    g.fillRoundedRectangle (mark, 7.0f);
     g.setColour (accent);
-    g.drawRoundedRectangle (mark, 6.0f, 2.0f);
+    g.drawRoundedRectangle (mark, 7.0f, 1.5f);
     juce::Path p;
     p.startNewSubPath (mark.getX() + 6, mark.getBottom() - 8);
     p.lineTo (mark.getX() + 10, mark.getY() + 9);
@@ -189,7 +200,9 @@ void Header::resized()
     tunerButton.setBounds (r.removeFromRight (bh));
     r.removeFromRight (gap);
     random.setBounds (r.removeFromRight (bh));
-    r.removeFromRight (16);
+    r.removeFromRight (gap);
+    instrument.setBounds (r.removeFromRight (62).reduced (0, 4));
+    r.removeFromRight (14);
 
     // left: logo (full name only if there is room for everything else), presets, undo, scenes
     const int textW = juce::GlyphArrangement::getStringWidthInt (logoFont(), logoText) + 14;
@@ -199,7 +212,7 @@ void Header::resized()
         sceneWidths[i] = juce::jlimit (44, 96, juce::GlyphArrangement::getStringWidthInt (font (13.0f, true), scenes[i].getButtonText()) + 22);
         sceneW += sceneWidths[i] + 5;
     }
-    const int statusW = 190 - bh - 6;   // audio / CPU readout between the scenes and the dice
+    const int statusW = 190 - bh - 6 + 68;   // audio / CPU readout between the scenes and the dice
     const int fixed = bh + 4 + bh + 4 + 4 + bh + 4 + bh + 10 + bh + 4 + bh + 14 + sceneW + statusW;
     const bool showName = r.getWidth() - (30 + textW + 10) - fixed >= 150;
     logoArea = r.removeFromLeft (showName ? 30 + textW : 30);

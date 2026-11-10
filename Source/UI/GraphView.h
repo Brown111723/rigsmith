@@ -22,6 +22,9 @@ struct CaptureDrop
     static juce::String describe (const juce::Array<juce::File>&);   // -> "file:" / "files:"
 };
 
+/** The knobs of a block in the order its panel shows them (gain first, level last; no switches). */
+std::vector<int> panelKnobs (const Block&);
+
 /** What the graph needs from the editor that owns it. */
 struct GraphHost
 {
@@ -74,7 +77,14 @@ class BlockCard : public GraphItem,
 public:
     BlockCard (GraphHost&, Node&);
 
-    juce::Point<int> preferredSize() const override { return { 148, 128 }; }
+    /** Gear looks like what it is: stompboxes are tall, amp heads are wide with a grille, cabs show their speakers. */
+    enum class Form { Pedal, Head, Cab };
+    Form form() const;
+    juce::Point<int> preferredSize() const override;
+    static constexpr int cardHeight = 208;
+    /** Repaints only if what the card shows has changed (called a few times a second). */
+    void refresh();
+    bool needsRelayout() const;
     Node* getNode() const override { return &node; }
 
     void paint (juce::Graphics&) override;
@@ -100,6 +110,9 @@ public:
     bool isOverKnob (juce::Point<int> local) const { return selector().valid() && knobArea().expanded (6.0f).contains (local.toFloat()); }
 
 private:
+    juce::Rectangle<float> plateArea() const;
+    juce::uint64 signature() const;
+    juce::uint64 lastSignature = 0;
     juce::Rectangle<float> footswitchArea() const;
     juce::Rectangle<float> diceArea() const;
     juce::Rectangle<float> lockArea() const;
@@ -117,8 +130,19 @@ private:
     Selector selector() const;
     void setSelector (const Selector&, float pos);
     juce::Rectangle<float> knobArea() const;
+    /** The knobs drawn on the card: how many of the block's own, then the capture selector if it has one. */
+    int maxKnobs() const;
+    juce::Point<float> knobCentre (int slot, int slots) const;
+    float knobRadius (int slots) const;
+    int shownSlots() const;
+    void paintGrille (juce::Graphics&, juce::Rectangle<float>, bool live) const;
+    void paintSpeakers (juce::Graphics&, juce::Rectangle<float>, bool live, juce::Colour) const;
     void stepCapture (int delta);
     void showCaptureMenu();
+    /** The block's own knob under a point (its parameter index), or -1: they turn right on the card. */
+    int knobParamAt (juce::Point<float>) const;
+    int paramDrag = -1, paramHover = -1;
+    float paramStart = 0;
     bool knobDragging = false;
     float knobStart = 0;
     int knobMoved = 0;
@@ -197,6 +221,7 @@ public:
     Node* getNode() const override { return &split; }
     void resized() override;
     void paint (juce::Graphics&) override;
+    void refresh();
 
 private:
     struct Hub;
@@ -211,7 +236,10 @@ private:
     juce::OwnedArray<ChainView> rows;
     juce::TextButton addPath { "+ Path" };
 
-    static constexpr int hubW = 112, pillW = 64, mergeW = 34, rowGap = 14, margin = 26;
+    juce::uint64 signature() const;
+    juce::uint64 lastSignature = 0;
+
+    static constexpr int hubW = 116, pillW = 64, mergeW = 34, rowGap = 8, margin = 26;
 };
 
 //==============================================================================
@@ -257,7 +285,9 @@ public:
     void paint (juce::Graphics&) override;
 
     struct Levels { float inL = 0, inR = 0, outL = 0, outR = 0, grDb = 0; bool limiting = false; };
-    void setMeters (const Levels& l) { levels = l; }
+    void setMeters (const Levels& l);
+    /** Call a few times a second: repaints only the cards, splits and meters that changed. */
+    void refreshLive();
 
     /** Files / folders from the OS: into the card under the point (its knob adds to the sweep),
         or new blocks where they land. */
@@ -291,6 +321,9 @@ private:
     Levels levels;
     int hoverTerminal = 0;   // 1 in, 2 out
     juce::Rectangle<int> viewArea;
+    juce::String shownSelection;
+    float shownGains = 0.0f;
+    int liveTicks = 0;
 };
 
 } // namespace rig

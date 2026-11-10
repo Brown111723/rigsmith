@@ -19,7 +19,7 @@ void drawIcon (juce::Graphics&, Icon, juce::Rectangle<float> box, juce::Colour);
 class IconButton : public juce::Button
 {
 public:
-    IconButton (Icon, const juce::String& tooltip, juce::Colour onColour = theme::accent);
+    IconButton (Icon, const juce::String& tooltip, juce::Colour onColour = {});   // default: the accent
 
     void setIcon (Icon i) { icon = i; repaint(); }
     /** Optional text drawn to the right of the icon (e.g. "+3.2 dB"). */
@@ -38,7 +38,7 @@ public:
 private:
     Icon icon;
     juce::String label;
-    juce::Colour onColour;
+    juce::Colour onColourSet;
     float progress = -1.0f;
     bool highlighted = false;
 };

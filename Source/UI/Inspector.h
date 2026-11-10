@@ -176,7 +176,7 @@ private:
                autoGainButton { Icon::AutoGain, "", theme::teal },
                diceButton { Icon::Dice, "Randomise this block's settings (R). Ctrl+Z undoes it" },
                presetButton { Icon::Preset, "Block presets: save, load, init" },
-               lockButton { Icon::Unlock, "Lock: keep this block when randomising the rig", theme::accent };
+               lockButton { Icon::Unlock, "Lock: keep this block when randomising the rig" };
     FootswitchButton bypassButton;
     std::unique_ptr<FxDisplay> display;
     void layoutIcons (juce::Rectangle<int> row);
@@ -208,10 +208,9 @@ private:
         void paint (juce::Graphics& g) override
         {
             // framed like the display beside it
-            g.fillAll (juce::Colour (0xff111215));
-            g.setColour (theme::border);
-            g.drawRect (getLocalBounds());
-            g.fillRect (getWidth() / 2, 8, 1, getHeight() - 16);
+            theme::drawGlass (g, getLocalBounds().toFloat(), 7.0f);
+            g.setColour (theme::border.withAlpha (0.7f));
+            g.fillRect (getWidth() / 2, 10, 1, getHeight() - 20);
         }
         void resized() override
         {

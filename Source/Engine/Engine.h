@@ -3,6 +3,7 @@
 #include "Nodes.h"
 #include "Blocks.h"
 #include "Pedals.h"
+#include "Cab.h"
 #include "NamBlock.h"
 #include "PluginBlock.h"
 #include "Tuner.h"
@@ -212,6 +213,9 @@ public:
     bool getSetting (const juce::String& key, bool def) const;
     void setSetting (const juce::String& key, bool value);
     int getIntSetting (const juce::String& key, int def) const;
+    /** What's plugged in: 0 guitar, 1 bass. Sets what new cabinets, dice and the tuner reach for. */
+    bool isBass() const { return getIntSetting ("instrument", 0) == 1; }
+    void setBass (bool);
     void setIntSetting (const juce::String& key, int value);
     /** Plug-in folders per format (VST3, VST2), remembered in the ini. */
     juce::FileSearchPath getPluginPaths (juce::AudioPluginFormat&) const;
@@ -314,6 +318,7 @@ private:
     std::unique_ptr<Chain> buildFactory (int index, juce::StringArray& sceneNames);
     juce::Array<juce::File> pickLibraryFiles (bool models, int count) const;
     std::vector<std::array<juce::String, 4>> factoryScenes;
+    std::array<std::array<bool, 4>, 4> factorySceneOn {};   // [scene][block of factoryScenes]
     juce::ValueTree snapshot() const;
     void restore (const juce::ValueTree&);
     std::vector<juce::ValueTree> undoStack, redoStack;

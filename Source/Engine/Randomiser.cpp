@@ -135,6 +135,21 @@ std::unique_ptr<Node> Randomiser::makeBuiltIn (NodeType t, int variant)
         if (variant == 1) ir->set (2, 35.0f);   // a room / hall IR as a send-style blend
     }
     b->randomise (rng, 1.0f);
+    if (auto* cb = dynamic_cast<CabBlock*> (b))
+    {
+        // a cab for what's plugged in, with a mic that suits it
+        const int first = CabBlock::firstBassCab(), count = (int) CabBlock::cabs().size();
+        cb->set (CabBlock::pCab, (float) (engine.isBass() ? first + rng.nextInt (count - first) : rng.nextInt (first)));
+        cb->set (CabBlock::pMic, (float) (engine.isBass() ? (rng.nextBool() ? 4 : 1 + rng.nextInt (3)) : rng.nextInt (4)));
+    }
+    if (auto* pd = dynamic_cast<PedalBlock*> (b))
+    {
+        // a pedal starts from its own settings (a bass drive keeps its clean blend), then gets nudged
+        pd->onChoiceChanged (PedalBlock::pModel);
+        pd->set (PedalBlock::pVoice, (float) rng.nextInt (juce::jmax (1, pd->model().voices.size())));
+        if (pd->getType() == NodeType::BassDrive) pd->Block::randomise (rng, 0.35f);
+        else pd->randomise (rng, 1.0f);
+    }
     b->syncEdits();
     return n;
 }
@@ -166,11 +181,20 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
     if (cat == Category::Amp)
         cands.push_back ({ NodeType::Nam, nullptr, models.isEmpty() ? 0.01f : 4.0f });   // a NAM amp can always change model
     else if (cat == Category::Cab)
-        cands.push_back ({ NodeType::Ir, nullptr, irs.isEmpty() ? 0.01f : 4.0f });
+    {
+        // IRs when there are some; the built-in Cabinet otherwise (and now and then anyway)
+        cands.push_back ({ NodeType::Ir, nullptr, irs.isEmpty() ? 0.0f : 4.0f });
+        cands.push_back ({ NodeType::Cab, nullptr, irs.isEmpty() ? 4.0f : 0.5f });
+    }
     else
+    {
         for (auto t : builtInsFor (cat))
             if (! engine.isRandomExcluded (t))
                 cands.push_back ({ t, nullptr, t == NodeType::Comp ? 2.5f : (t == NodeType::Gate || t == NodeType::Limiter ? 0.6f : 1.0f) });
+        // a bass gets bass drives most of the time
+        if (cat == Category::Drive && engine.isBass() && ! engine.isRandomExcluded (NodeType::BassDrive))
+            cands.push_back ({ NodeType::BassDrive, nullptr, 8.0f });
+    }
 
     // NAM pedal captures can be the drive; space IRs can be the reverb
     if (cat == Category::Drive && ! pedalModels.isEmpty())  cands.push_back ({ NodeType::Nam, nullptr, 1.5f, 1 });
@@ -216,7 +240,7 @@ std::unique_ptr<Node> Randomiser::makeAmp()
 std::unique_ptr<Node> Randomiser::makeCab()
 {
     if (auto n = makeRandom (Category::Cab)) return n;
-    return engine.createNode (NodeType::Ir);
+    return engine.createNode (NodeType::Cab);
 }
 
 //==============================================================================

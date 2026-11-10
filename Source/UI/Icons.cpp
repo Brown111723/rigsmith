@@ -169,16 +169,37 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> box, juce::C
 
 void drawFootswitch (juce::Graphics& g, juce::Rectangle<float> sw, juce::Colour c, bool on)
 {
+    // a stomp switch: a dark nut, a domed steel cap, and a ring of light round it when the block is on
+    const auto ctr = sw.getCentre();
+    const float R = sw.getWidth() * 0.5f;
     if (on)
+    {
         for (int i = 3; i > 0; --i)
         {
-            g.setColour (c.withAlpha (0.08f * (float) i));
-            g.fillEllipse (sw.expanded ((float) (4 - i) * 3.0f));
+            g.setColour (c.withAlpha (0.055f * (float) (4 - i)));
+            g.fillEllipse (sw.expanded ((float) i * 2.6f));
         }
-    g.setColour (on ? c : bg);
-    g.fillEllipse (sw);
-    g.setColour (borderHi);
-    g.drawEllipse (sw, 1.5f);
+    }
+    g.setColour (juce::Colours::black.withAlpha (0.45f));
+    g.fillEllipse (sw.translated (0.0f, 1.5f));
+    {
+        juce::ColourGradient nut (juce::Colour (0xff35353b), ctr.x, sw.getY(), juce::Colour (0xff0b0b0d), ctr.x, sw.getBottom(), false);
+        g.setGradientFill (nut);
+        g.fillEllipse (sw);
+    }
+    g.setColour (on ? c : juce::Colour (0xff000000));
+    g.drawEllipse (sw.reduced (0.5f), on ? 1.6f : 1.0f);
+    {
+        const auto cap = sw.reduced (R * 0.30f);
+        juce::ColourGradient dome (juce::Colour (0xff6a6a72), ctr.x - R * 0.2f, cap.getY(), juce::Colour (0xff1a1a1e), ctr.x + R * 0.2f, cap.getBottom(), false);
+        dome.addColour (0.45, juce::Colour (0xff3a3a40));
+        g.setGradientFill (dome);
+        g.fillEllipse (cap);
+        g.setColour (juce::Colours::black.withAlpha (0.65f));
+        g.drawEllipse (cap, 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.20f));
+        g.fillEllipse (ctr.x - R * 0.26f, cap.getY() + R * 0.10f, R * 0.40f, R * 0.22f);
+    }
 }
 
 FootswitchButton::FootswitchButton() : juce::Button ("On / bypass")
@@ -198,12 +219,7 @@ void FootswitchButton::paintButton (juce::Graphics& g, bool over, bool)
     const auto r = getLocalBounds().toFloat();
     const float d = juce::jmin (24.0f, r.getHeight() - 6.0f);
     const auto sw = juce::Rectangle<float> (r.getX() + 4.0f, r.getCentreY() - d * 0.5f, d, d);
-    drawFootswitch (g, sw, over && ! on ? colour.withAlpha (0.35f) : colour, on || over);
-    if (over && ! on)
-    {
-        g.setColour (bg);
-        g.fillEllipse (sw.reduced (3.0f));
-    }
+    drawFootswitch (g, sw, over && ! on ? colour.withAlpha (0.4f) : colour, on || over);
     g.setColour (on ? theme::text : muted);
     g.setFont (font (12.0f));
     g.drawText (on ? "On" : "Bypassed", r.withTrimmedLeft (sw.getRight() + 8.0f - r.getX()), juce::Justification::centredLeft, false);
@@ -211,7 +227,7 @@ void FootswitchButton::paintButton (juce::Graphics& g, bool over, bool)
 
 //==============================================================================
 IconButton::IconButton (Icon i, const juce::String& tip, juce::Colour on)
-    : juce::Button (tip), icon (i), onColour (on)
+    : juce::Button (tip), icon (i), onColourSet (on)
 {
     setTooltip (tip);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
@@ -235,12 +251,21 @@ void IconButton::paintButton (juce::Graphics& g, bool over, bool down)
     const bool on = getToggleState() || highlighted;
     const bool enabled = isEnabled();
 
-    auto fill = on ? onColour.withAlpha (0.22f) : (over ? cardHi : card);
-    if (down) fill = fill.brighter (0.1f);
-    g.setColour (fill);
-    g.fillRoundedRectangle (r, 7.0f);
-    g.setColour (on ? onColour.withAlpha (0.8f) : (over ? borderHi : border));
-    g.drawRoundedRectangle (r.reduced (0.5f), 7.0f, 1.0f);
+    // quiet until you need it: no box at rest, a soft one under the mouse, lit when on
+    const auto onColour = onColourSet.isTransparent() ? theme::accent : onColourSet;
+    if (on)
+    {
+        g.setColour (onColour.withAlpha (down ? 0.24f : 0.15f));
+        g.fillRoundedRectangle (r, 7.0f);
+        g.setColour (onColour.withAlpha (0.75f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 7.0f, 1.0f);
+    }
+    else if (over || down || label.isNotEmpty())
+    {
+        g.setColour (juce::Colours::white.withAlpha (down ? 0.10f : over ? 0.065f : 0.03f));
+        g.fillRoundedRectangle (r, 7.0f);
+        if (label.isNotEmpty()) { g.setColour (over ? borderHi : border); g.drawRoundedRectangle (r.reduced (0.5f), 7.0f, 1.0f); }
+    }
 
     const auto ic = ! enabled ? dim.withAlpha (0.5f) : (on ? onColour : (over ? theme::text : muted));
     auto iconBox = r.withWidth (r.getHeight()).reduced (r.getHeight() * 0.2f);

@@ -157,6 +157,7 @@ void IoPanel::refreshControls()
         inf << (engine.limiterOn.load() ? "Limiter on, ceiling " + juce::String (engine.limiterCeilingDb.load(), 1) + " dBFS" : juce::String ("Limiter off"));
         if (engine.outputWidth.load() < 0.5f) inf << "   -   mono";
     }
+    if (idle) inf = "Nothing selected: this is the master. Click a block to edit it.";
     info.setText (inf, juce::dontSendNotification);
 }
 

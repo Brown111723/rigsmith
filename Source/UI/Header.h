@@ -35,6 +35,9 @@ public:
     std::function<void (int)> onSceneRightClick;
 
     juce::TextButton presetButton;
+    /** Guitar / Bass: what's plugged in. */
+    juce::TextButton instrument;
+    std::function<void()> onInstrument;
     IconButton prev { Icon::Prev, "Previous preset (Page Up)" }, next { Icon::Next, "Next preset (Page Down)" },
                save { Icon::Save, "Save preset (Ctrl+S)" },
                undo { Icon::Undo, "Undo (Ctrl+Z)" }, redo { Icon::Redo, "Redo (Ctrl+Y)" },
@@ -75,6 +78,8 @@ public:
     void resized() override;
     void setReading (const Tuner::Reading& r) { reading = r; repaint(); }
     void setPolyReading (const PolyTuner::Reading& r) { poly = r; repaint(); }
+    /** The tuning was changed elsewhere (the Guitar / Bass switch). */
+    void syncTuning() { tuningBox.setSelectedItemIndex (engine.polyTuner.tuning.load(), juce::dontSendNotification); repaint(); }
     std::function<void()> onClose;
 
     enum Mode { Auto = 0, Mono, Poly };

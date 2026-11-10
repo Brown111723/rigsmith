@@ -23,6 +23,8 @@ public:
 
     void setOutput (bool isOutput);
     bool isOutput() const noexcept { return output; }
+    /** Shown because nothing is selected (the master is always at hand): says so, with a hint. */
+    void setIdle (bool nothingSelected) { idle = nothingSelected; }
     void setLevels (const IoLevels&);
     std::function<void()> onResetOvers;
 
@@ -40,7 +42,7 @@ private:
 
     GraphHost& host;
     Engine& engine;
-    bool output = false;
+    bool output = false, idle = false;
     IoLevels levels;
 
     struct Hold { float value = 0; juce::uint32 at = 0; };

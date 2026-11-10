@@ -17,7 +17,9 @@ enum class NodeType
     // v0.11: a modulation source (lives in the MOD section, not in the rig)
     Modulator,
     // v0.12
-    Distortion
+    Distortion,
+    // v0.13: a cabinet + microphone without an IR, and the bass preamps / drives
+    Cab, BassDrive
 };
 
 juce::String nodeTypeToString (NodeType);
@@ -116,6 +118,9 @@ public:
     std::atomic<float> inTrimDb { 0.0f }, outTrimDb { 0.0f };
     /** Peak levels in and out of the block since the UI last took them (linear). */
     std::atomic<float> peakIn { 0.0f }, peakOut { 0.0f };
+    /** The level leaving the block right now (linear peak, falling back over ~0.3 s): the signal
+        line on its card. Written by the audio thread, only read by the UI. */
+    std::atomic<float> flow { 0.0f };
 
     std::atomic<AnalyzerTap*> tap { nullptr };
 
@@ -236,9 +241,15 @@ struct FxModel
 /** The models of a block type (empty: not modelled this way). In FxModels.cpp. */
 const std::vector<FxModel>& fxModelsFor (NodeType);
 
+/** Level calibration (Calibration.cpp, measured by RigsmithTests --calibrate): the trim that makes
+    a block at its stock settings come out at a sensible level against bypass with a real guitar
+    signal - drives a few dB up, modulation and dynamics about level. model 0 is "Studio". */
+float fxTrimDb (NodeType, int model);
+float pedalTrimDb (NodeType, int model, int voice);
+
 //==============================================================================
 /** How a block's display draws what its knobs are doing. */
-enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope, Tuner, Gate, Modulator };
+enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope, Tuner, Gate, Modulator, Cab };
 
 struct DelayTap { float timeSec, gain; int side; };   // side: -1 left, 0 centre, 1 right
 
@@ -315,6 +326,10 @@ public:
     /** Optional moving marker for Response visuals (e.g. a wah's current frequency). */
     virtual float liveFrequency() const { return 0.0f; }
 
+    /** Level-calibrated (see fxTrimDb). Blocks from rigs saved before 0.13 keep the level they were
+        saved with until a model or preset is picked on them. */
+    std::atomic<bool> calibrated { true };
+
     // live meters written by the audio thread
     std::atomic<float> meterIn { -100.0f }, meterOut { -100.0f }, meterGr { 0.0f };
     std::atomic<double> livePhase { 0.0 };
@@ -333,6 +348,8 @@ protected:
     int charModel = -1;
     double charRate = 0.0;
     FxCharacter charNow;
+    float charTrim = 1.0f;
+    bool charCal = true;
 };
 
 //==============================================================================

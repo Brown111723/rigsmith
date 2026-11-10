@@ -29,6 +29,11 @@ const std::vector<PolyTuner::Tuning>& PolyTuner::tunings()
         { "Open E (E B E G# B E)",          { 40, 47, 52, 56, 59, 64 } },
         { "7-string standard (B E A D G B E)", { 35, 40, 45, 50, 55, 59, 64 } },
         { "Bass (E A D G)",                 { 28, 33, 38, 43 } },
+        { "Bass drop D (D A D G)",          { 26, 33, 38, 43 } },
+        { "Bass half step down (Eb)",       { 27, 32, 37, 42 } },
+        { "Bass whole step down (D G C F)", { 26, 31, 36, 41 } },
+        { "5-string bass (B E A D G)",      { 23, 28, 33, 38, 43 } },
+        { "6-string bass (B E A D G C)",    { 23, 28, 33, 38, 43, 48 } },
     };
     return t;
 }
@@ -132,11 +137,13 @@ PolyTuner::Reading PolyTuner::analyse()
         {
             const float target = refA * std::pow (2.0f, (float) (t.midi[s] - 69) / 12.0f);
             // the fundamental and its first harmonics together: low strings are placed by their harmonics too
-            // ...but not a harmonic that lands on another string (the low E's 3rd and 4th are B and high E)
+            // ...but not a harmonic that lands on another string or on one of its harmonics: the low E's 3rd
+            // and 4th are B and high E, and strings a fourth apart share one (4 x E = 3 x A), which
+            // would drag each reading towards its neighbour's
             float weights[] { 1.0f, 0.7f, 0.45f, 0.3f };
             for (int h = 1; h < 4; ++h)
                 for (size_t j = 0; j < numStrings; ++j)
-                    for (int k = 1; k <= 2 && j != s; ++k)
+                    for (int k = 1; k <= 4 && j != s; ++k)
                         if (std::abs (12.0f * std::log2 ((float) (h + 1) * target
                                                           / ((float) k * refA * std::pow (2.0f, (float) (t.midi[j] - 69) / 12.0f)))) < 0.6f)
                             weights[h] = 0.0f;
