@@ -55,6 +55,8 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 - NAM models run with the same fast activation functions the Neural Amp Modeler plug-in itself uses: a standard WaveNet capture went from about 22% of a core to under 7% here (LSTM and A2 captures change less).
 - The rig view repaints only the cards that changed, instead of the whole rig many times a second.
 
+**Safety net.** Nothing that isn't a number can leave a block any more (it used to be possible for two unusual NAM captures in a row to overflow, and the result would then live on in every delay and reverb after them), and a NAM capture is never driven beyond +18 dBFS.
+
 **Fixed.** The drive pedals' filter-update check wrote three values past the end of a small array (harmless in practice, but wrong). The poly tuner no longer lets strings a fourth apart pull each other's readings (4 x E and 3 x A are the same note).
 
 ## Features

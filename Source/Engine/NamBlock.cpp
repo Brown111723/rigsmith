@@ -565,7 +565,9 @@ void NamBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
     for (int i = 0; i < n; ++i)
     {
         const float drive = dbToGain (g0 + (g1 - g0) * (float) i / (float) n);
-        mono[(size_t) i] = 0.5f * (l[i] + r[i]) * inGain.getNextValue() * drive;
+        // captures are trained on signals within +-1; far beyond that a model's fast maths can overflow
+        const float x = 0.5f * (l[i] + r[i]) * inGain.getNextValue() * drive;
+        mono[(size_t) i] = x > -8.0f && x < 8.0f ? x : (x >= 8.0f ? 8.0f : (x <= -8.0f ? -8.0f : 0.0f));
     }
 
     bool processed = false;

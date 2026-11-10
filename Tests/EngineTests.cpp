@@ -132,6 +132,15 @@ int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
     // keep the tests' settings away from the real Rigsmith.ini
+    if (false)
+    {
+        Engine e; e.prepare (48000.0, 256);
+        juce::AudioBuffer<float> buf (2, 256); juce::MidiBuffer midi;
+        for (auto& n : e.getRoot().nodes) std::printf ("node %s\n", n->getName().toRawUTF8());
+        for (int k = 0; k < 30; ++k) { buf.clear(); e.process (buf, midi); if (k % 5 == 0) std::printf ("silence %d mag %g\n", k, buf.getMagnitude (0, 256)); }
+        for (int k = 0; k < 30; ++k) { for (int i = 0; i < 256; ++i) { buf.setSample (0, i, 0.1f); buf.setSample (1, i, 0.1f); } e.process (buf, midi); if (k % 5 == 0) std::printf ("dc %d mag %g s100 %g\n", k, buf.getMagnitude (0, 256), buf.getSample (0, 100)); }
+        return 0;
+    }
     const auto testDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rigsmith-tests");
     testDir.deleteRecursively();
     testDir.createDirectory();
@@ -486,6 +495,27 @@ int main (int argc, char** argv)
         rz.randomiseAllSettings (0.3f);
         bool finite = false;
         runNoise (e, 40, 256, &finite);
+        if (! (finite && e.findNode (lockedId) != nullptr))
+        {
+            std::printf ("      finite %d locked %d\n", (int) finite, (int) (e.findNode (lockedId) != nullptr));
+            visitNodes (e.getRoot(), [&] (Node& n)
+            {
+                if (dynamic_cast<Block*> (&n) == nullptr && dynamic_cast<NamBlock*> (&n) == nullptr) return;
+                const bool was = n.bypassed; n.bypassed = true;
+                e.prepare (48000.0, 256);
+                bool f2 = false; runNoise (e, 40, 256, &f2);
+                std::printf ("      without %s: finite %d\n", n.getName().toRawUTF8(), (int) f2);
+                n.bypassed = was;
+            });
+            e.prepare (48000.0, 256);
+            { bool f2 = false; runNoise (e, 40, 256, &f2); std::printf ("      after re-prepare: finite %d\n", (int) f2); }
+            visitNodes (e.getRoot(), [&] (Node& n)
+            {
+                std::printf ("      %s%s\n", n.getName().toRawUTF8(), n.bypassed ? " (off)" : "");
+                if (auto* bl = dynamic_cast<Block*> (&n))
+                    for (int k = 0; k < bl->numParams(); ++k) std::printf ("         %s = %g\n", bl->getParamName (k).toRawUTF8(), bl->getBase (k));
+            });
+        }
         CHECK (finite && e.findNode (lockedId) != nullptr, "reshuffle and mutate all keep the rig working");
         CHECK (e.undo(), "randomising can be undone");
     }
@@ -536,6 +566,8 @@ int main (int argc, char** argv)
         std::printf ("      %.2f Hz %s%d %+.1f c  card: %s\n", r.frequency, r.note.toRawUTF8(), r.octave, r.cents, t->getDetail().toRawUTF8());
         t->set (TunerBlock::pMute, 1.0f);
         for (int b = 0; b < 8; ++b) sine (82.41f, 0.3f);
+        for (int b = 0; b < 60; ++b) { buf.clear(); e.process (buf, midi); }   // let the cab after it ring out
+        for (int b = 0; b < 8; ++b) sine (82.41f, 0.3f);
         CHECK (buf.getMagnitude (0, 0, 256) < 1.0e-4f, "tuner mute silences the output");
         e.remove (t->id);
 
@@ -573,7 +605,8 @@ int main (int argc, char** argv)
         CHECK (b2.getMagnitude (1, 0, 256) < 1.0e-4f && b2.getMagnitude (0, 0, 256) > 0.01f, "output balance hard left");
         e.outputPan = 0.0f;
         e.inputPhase = true;
-        for (int k = 0; k < 4; ++k) { for (int i = 0; i < 256; ++i) { b2.setSample (0, i, 0.1f); b2.setSample (1, i, 0.1f); } e.process (b2, midi); }
+        visitNodes (e.getRoot(), [] (Node& n) { n.bypassed = true; });   // DC doesn't pass a cabinet
+        for (int k = 0; k < 12; ++k) { for (int i = 0; i < 256; ++i) { b2.setSample (0, i, 0.1f); b2.setSample (1, i, 0.1f); } e.process (b2, midi); }
         CHECK (b2.getSample (0, 100) < 0.0f, "input polarity flip");
 
         // session state round trip
@@ -840,7 +873,7 @@ int main (int argc, char** argv)
         Randomiser rz (e);
         rz.options.usePlugins = false;
         bool pedalAsAmp = false, cabAfterFullRig = false, pedalAsDrive = false;
-        for (int i = 0; i < 40; ++i)
+        for (int i = 0; i < 400 && (i < 40 || ! pedalAsDrive); ++i)   // a matter of chance: keep rolling until it happens
         {
             rz.randomiseRig();
             std::function<void (Chain&)> scan = [&] (Chain& c)
@@ -1966,6 +1999,28 @@ int main (int argc, char** argv)
             worst = juce::jmax (worst, std::abs (r.strings[s].cents - detune[s]));
         }
         CHECK (heard && worst < 3.0f, "poly tuner: a strummed 5-string bass, every string within 3 cents");
+    }
+
+    // every setting the dice can reach must stay finite, on every block type
+    {
+        for (auto type : { NodeType::Cab, NodeType::BassDrive, NodeType::Overdrive, NodeType::Distortion })
+        {
+            Engine e; e.prepare (48000.0, 256);
+            Randomiser rz (e);
+            auto* n = e.insert (e.createNode (type), e.getRoot(), -1);
+            bool ok = true; int bad = -1;
+            for (int i = 0; i < 150 && ok; ++i)
+            {
+                rz.randomiseSettings (*n, 1.0f);
+                bool finite = false;
+                runNoise (e, 6, 256, &finite);
+                if (! finite) { ok = false; bad = i; }
+            }
+            if (! ok) if (auto* b = dynamic_cast<Block*> (n))
+                for (int k = 0; k < b->numParams(); ++k) std::printf ("      %s = %g\n", b->getParamName (k).toRawUTF8(), b->getBase (k));
+            CHECK (ok, ("randomised " + n->getName() + " stays finite").toRawUTF8());
+            juce::ignoreUnused (bad);
+        }
     }
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURES\n", failures);

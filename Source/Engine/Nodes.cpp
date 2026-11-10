@@ -339,6 +339,18 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
     auto* l = buffer.getWritePointer (0);
     auto* r = buffer.getWritePointer (1);
 
+    // a safety net: nothing that isn't a number ever leaves a block (it would live on in every
+    // delay and reverb after it). x * 0 is 0 for any real number and NaN otherwise.
+    {
+        float bad = 0.0f;
+        for (int i = 0; i < n; ++i) bad += l[i] * 0.0f + r[i] * 0.0f;
+        if (bad != 0.0f)
+            for (int i = 0; i < n; ++i)
+            {
+                if (! std::isfinite (l[i])) l[i] = 0.0f;
+                if (! std::isfinite (r[i])) r[i] = 0.0f;
+            }
+    }
 
     if (ag)
     {
