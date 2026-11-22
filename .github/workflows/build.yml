@@ -15,10 +15,10 @@ jobs:
     name: Windows (Standalone + VST3)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/_deps
           key: deps-win-${{ hashFiles('CMakeLists.txt') }}
@@ -97,7 +97,7 @@ jobs:
           }
           & $iscc /DAppVersion=${{ steps.version.outputs.version }} installer/Rigsmith.iss
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: Rigsmith-Windows
           path: |
@@ -116,7 +116,7 @@ jobs:
     name: Engine tests (Linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install dependencies
         run: |
           sudo apt-get update

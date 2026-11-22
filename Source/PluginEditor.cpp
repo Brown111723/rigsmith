@@ -1465,6 +1465,23 @@ void RigsmithEditor::showPresetMenu()
     for (int i = 0; i < Engine::getFactoryNames().size(); ++i)
         m.addItem (50 + i, Engine::getFactoryNames()[i] + "  (" + Engine::getFactoryDescription (i) + ")", true, fi == i);
     m.addSeparator();
+    m.addSectionHeader ("Style presets (all built in)");
+    {
+        const int si = engine.getStyleIndex();
+        for (auto& cat : Engine::getStyleCategories())
+        {
+            juce::PopupMenu sub;
+            bool ticked = false;
+            for (int i = 0; i < Engine::getNumStyles(); ++i)
+                if (Engine::getStyleCategory (i) == cat)
+                {
+                    sub.addItem (100000 + i, Engine::getStyleName (i) + "   -  " + Engine::getStyleDescription (i), true, si == i);
+                    ticked = ticked || si == i;
+                }
+            m.addSubMenu (cat, sub, true, nullptr, ticked);
+        }
+    }
+    m.addSeparator();
     m.addSectionHeader ("Your presets");
     if (files.isEmpty())
         m.addItem (-1, "No presets yet - save one!", false);
@@ -1492,6 +1509,7 @@ void RigsmithEditor::showPresetMenu()
         if (r == 1) savePreset (false);
         else if (r == 2) savePreset (true);
         else if (r >= 50 && r < 60) { engine.loadFactory (r - 50); selectedId.clear(); }
+        else if (r >= 100000) { engine.loadStyle (r - 100000); selectedId.clear(); }
         else if (r == 4)
         {
             chooser = std::make_unique<juce::FileChooser> ("Open preset", engine.getPresetFolder(), "*.rig");

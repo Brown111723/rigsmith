@@ -1,6 +1,7 @@
 #include "Engine.h"
 #include "PluginScanner.h"
 #include "FactoryPresets.h"
+#include "StylePresets.h"
 
 namespace rig
 {
@@ -2262,6 +2263,64 @@ std::unique_ptr<Chain> Engine::buildFactory (int index, juce::StringArray& scene
     return r;
 }
 
+int Engine::getNumStyles() { return (int) stylePresets().size(); }
+juce::String Engine::getStyleName (int i)        { return juce::isPositiveAndBelow (i, getNumStyles()) ? juce::String (stylePresets()[(size_t) i].name) : juce::String(); }
+juce::String Engine::getStyleCategory (int i)    { return juce::isPositiveAndBelow (i, getNumStyles()) ? juce::String (stylePresets()[(size_t) i].category) : juce::String(); }
+juce::String Engine::getStyleDescription (int i) { return juce::isPositiveAndBelow (i, getNumStyles()) ? juce::String (stylePresets()[(size_t) i].blurb) : juce::String(); }
+juce::StringArray Engine::getStyleCategories()   { return styleCategories(); }
+
+int Engine::getStyleIndex() const
+{
+    if (presetFile != juce::File()) return -1;
+    for (int i = 0; i < getNumStyles(); ++i)
+        if (presetName == stylePresets()[(size_t) i].name) return i;
+    return -1;
+}
+
+void Engine::loadStyle (int index)
+{
+    if (dirty) checkpoint();
+    index = juce::jlimit (0, getNumStyles() - 1, index);
+    const auto& st = stylePresets()[(size_t) index];
+    setBass (st.bassRig);
+
+    factoryScenes.clear();
+    StyleParts parts;
+    auto r = buildStyle (st, parts);
+    r->prepare (sampleRate, blockSize);
+    {
+        const juce::ScopedLock sl (lock);
+        std::swap (root, r);
+    }
+    if (r != nullptr) announceDeletion (*r);
+    r.reset();
+
+    presetName = st.name;
+    presetFile = juce::File();
+
+    // Rhythm, Lead, Clean, Dry: built last to first, so Rhythm is left live
+    const juce::String labels[kNumScenes] { "Rhythm", "Lead", "Clean", "Dry" };
+    auto on = [] (Node* n, bool b) { if (n != nullptr) n->bypassed = ! b; };
+    for (int sc = kNumScenes - 1; sc >= 0; --sc)
+    {
+        sceneNames[sc] = labels[sc];
+        for (auto* d : parts.drives) on (d, sc != 2);
+        for (auto* k : parts.keep) on (k, true);
+        on (parts.leadBoost, sc == 1);
+        on (parts.leadLevel, sc == 1);
+        on (parts.mod, sc == 2 || (sc == 0 && parts.modInRhythm));
+        on (parts.delay, sc != 3);
+        on (parts.reverb, sc != 3);
+        scenes[sc] = captureScene();
+    }
+
+    activeScene = 0;
+    mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [] (const MidiMapping& m) { return ! m.isGlobal(); }), mappings.end());
+    dirty = false;
+    notifyGraphChanged();
+    listeners.call ([] (Listener& l) { l.presetChanged(); l.sceneChanged(); });
+}
+
 void Engine::loadFactory (int index)
 {
     if (dirty) checkpoint();
@@ -2375,13 +2434,16 @@ void Engine::stepPreset (int delta)
 {
     // Init and the starting points first, then the saved presets
     auto files = getPresetFiles();
-    const int nf = getFactoryNames().size();
-    const int count = files.size() + nf;
+    const int nf = getFactoryNames().size(), ns = getNumStyles();
+    const int count = files.size() + nf + ns;
     int cur = files.indexOf (presetFile);
-    cur = cur >= 0 ? cur + nf : juce::jmax (0, getFactoryIndex());   // an unsaved rig counts as Init
+    if (cur >= 0) cur += nf + ns;
+    else if (getStyleIndex() >= 0) cur = nf + getStyleIndex();
+    else cur = juce::jmax (0, getFactoryIndex());   // an unsaved rig counts as Init
     const int next = ((cur + delta) % count + count) % count;
     if (next < nf) loadFactory (next);
-    else loadPreset (files[next - nf]);
+    else if (next < nf + ns) loadStyle (next - nf);
+    else loadPreset (files[next - nf - ns]);
 }
 
 //==============================================================================

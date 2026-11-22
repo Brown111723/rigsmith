@@ -151,12 +151,20 @@ public:
     static juce::String getFactoryDescription (int index);
     void loadFactory (int index);
     int getFactoryIndex() const;   // -1 unless a starting point is loaded (and unsaved)
+    /** Style presets (StylePresets.h): whole rigs for a genre, all built in, grouped by category. */
+    static int getNumStyles();
+    static juce::String getStyleName (int index);
+    static juce::String getStyleCategory (int index);
+    static juce::String getStyleDescription (int index);
+    static juce::StringArray getStyleCategories();
+    void loadStyle (int index);
+    int getStyleIndex() const;     // -1 unless a style preset is loaded (and unsaved)
 
     juce::File getPresetFolder() const;
     juce::Array<juce::File> getPresetFiles() const;
     bool loadPreset (const juce::File&);
     bool savePreset (const juce::File&);
-    /** Steps through Init followed by every saved preset. */
+    /** Steps through Init and the starting points, the style presets, then every saved preset. */
     void stepPreset (int delta);
     static constexpr const char* initName = "Init";
     bool isInit() const { return presetFile == juce::File() && presetName == initName; }

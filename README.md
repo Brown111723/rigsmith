@@ -20,6 +20,10 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 ![A randomised rig: three NAM amps with their cabs in parallel, then delay and shimmer reverb](docs/screenshot-random.png)
 
+## New in 0.15
+
+- **80 style presets**, all built in (no captures or IRs needed), mostly rock: Classic Rock, Hard Rock, Blues Rock, Punk & Grunge, Alternative & Indie, Metal, Modern Rock, Southern & Country, Clean & Jazz, Funk & Pop, Ambient & Shoegaze, Psych & Surf, and Bass. Each is a whole rig (gate, pedals, one of the built-in amps, a cabinet, modulation, delay, reverb) with four scenes: **Rhythm**, **Lead** (a boost in front of the amp and a little more level), **Clean** (the drive pedals off) and **Dry** (no modulation, delay or reverb). They're in the preset menu under **Style presets**, and Page Up / Down steps through them after the starting points.
+
 ## New in 0.14
 
 **A built-in amp.** 26 amps in one Amp block, each modelled as its circuit is built: triode preamp stages that clip, compress and bias-shift as they're pushed, each amp's real passive tone stack (the Fender / Marshall / Vox "FMV" stack with that amp's parts, so the knobs interact as they do on the amp), and a push-pull power amp with negative feedback, Presence and Depth working through it, sag and its output transformer. 4x oversampled, about 1.5-2% of one core.
@@ -246,7 +250,7 @@ git tag v0.10.1 && git push origin v0.10.1
 | More options | Right-click any block, pill, scene or knob |
 | MIDI learn | Right-click a control, choose **MIDI learn**, then press a footswitch or move a pedal |
 | Switch scenes | Keys `1`–`4` |
-| Change presets | `Page Up` / `Page Down` (Init, Classic Rig, Dual Amp Rig, Bass Rig, Bass Bi-Amp Rig, then yours) |
+| Change presets | `Page Up` / `Page Down` (Init and the starting points, the style presets, then yours) |
 | Add a block between two others | Click the small **+** on the wire |
 | Save | `Ctrl+S` |
 | Tuner | `T` |
