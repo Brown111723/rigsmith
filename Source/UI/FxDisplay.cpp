@@ -6,8 +6,13 @@ using namespace theme;
 
 static constexpr float minHz = 20.0f, maxHz = 20000.0f;
 
-FxDisplay::FxDisplay (Engine& e, Block& b)
-    : engine (e), block (b), visual (b.getVisual()), colour (colourFor (b))
+FxDisplay::FxDisplay (Engine& e, Block& b) : FxDisplay (e.analyzer, b)
+{
+    engine = &e;
+}
+
+FxDisplay::FxDisplay (AnalyzerTap& t, Block& b)
+    : tap (t), block (b), visual (b.getVisual()), colour (colourFor (b))
 {
     preHist.assign (fftSize, 0.0f);
     postHist.assign (fftSize, 0.0f);
@@ -58,7 +63,7 @@ void FxDisplay::pullSpectrum()
 {
     auto pull = [this] (bool post, std::vector<float>& hist)
     {
-        const int got = engine.analyzer.read (post, scratch.data(), fftSize);
+        const int got = tap.read (post, scratch.data(), fftSize);
         if (got <= 0) return;
         std::move (hist.begin() + got, hist.end(), hist.begin());
         std::copy (scratch.begin(), scratch.begin() + got, hist.end() - got);
@@ -75,7 +80,7 @@ void FxDisplay::pullSpectrum()
         std::fill (fftData.begin() + fftSize, fftData.end(), 0.0f);
         window.multiplyWithWindowingTable (fftData.data(), (size_t) fftSize);
         fft.performFrequencyOnlyForwardTransform (fftData.data());
-        const float sr = (float) juce::jmax (8000.0, engine.getSampleRate());
+        const float sr = (float) juce::jmax (8000.0, (engine != nullptr ? engine->getSampleRate() : block.getSampleRate()));
         const float norm = 4.0f / (float) fftSize;
         for (int x = 0; x < w; ++x)
         {
@@ -873,7 +878,7 @@ void FxDisplay::mouseDown (const juce::MouseEvent& e)
     draggingThreshold = visual == Visual::Gate && std::abs (e.position.y - gateY (block.getBase (GateBlock::pThreshold))) < 10.0f;
     if (draggingThreshold) mouseDrag (e);
     draggingMic = visual == Visual::Cab && cabArea().contains (e.position);
-    if (draggingMic) { engine.checkpoint(); moveMic (e.position); }
+    if (draggingMic) { if (engine != nullptr) engine->checkpoint(); moveMic (e.position); }
 }
 
 void FxDisplay::mouseDrag (const juce::MouseEvent& e)

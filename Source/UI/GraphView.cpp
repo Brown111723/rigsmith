@@ -6,6 +6,29 @@ namespace rig
 {
 using namespace theme;
 
+void drawCardKnob (juce::Graphics& g, juce::Point<float> ctr, float kr, const ParamSpec& sp, float v, juce::Colour c, bool live, bool hot)
+{
+    // a ring in the block's colour, lit up to the value (from the middle for +/- knobs), round a flat cap
+    const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
+    const float p = sp.toProportion (v);
+    const bool bipolar = sp.min < 0.0f && sp.max > 0.0f;
+    const float from = bipolar ? a0 + (a1 - a0) * sp.toProportion (0.0f) : a0, to = a0 + (a1 - a0) * p;
+    const float rr = kr + 1.0f;
+    juce::Path track, value;
+    track.addCentredArc (ctr.x, ctr.y, rr, rr, 0.0f, a0, a1, true);
+    g.setColour (juce::Colour (0xff2a2a31));
+    g.strokePath (track, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    if (std::abs (to - from) > 0.01f)
+    {
+        value.addCentredArc (ctr.x, ctr.y, rr, rr, 0.0f, juce::jmin (from, to), juce::jmax (from, to), true);
+        const auto vc = c.withMultipliedAlpha (live ? 1.0f : 0.4f);
+        if (hot) { g.setColour (vc.withAlpha (0.25f)); g.strokePath (value, juce::PathStrokeType (5.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded)); }
+        g.setColour (hot ? vc.brighter (0.2f) : vc);
+        g.strokePath (value, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+    drawKnobBody (g, ctr, kr - 3.5f, to, live, hot);
+}
+
 static void drawWire (juce::Graphics& g, float x1, float x2, float y, juce::Colour c, float level, bool arrow)
 {
     if (x2 <= x1) return;
@@ -304,7 +327,7 @@ bool BlockCard::acceptsFile (const juce::File& f) const
 }
 
 /** The first few knobs of the block, as the panel orders them (for the little knobs on its card). */
-static std::vector<int> cardKnobs (const Node& node, int max)
+std::vector<int> cardKnobs (const Node& node, int max)
 {
     std::vector<int> v;
     if (auto* b = dynamic_cast<const Block*> (&node))
@@ -328,7 +351,7 @@ int BlockCard::shownSlots() const
 }
 
 /** A knob's name, short enough to sit under a small knob. */
-static juce::String shortLabel (juce::String name)
+juce::String shortLabel (juce::String name)
 {
     static const std::pair<const char*, const char*> known[] {
         { "Clean Blend", "BLEND" }, { "Blend (clean)", "BLEND" }, { "Bass (clean)", "CLEAN" }, { "Balance (dry)", "BAL" }, { "Threshold", "THRESH" },
@@ -534,10 +557,8 @@ void BlockCard::paint (juce::Graphics& g)
             const int i = knobsShown[k];
             const auto ctr = knobCentre ((int) k, slots);
             const float p = b->getSpecs()[(size_t) i].toProportion (b->get (i));
-            g.setOpacity (alpha);
             const bool turning = i == paramDrag, hot = turning || (i == paramHover && over);
-            drawKnobBody (g, ctr, kr, a0 + (a1 - a0) * p, live, hot);
-            g.setOpacity (1.0f);
+            drawCardKnob (g, ctr, kr, b->getSpecs()[(size_t) i], b->get (i), c, live, hot);
             g.setColour (hot ? text : muted.withMultipliedAlpha (live ? 0.85f : 0.4f));
             g.setFont (font (7.4f, true).withExtraKerningFactor (0.06f));
             g.drawFittedText (shortLabel (b->getParamName (i)), juce::roundToInt (ctr.x - slotW * 0.5f) + 1, juce::roundToInt (ctr.y + kr + 4.0f),

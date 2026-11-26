@@ -24,6 +24,12 @@ struct CaptureDrop
 
 /** The knobs of a block in the order its panel shows them (gain first, level last; no switches). */
 std::vector<int> panelKnobs (const Block&);
+/** The first few knobs of a block, as the little knobs on its card show them. */
+std::vector<int> cardKnobs (const Node&, int max);
+/** A knob's name, short enough to sit under a small knob ("FDBK"). */
+juce::String shortLabel (juce::String name);
+/** One of the card's little knobs: a value ring in the block's colour round a flat cap. */
+void drawCardKnob (juce::Graphics&, juce::Point<float> centre, float radius, const ParamSpec&, float value, juce::Colour, bool live, bool hot);
 
 /** What the graph needs from the editor that owns it. */
 struct GraphHost

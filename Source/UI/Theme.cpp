@@ -141,55 +141,18 @@ void drawGlass (juce::Graphics& g, juce::Rectangle<float> r, float radius)
 
 void drawKnobBody (juce::Graphics& g, juce::Point<float> c, float R, float angle, bool enabled, bool lit)
 {
+    // flat and quiet: a dark disc with a hairline edge and a pointer - the ring round it says the value
     if (R < 2.0f) return;
-    // the shadow it throws on the panel
-    if (R > 7.0f)
-    {
-        g.setColour (juce::Colours::black.withAlpha (0.30f));
-        g.fillEllipse (c.x - R * 1.06f, c.y - R * 0.94f, R * 2.12f, R * 2.16f);
-        g.setColour (juce::Colours::black.withAlpha (0.28f));
-        g.fillEllipse (c.x - R, c.y - R * 0.90f, R * 2.0f, R * 2.06f);
-    }
-    // skirt
-    {
-        juce::ColourGradient grad (juce::Colour (0xff3b3b42), c.x, c.y - R, juce::Colour (0xff0e0e10), c.x, c.y + R, false);
-        g.setGradientFill (grad);
-        g.fillEllipse (c.x - R, c.y - R, R * 2.0f, R * 2.0f);
-        g.setColour (juce::Colour (0xff050506));
-        g.drawEllipse (c.x - R, c.y - R, R * 2.0f, R * 2.0f, 1.0f);
-    }
-    // knurling
-    if (R > 13.0f)
-    {
-        const int ticks = R > 26.0f ? 48 : 32;
-        juce::Path grip;
-        for (int i = 0; i < ticks; ++i)
-        {
-            const float a = angle + juce::MathConstants<float>::twoPi * (float) i / (float) ticks;
-            const auto p0 = c.getPointOnCircumference (R * 0.80f, a), p1 = c.getPointOnCircumference (R * 0.965f, a);
-            grip.startNewSubPath (p0); grip.lineTo (p1);
-        }
-        g.setColour (juce::Colours::black.withAlpha (0.42f));
-        g.strokePath (grip, juce::PathStrokeType (juce::jmax (1.0f, R * 0.045f)));
-    }
-    // cap
-    {
-        const float r = R * (R > 13.0f ? 0.76f : 0.82f);
-        juce::ColourGradient grad (juce::Colour (0xff34343a), c.x, c.y - r, juce::Colour (0xff17171a), c.x, c.y + r, false);
-        g.setGradientFill (grad);
-        g.fillEllipse (c.x - r, c.y - r, r * 2.0f, r * 2.0f);
-        juce::ColourGradient rim (juce::Colours::white.withAlpha (0.16f), c.x, c.y - r, juce::Colours::white.withAlpha (0.0f), c.x, c.y + r * 0.2f, false);
-        g.setGradientFill (rim);
-        g.drawEllipse (c.x - r + 0.5f, c.y - r + 0.5f, r * 2.0f - 1.0f, r * 2.0f - 1.0f, 1.0f);
-    }
-    // pointer
-    {
-        const float w = juce::jlimit (1.4f, 3.2f, R * 0.11f);
-        const auto p0 = c.getPointOnCircumference (R * 0.30f, angle), p1 = c.getPointOnCircumference (R * 0.90f, angle);
-        juce::Path p; p.startNewSubPath (p0); p.lineTo (p1);
-        g.setColour ((lit ? accent : text).withMultipliedAlpha (enabled ? 1.0f : 0.35f));
-        g.strokePath (p, juce::PathStrokeType (w, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    }
+    const auto disc = juce::Rectangle<float> (c.x - R, c.y - R, R * 2.0f, R * 2.0f);
+    g.setColour (juce::Colour (lit ? 0xff24242a : 0xff1b1b20));
+    g.fillEllipse (disc);
+    g.setColour (juce::Colour (lit ? 0xff3a3a43 : 0xff2c2c33));
+    g.drawEllipse (disc.reduced (0.5f), 1.0f);
+    const float w = juce::jlimit (1.5f, 2.6f, R * 0.12f);
+    const auto p0 = c.getPointOnCircumference (R * 0.38f, angle), p1 = c.getPointOnCircumference (R * 0.80f, angle);
+    juce::Path p; p.startNewSubPath (p0); p.lineTo (p1);
+    g.setColour ((lit ? text : text.withAlpha (0.85f)).withMultipliedAlpha (enabled ? 1.0f : 0.35f));
+    g.strokePath (p, juce::PathStrokeType (w, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 void drawLed (juce::Graphics& g, juce::Point<float> c, float r, juce::Colour col, bool on)
@@ -302,7 +265,7 @@ void RigLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, i
     const float angle = start + pos * (end - start);
     const auto fill = s.findColour (juce::Slider::rotarySliderFillColourId);
     const bool active = s.isMouseOverOrDragging();
-    const float stroke = radius > 22.0f ? 2.6f : 2.2f;
+    const float stroke = radius > 22.0f ? 3.2f : 2.6f;
 
     // the scale: a hairline all the way round, lit up to where the knob is
     juce::Path track;
@@ -326,7 +289,7 @@ void RigLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, i
         g.setColour (vc);
         g.strokePath (value, juce::PathStrokeType (stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
-    drawKnobBody (g, centre, arcR - stroke - (radius > 22.0f ? 4.0f : 2.5f), angle, s.isEnabled());
+    drawKnobBody (g, centre, arcR - stroke - (radius > 22.0f ? 5.0f : 3.0f), angle, s.isEnabled(), active);
 }
 
 void RigLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float, float,

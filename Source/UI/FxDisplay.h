@@ -12,6 +12,9 @@ class FxDisplay : public juce::Component,
 {
 public:
     FxDisplay (Engine&, Block&);
+    /** Without a rig around it (a block hosted on its own, e.g. a DAW insert): the spectrum comes
+        from this tap, which the caller attaches to the block. */
+    FxDisplay (AnalyzerTap&, Block&);
     ~FxDisplay() override;
 
     void paint (juce::Graphics&) override;
@@ -65,7 +68,8 @@ private:
     std::vector<Handle> eqHandles() const;
     int hitHandle (juce::Point<float>) const;
 
-    Engine& engine;
+    Engine* engine = nullptr;
+    AnalyzerTap& tap;
     Block& block;
     const Visual visual;
     const juce::Colour colour;
