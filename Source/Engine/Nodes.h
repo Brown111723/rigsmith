@@ -21,19 +21,23 @@ enum class NodeType
     // v0.13: a cabinet + microphone without an IR, and the bass preamps / drives
     Cab, BassDrive,
     // v0.14: a built-in tube amp; acoustic guitar and vocal tools
-    Amp, AcousticBody, AcousticPre, VoiceStrip, DeEsser, PitchCorrect, Harmonizer
+    Amp, AcousticBody, AcousticPre, VoiceStrip, DeEsser, PitchCorrect, Harmonizer,
+    // v0.16: Keysmith's sound sources (they play MIDI notes)
+    Synth, Sampler
 };
 
 juce::String nodeTypeToString (NodeType);
 /** The built-in effects, grouped as in the + menu and the library. */
 const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups();
+/** Keysmith's sound sources (Synth, Sampler): only offered when the engine plays notes. */
+const std::vector<NodeType>& sourceTypes();
 juce::String builtInMenuName (NodeType);    // "Delay (digital / tape / ping-pong / dual)"
 juce::String builtInShortName (NodeType);   // "Delay"
 juce::String builtInBlurb (NodeType);       // one line on what it does
 NodeType nodeTypeFromString (const juce::String&);
 
 /** Families used for colour coding, library grouping and the add menu. */
-enum class Category { Dynamics = 0, Drive, Amp, Cab, Eq, Filter, Modulation, Delay, Reverb, Pitch, Utility, Routing, Other };
+enum class Category { Dynamics = 0, Drive, Amp, Cab, Eq, Filter, Modulation, Delay, Reverb, Pitch, Utility, Routing, Other, Source };
 juce::String categoryName (Category);
 juce::Colour categoryColour (Category);
 Category categoryForBuiltIn (NodeType);
@@ -270,7 +274,7 @@ float pedalTrimDb (NodeType, int model, int voice);
 
 //==============================================================================
 /** How a block's display draws what its knobs are doing. */
-enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope, Tuner, Gate, Modulator, Cab };
+enum class Visual { None, Spectrum, Response, Dynamics, Shaper, Lfo, Delay, Reverb, Envelope, Tuner, Gate, Modulator, Cab, Wavetable, Sample };
 
 struct DelayTap { float timeSec, gain; float side; };   // side: -1 left, 0 centre, 1 right
 
@@ -304,6 +308,10 @@ public:
     virtual juce::String formatValue (int i, float v) const;
     /** Which parameters the panel shows as knobs, in order (empty: all of them, as declared). */
     virtual std::vector<int> panelOrder() const { return fxModels != nullptr ? modelPanel ({}) : std::vector<int>(); }
+    /** Big blocks (Keysmith's Synth) lay their controls out in titled groups: (title, parameters). */
+    virtual std::vector<std::pair<juce::String, std::vector<int>>> panelGroups() const { return {}; }
+    /** The knobs its card shows (empty: the panel's first few). */
+    virtual std::vector<int> cardParams() const { return {}; }
     /** What a knob is called right now (a pedal model may call Drive "Sustain" or "Distortion"). */
     virtual juce::String getParamName (int i) const;
     /** A choice's options right now (a model's own switch positions). */

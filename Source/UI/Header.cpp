@@ -175,7 +175,7 @@ void Header::paint (juce::Graphics& g)
     {
         g.setColour (text);
         g.setFont (logoFont());
-        g.drawText (logoText, l.withTrimmedLeft (8.0f), juce::Justification::centredLeft, false);
+        g.drawText (engine.isKeys() ? juce::String ("KEYSMITH") : logoText, l.withTrimmedLeft (8.0f), juce::Justification::centredLeft, false);
     }
     drawStatus (g);
 }
@@ -197,15 +197,16 @@ void Header::resized()
     r.removeFromRight (gap);
     modButton.setBounds (r.removeFromRight (bh));
     r.removeFromRight (gap);
-    tunerButton.setBounds (r.removeFromRight (bh));
-    r.removeFromRight (gap);
+    // Keysmith has no tuner, and it's always keys
+    tunerButton.setVisible (! engine.isKeys());
+    instrument.setVisible (! engine.isKeys());
+    if (! engine.isKeys()) { tunerButton.setBounds (r.removeFromRight (bh)); r.removeFromRight (gap); }
     random.setBounds (r.removeFromRight (bh));
     r.removeFromRight (gap);
-    instrument.setBounds (r.removeFromRight (62).reduced (0, 4));
-    r.removeFromRight (14);
+    if (! engine.isKeys()) { instrument.setBounds (r.removeFromRight (62).reduced (0, 4)); r.removeFromRight (14); }
 
     // left: logo (full name only if there is room for everything else), presets, undo, scenes
-    const int textW = juce::GlyphArrangement::getStringWidthInt (logoFont(), logoText) + 14;
+    const int textW = juce::GlyphArrangement::getStringWidthInt (logoFont(), engine.isKeys() ? juce::String ("KEYSMITH") : logoText) + 14;
     int sceneWidths[kNumScenes], sceneW = 0;
     for (int i = 0; i < kNumScenes; ++i)
     {

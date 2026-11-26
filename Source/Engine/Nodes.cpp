@@ -15,8 +15,14 @@ static const std::pair<NodeType, const char*> typeNames[] = {
     { NodeType::Cab, "cab" }, { NodeType::BassDrive, "bassdrive" },
     { NodeType::Amp, "amp" }, { NodeType::AcousticBody, "acousticbody" }, { NodeType::AcousticPre, "acousticpre" },
     { NodeType::VoiceStrip, "voicestrip" }, { NodeType::DeEsser, "deesser" }, { NodeType::PitchCorrect, "pitchcorrect" },
-    { NodeType::Harmonizer, "harmonizer" }
+    { NodeType::Harmonizer, "harmonizer" }, { NodeType::Synth, "synth" }, { NodeType::Sampler, "sampler" }
 };
+
+const std::vector<NodeType>& sourceTypes()
+{
+    static const std::vector<NodeType> t { NodeType::Synth, NodeType::Sampler };
+    return t;
+}
 
 const std::vector<std::pair<juce::String, std::vector<NodeType>>>& builtInGroups()
 {
@@ -71,6 +77,8 @@ juce::String builtInMenuName (NodeType t)
         case NodeType::Pitch:     return "Pitch / Octave / Doubler";
         case NodeType::Gain:      return "Volume / Pan";
         case NodeType::Tuner:     return "Tuner (strobe + needle)";
+        case NodeType::Synth:     return "Synth (wavetables, unison, filter)";
+        case NodeType::Sampler:   return "Sampler (classic / stretch / granular)";
         default:                  return "Block";
     }
 }
@@ -118,6 +126,8 @@ juce::String builtInBlurb (NodeType t)
         case NodeType::Pitch:     return "Octaves, pitch shift, doubler";
         case NodeType::Gain:      return "Volume and pan";
         case NodeType::Tuner:     return "Strobe tuner - never in dice";
+        case NodeType::Synth:     return "Two wavetable oscillators with unison, sub and noise, a filter and two envelopes";
+        case NodeType::Sampler:   return "A sound played pitched, time-stretched or as a grain cloud. Layer them on a split";
         default:                  return {};
     }
 }
@@ -153,6 +163,7 @@ juce::String categoryName (Category c)
         case Category::Utility:    return "Utility";
         case Category::Routing:    return "Routing";
         case Category::Other:      return "Other";
+        case Category::Source:     return "Sound source";
     }
     return "Other";
 }
@@ -174,6 +185,7 @@ juce::Colour categoryColour (Category c)
         case Category::Utility:    return juce::Colour (0xffb8bcc6);  // grey
         case Category::Routing:    return juce::Colour (0xfff2a33a);
         case Category::Other:      return juce::Colour (0xff8a8f99);
+        case Category::Source:     return juce::Colour (0xff4fd8ff);  // cyan
     }
     return juce::Colour (0xff8a8f99);
 }
@@ -203,6 +215,7 @@ Category categoryForBuiltIn (NodeType t)
         case NodeType::Gain: case NodeType::Tuner:                               return Category::Utility;
         case NodeType::Split: case NodeType::Chain:                              return Category::Routing;
         case NodeType::Plugin:                                                   return Category::Other;
+        case NodeType::Synth: case NodeType::Sampler:                            return Category::Source;
     }
     return Category::Other;
 }

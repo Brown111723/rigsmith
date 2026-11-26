@@ -56,6 +56,8 @@ private:
     void drawTuner (juce::Graphics&);
     void drawGate (juce::Graphics&);
     void drawCab (juce::Graphics&);
+    void drawWavetable (juce::Graphics&);
+    void drawSample (juce::Graphics&);
     /** The speaker picture on a Cabinet's display: its square, the cone's centre and radius. */
     juce::Rectangle<float> cabArea() const;
     bool draggingMic = false;

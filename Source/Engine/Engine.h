@@ -10,6 +10,7 @@
 #include "PluginBlock.h"
 #include "Tuner.h"
 #include "IniFile.h"
+#include "Synth.h"
 #include "Captures.h"
 #include "Modulation.h"
 #include "PolyTuner.h"
@@ -234,7 +235,19 @@ public:
     void setSetting (const juce::String& key, bool value);
     int getIntSetting (const juce::String& key, int def) const;
     /** What's plugged in: 0 guitar, 1 bass. Sets what new cabinets, dice and the tuner reach for. */
-    bool isBass() const { return getIntSetting ("instrument", 0) == 1; }
+    bool isBass() const { return ! keys && getIntSetting ("instrument", 0) == 1; }
+
+    //--- Keysmith: the same rig, playing notes ---------------------------------------
+    /** Keysmith: the rig plays MIDI notes through Synth and Sampler blocks (set once, before use). */
+    void setKeys (bool k) { keys = k; }
+    bool isKeys() const noexcept { return keys; }
+    static const juce::StringArray& getKeysPatchNames();
+    static const juce::StringArray& getKeysPatchCategories();   // one per patch
+    void loadKeysPatch (int index);
+    /** Sample library folders: the Sampler's browser starts there, the dice pick sounds from them. */
+    juce::FileSearchPath getSamplePaths() const { return getPaths ("samplePaths"); }
+    /** Every sound file in the sample folders (cached; rescan = true looks again). */
+    juce::Array<juce::File> getSampleFiles (bool rescan = false);
     void setBass (bool);
     void setIntSetting (const juce::String& key, int value);
     /** Plug-in folders per format (VST3, VST2), remembered in the ini. */
@@ -322,6 +335,10 @@ public:
     juce::CriticalSection& getLock() noexcept { return lock; }
 
 private:
+    bool keys = false;
+    juce::Array<juce::File> sampleFiles;
+    bool sampleFilesScanned = false;
+
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void openSettings();

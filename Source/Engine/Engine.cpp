@@ -727,6 +727,12 @@ void Engine::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, 
         }
         ~IoScope() { RigIo::inputs = nullptr; RigIo::numInputs = 0; RigIo::outputs = nullptr; RigIo::numOutputs = 0; RigIo::offset = 0; }
     } ioScope (io);
+    // the notes, for Keysmith's Synth and Sampler blocks
+    struct MidiScope
+    {
+        explicit MidiScope (const juce::MidiBuffer& m) { RigMidi::events = &m; }
+        ~MidiScope() { RigMidi::events = nullptr; }
+    } midiScope (midi);
 
     // --- input routing
     switch (inputMode.load())
@@ -1227,6 +1233,8 @@ std::unique_ptr<Node> Engine::createNode (NodeType type) const
         case NodeType::PitchCorrect: return std::make_unique<PitchCorrectBlock>();
         case NodeType::Harmonizer:   return std::make_unique<HarmonizerBlock>();
         case NodeType::Tuner:     return std::make_unique<TunerBlock>();
+        case NodeType::Synth:     return std::make_unique<SynthBlock>();
+        case NodeType::Sampler:   return std::make_unique<SamplerBlock>();
         case NodeType::Plugin: break;
     }
     return nullptr;
@@ -2379,12 +2387,15 @@ void Engine::loadFactory (int index)
 //==============================================================================
 juce::File Engine::getPresetFolder() const
 {
+    // Keysmith keeps its patches in a folder of their own, beside the rigs
+    if (keys) { auto f = getFolder ("presetFolder").getChildFile ("Keysmith"); f.createDirectory(); return f; }
     return getFolder ("presetFolder");
 }
 
 juce::Array<juce::File> Engine::getPresetFiles() const
 {
     auto files = getPresetFolder().findChildFiles (juce::File::findFiles, true, "*.rig");
+    if (! keys) files.removeIf ([this] (const juce::File& f) { return f.isAChildOf (getPresetFolder().getChildFile ("Keysmith")); });
     std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
     {
         return a.getFileName().compareNatural (b.getFileName()) < 0;
@@ -2434,6 +2445,17 @@ void Engine::stepPreset (int delta)
 {
     // Init and the starting points first, then the saved presets
     auto files = getPresetFiles();
+    if (keys)
+    {
+        const int nk = getKeysPatchNames().size(), count = nk + files.size();
+        int cur = files.indexOf (presetFile);
+        if (cur >= 0) cur += nk;
+        else cur = juce::jmax (0, getKeysPatchNames().indexOf (presetName));
+        const int next = ((cur + delta) % count + count) % count;
+        if (next < nk) loadKeysPatch (next);
+        else loadPreset (files[next - nk]);
+        return;
+    }
     const int nf = getFactoryNames().size(), ns = getNumStyles();
     const int count = files.size() + nf + ns;
     int cur = files.indexOf (presetFile);

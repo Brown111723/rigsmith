@@ -58,6 +58,8 @@ juce::String kindLabel (const Node& n)
                 return "IR - " + gearShortName (ir->getGear());
             return "CAB IR";
         case NodeType::Cab:    return "CABINET";
+        case NodeType::Synth:  return "SYNTH ENGINE";
+        case NodeType::Sampler: return "SAMPLE ENGINE";
         case NodeType::BassDrive: return "BASS";
         case NodeType::Amp:    return dynamic_cast<const AmpBlock*> (&n) != nullptr && dynamic_cast<const AmpBlock&> (n).isBassModel() ? "BASS AMP" : "AMP";
         case NodeType::Split:  return "SPLIT";

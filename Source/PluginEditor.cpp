@@ -185,7 +185,7 @@ RigsmithEditor::RigsmithEditor (RigsmithProcessor& p)
     };
     divider.setTooltip ("Drag to resize the panel. Double-click to make it tall / normal");
 
-    libraryVisible = engine.getSetting ("libraryVisible", true);
+    libraryVisible = engine.isKeys() ? false : engine.getSetting ("libraryVisible", true);
     modVisible = engine.getSetting ("modVisible", false);
     modPanel.setCollapsed (! modVisible);
     inspectorHeight = getIntSetting ("inspectorHeight", 370);
@@ -805,6 +805,19 @@ void RigsmithEditor::openNode (Node& n)
     {
         chooseFileFor (n);
     }
+    else if (n.getType() == NodeType::Synth || n.getType() == NodeType::Sampler)
+    {
+        const bool synth = n.getType() == NodeType::Synth;
+        const auto id = n.id;
+        auto start = synth ? dynamic_cast<SynthBlock&> (n).getUserFile() : dynamic_cast<SamplerBlock&> (n).getFile();
+        if (! start.existsAsFile()) start = juce::File (synth ? engine.getPaths ("wavetablePaths").getRawString (0) : engine.getSamplePaths().getRawString (0));
+        chooser = std::make_unique<juce::FileChooser> (synth ? "Load a wavetable" : "Load a sound", start, "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this, id] (const juce::FileChooser& fc)
+        {
+            if (fc.getResult().existsAsFile())
+                if (auto* node = engine.findNode (id)) loadFileInto (node, nullptr, -1, fc.getResult());
+        });
+    }
 }
 
 void RigsmithEditor::openPluginWindow (PluginBlock& pb)
@@ -917,6 +930,27 @@ bool RigsmithEditor::loadFileInto (Node* target, Chain* chain, int index, const 
     if (f.hasFileExtension ("rig"))
         return engine.loadPreset (f);
 
+    if (SamplerBlock::isSoundFile (f) && (engine.isKeys() || dynamic_cast<SamplerBlock*> (target) != nullptr || dynamic_cast<SynthBlock*> (target) != nullptr))
+    {
+        // Keysmith: a sound becomes a Sampler's (or a wavetable, dropped on a Synth)
+        juce::String err;
+        bool ok = false;
+        Node* into = target;
+        if (auto* sy = dynamic_cast<SynthBlock*> (target)) ok = sy->loadWavetable (f, 0, err);
+        else if (auto* sa = dynamic_cast<SamplerBlock*> (target)) ok = sa->loadSample (f, err);
+        else
+        {
+            auto sb = std::make_unique<SamplerBlock>();
+            ok = sb->loadSample (f, err);
+            if (ok) into = engine.insert (std::move (sb), chain != nullptr ? *chain : engine.getRoot(), index);
+        }
+        if (! ok) { showMessage (err); return false; }
+        engine.markDirty();
+        showMessage ("Loaded " + f.getFileNameWithoutExtension());
+        if (into != nullptr) { select (into->id); inspector.setNode (into); }
+        graph.repaint();
+        return true;
+    }
     const bool isNam = f.hasFileExtension ("nam");
     const bool isIr = f.hasFileExtension ("wav;aif;aiff;flac");
     if (! isNam && ! isIr)
@@ -1109,6 +1143,26 @@ enum AddIds
 
 void RigsmithEditor::populateAddMenu (juce::PopupMenu& m, int o, bool includeRouting)
 {
+    if (engine.isKeys())
+    {
+        m.addSectionHeader ("Sound sources");
+        for (auto t : sourceTypes()) m.addItem (o + addBuiltInBase + (int) t, builtInMenuName (t));
+        m.addSectionHeader ("Effects");
+        for (auto& [group, types] : builtInGroups())
+        {
+            if (group == "Amp & Cabinet" || group == "Bass" || group == "Acoustic & Vocal") continue;
+            juce::PopupMenu sub;
+            for (auto t : types) if (t != NodeType::Tuner) sub.addItem (o + addBuiltInBase + (int) t, builtInMenuName (t));
+            m.addSubMenu (group, sub);
+        }
+        if (includeRouting)
+        {
+            m.addSectionHeader ("Layers");
+            m.addItem (o + addSplit2, "Split - 2 layers");
+            m.addItem (o + addSplit3, "Split - 3 layers");
+        }
+        return;
+    }
     m.addSectionHeader ("Amp & cab");
     m.addItem (o + addBuiltInBase + (int) NodeType::Nam, "NAM Amp");
     m.addItem (o + addBuiltInBase + (int) NodeType::Ir, "Cab IR");
@@ -1257,6 +1311,36 @@ void RigsmithEditor::showReplaceMenu (Node& node, juce::Component* anchor)
 
 void RigsmithEditor::browseFile (Node& n, int delta)
 {
+    if (n.getType() == NodeType::Synth || n.getType() == NodeType::Sampler)
+    {
+        const bool synth = n.getType() == NodeType::Synth;
+        const auto current = synth ? dynamic_cast<SynthBlock&> (n).getUserFile() : dynamic_cast<SamplerBlock&> (n).getFile();
+        juce::Array<juce::File> files;
+        if (current.existsAsFile())
+            files = current.getParentDirectory().findChildFiles (juce::File::findFiles, false, "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+        else
+            files = engine.getSampleFiles();
+        if (files.isEmpty())
+        {
+            if (! synth)
+            {
+                // no library yet: step through Keysmith's own sounds
+                auto& sb = dynamic_cast<SamplerBlock&> (n);
+                const int count = SamplerBlock::factoryNames().size();
+                sb.set (SamplerBlock::pSource, (float) ((sb.getChoice (SamplerBlock::pSource) + delta + count + 1) % (count + 1) % count));
+                engine.markDirty();
+                inspector.setNode (&n);
+                return;
+            }
+            showMessage ("Add a sample library folder in Settings to browse sounds");
+            return;
+        }
+        std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b) { return a.getFullPathName().compareNatural (b.getFullPathName()) < 0; });
+        int idx = files.indexOf (current);
+        idx = idx < 0 ? (delta > 0 ? 0 : files.size() - 1) : (idx + delta + files.size()) % files.size();
+        loadFileInto (&n, nullptr, -1, files[idx]);
+        return;
+    }
     juce::File current;
     if (auto* nb = dynamic_cast<NamBlock*> (&n)) current = nb->getFile();
     else if (auto* ir = dynamic_cast<IrBlock*> (&n)) current = ir->getFile();
@@ -1461,12 +1545,29 @@ void RigsmithEditor::showPresetMenu()
     auto files = engine.getPresetFiles();
     juce::PopupMenu m;
     m.addSectionHeader ("Starting points");
+    if (engine.isKeys())
+    {
+        // Keysmith's patches, by kind
+        std::map<juce::String, juce::PopupMenu> byKind;
+        juce::StringArray order;
+        for (int i = 0; i < Engine::getKeysPatchNames().size(); ++i)
+        {
+            const auto cat = Engine::getKeysPatchCategories()[i];
+            if (! order.contains (cat)) order.add (cat);
+            byKind[cat].addItem (200000 + i, Engine::getKeysPatchNames()[i], true, engine.presetName == Engine::getKeysPatchNames()[i] && ! engine.presetFile.existsAsFile());
+        }
+        for (auto& cat : order) m.addSubMenu (cat, byKind[cat]);
+    }
+    else
+    {
     const int fi = engine.getFactoryIndex();
     for (int i = 0; i < Engine::getFactoryNames().size(); ++i)
         m.addItem (50 + i, Engine::getFactoryNames()[i] + "  (" + Engine::getFactoryDescription (i) + ")", true, fi == i);
+    }
+    if (! engine.isKeys())
+    {
     m.addSeparator();
     m.addSectionHeader ("Style presets (all built in)");
-    {
         const int si = engine.getStyleIndex();
         for (auto& cat : Engine::getStyleCategories())
         {
@@ -1482,7 +1583,7 @@ void RigsmithEditor::showPresetMenu()
         }
     }
     m.addSeparator();
-    m.addSectionHeader ("Your presets");
+    m.addSectionHeader (engine.isKeys() ? "Your patches" : "Your presets");
     if (files.isEmpty())
         m.addItem (-1, "No presets yet - save one!", false);
 
@@ -1509,6 +1610,7 @@ void RigsmithEditor::showPresetMenu()
         if (r == 1) savePreset (false);
         else if (r == 2) savePreset (true);
         else if (r >= 50 && r < 60) { engine.loadFactory (r - 50); selectedId.clear(); }
+        else if (r >= 200000) { engine.loadKeysPatch (r - 200000); selectedId.clear(); }
         else if (r >= 100000) { engine.loadStyle (r - 100000); selectedId.clear(); }
         else if (r == 4)
         {

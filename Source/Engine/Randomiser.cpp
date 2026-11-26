@@ -135,6 +135,15 @@ std::unique_ptr<Node> Randomiser::makeBuiltIn (NodeType t, int variant)
         if (variant == 1) ir->set (2, 35.0f);   // a room / hall IR as a send-style blend
     }
     b->randomise (rng, 1.0f);
+    if (auto* sb = dynamic_cast<SamplerBlock*> (b))
+    {
+        // a sound from the sample library now and then (its own sounds otherwise)
+        const auto files = engine.getSampleFiles();
+        juce::String err;
+        if (! files.isEmpty() && rng.nextFloat() < 0.6f)
+            for (int attempt = 0; attempt < 3; ++attempt)
+                if (sb->loadSample (files[rng.nextInt (files.size())], err)) break;
+    }
     if (auto* cb = dynamic_cast<CabBlock*> (b))
     {
         // a cab for what's plugged in, with a mic that suits it
@@ -178,7 +187,12 @@ std::unique_ptr<Node> Randomiser::makeRandom (Category cat, const Node* avoid)
     juce::String avoidPlugin;
     if (auto* pb = dynamic_cast<const PluginBlock*> (avoid)) avoidPlugin = pb->getDescription().createIdentifierString();
 
-    if (cat == Category::Amp)
+    if (cat == Category::Source)
+    {
+        cands.push_back ({ NodeType::Synth, nullptr, 1.0f });
+        cands.push_back ({ NodeType::Sampler, nullptr, 1.0f });
+    }
+    else if (cat == Category::Amp)
         cands.push_back ({ NodeType::Nam, nullptr, models.isEmpty() ? 0.01f : 4.0f });   // a NAM amp can always change model
     else if (cat == Category::Cab)
     {
@@ -265,6 +279,34 @@ void Randomiser::randomiseRig()
         if (! hasCab) add (c, makeCab());
     };
 
+    if (engine.isKeys())
+    {
+        // Keysmith: one sound source, or two to four layered on a split; then the effects
+        if (chance (0.4f))
+        {
+            auto s = std::make_unique<Split>();
+            const int n = 2 + (chance (0.35f) ? 1 : 0) + (chance (0.2f) ? 1 : 0);
+            for (int i = 0; i < n; ++i)
+            {
+                auto b = std::make_unique<Split::Branch>();
+                add (*b->chain, makeRandom (Category::Source));
+                if (chance (0.2f)) add (*b->chain, makeRandom (chance (0.5f) ? Category::Modulation : Category::Filter));
+                b->level = 0.45f + 0.45f * rng.nextFloat();
+                s->branches.push_back (std::move (b));
+            }
+            s->setMode (SplitMode::Parallel);
+            add (*chain, std::move (s));
+        }
+        else
+            add (*chain, makeRandom (Category::Source));
+        if (chance (0.15f)) add (*chain, makeRandom (Category::Drive));
+        if (chance (0.2f))  add (*chain, makeRandom (Category::Eq));
+        if (chance (0.55f)) add (*chain, makeRandom (Category::Modulation));
+        if (chance (0.6f))  add (*chain, makeRandom (Category::Delay));
+        if (chance (0.85f)) add (*chain, makeRandom (Category::Reverb));
+    }
+    else
+    {
     // --- front end: gate, wah, dynamics, drive, pitch
     if (chance (0.7f))  add (*chain, makeBuiltIn (NodeType::Gate));
     if (chance (0.12f)) add (*chain, makeRandom (Category::Filter));
@@ -300,6 +342,7 @@ void Randomiser::randomiseRig()
     if (chance (0.12f)) add (*chain, makeRandom (Category::Modulation));
     if (chance (0.6f))  add (*chain, makeRandom (Category::Delay));
     if (chance (0.7f))  add (*chain, makeRandom (Category::Reverb));
+    }
 
     // --- keep locked blocks: they take the place of a generated block of the same kind,
     //     or slot in where that kind of effect usually goes

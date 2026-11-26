@@ -20,6 +20,14 @@ A standalone Windows guitar rig built around **Neural Amp Modeler**, with a flex
 
 ![A randomised rig: three NAM amps with their cabs in parallel, then delay and shimmer reverb](docs/screenshot-random.png)
 
+## New in 0.16
+
+- **Keysmith**: the same engine as an instrument (built into Tracksmith). MIDI in, and two new sound sources in front of the effects instead of an amp:
+  - **Synth**: two wavetable oscillators (ten built-in tables, or load your own Serum-style .wav), unison up to 8 with detune and spread, a sub and noise, a filter (LP 12/24, band, high, notch) with drive, key tracking and envelope amount, an amp envelope and a second envelope that sweeps the wavetables and the filter. Poly, mono or legato with glide. Its display draws the table in perspective, the frame playing lit.
+  - **Sampler**: a sound played **Classic** (pitched, looped or once), **Stretch** (time-stretched: the speed through the sound is its own knob, the pitch follows the keys) or **Granular** (grain size, density, spray, pitch spread, stereo). Six sounds of its own, or anything from your **sample library folders** (Settings).
+  - Layers: put sources on the paths of a split (up to four). Modulation, scenes, presets, block presets and the dice all work as on a guitar rig; the dice roll sources and layers instead of amps. Fifteen patches to start from.
+- **Flatter knobs** everywhere: a value ring in the block's colour round a flat cap, on the panel and on the cards.
+
 ## New in 0.15
 
 - **80 style presets**, all built in (no captures or IRs needed), mostly rock: Classic Rock, Hard Rock, Blues Rock, Punk & Grunge, Alternative & Indie, Metal, Modern Rock, Southern & Country, Clean & Jazz, Funk & Pop, Ambient & Shoegaze, Psych & Surf, and Bass. Each is a whole rig (gate, pedals, one of the built-in amps, a cabinet, modulation, delay, reverb) with four scenes: **Rhythm**, **Lead** (a boost in front of the amp and a little more level), **Clean** (the drive pedals off) and **Dry** (no modulation, delay or reverb). They're in the preset menu under **Style presets**, and Page Up / Down steps through them after the starting points.

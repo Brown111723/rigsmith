@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.15.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.16.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -118,6 +118,8 @@ target_sources(Rigsmith PRIVATE
     Source/Engine/Tuner.cpp
     Source/Engine/Fx.cpp
     Source/Engine/StylePresets.cpp
+    Source/Engine/Synth.cpp
+    Source/Engine/KeysPatches.cpp
     Source/Engine/Randomiser.cpp
     Source/Engine/IniFile.cpp
     Source/Engine/Gear.cpp
@@ -235,6 +237,8 @@ if(RIGSMITH_TESTS)
         Source/Engine/Tuner.cpp
         Source/Engine/Fx.cpp
         Source/Engine/StylePresets.cpp
+        Source/Engine/Synth.cpp
+        Source/Engine/KeysPatches.cpp
         Source/Engine/Randomiser.cpp
     Source/Engine/IniFile.cpp
     Source/Engine/Gear.cpp

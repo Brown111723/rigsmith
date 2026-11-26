@@ -333,6 +333,11 @@ std::vector<int> cardKnobs (const Node& node, int max)
     if (auto* b = dynamic_cast<const Block*> (&node))
     {
         if (b->getType() == NodeType::Tuner) return v;
+        if (const auto own = b->cardParams(); ! own.empty())
+        {
+            for (int i : own) if ((int) v.size() < max) v.push_back (i);
+            return v;
+        }
         for (int i : panelKnobs (*b))
         {
             if ((int) v.size() >= max) break;
@@ -362,7 +367,8 @@ juce::String shortLabel (juce::String name)
         { "Bass Freq", "LO F" }, { "Treble Freq", "HI F" }, { "Sustain", "SUST" }, { "Attack", "ATTACK" }, { "Release", "REL" },
         { "Voice 1 Level", "VOICE 1" }, { "Voice 2 Level", "VOICE 2" }, { "Humanize", "HUMAN" }, { "Transpose", "TRANS" }, { "Body Resonance", "BODY" },
         { "Top Sparkle", "TOP" }, { "Notch Depth", "NOTCH" }, { "Body Image", "IMAGE" }, { "Mic Gain", "GAIN" }, { "Pre-amp", "PRE-AMP" },
-        { "Lead Drive", "DRIVE" }, { "Normal Vol", "VOLUME" }, { "Post Gain", "POST" }, { "Pre Gain", "GAIN" }, { "Lead Gain", "GAIN" } };
+        { "Lead Drive", "DRIVE" }, { "Position A", "POS A" }, { "Position B", "POS B" }, { "Position", "POS" }, { "Env Amount", "ENV" },
+        { "Key Track", "KEY" }, { "Env 2 > Pos", "E2 POS" }, { "Pitch Spread", "P.SPRD" }, { "Bend Range", "BEND" }, { "Normal Vol", "VOLUME" }, { "Post Gain", "POST" }, { "Pre Gain", "GAIN" }, { "Lead Gain", "GAIN" } };
     for (auto& [full, brief] : known) if (name.equalsIgnoreCase (full)) return brief;
     name = name.upToFirstOccurrenceOf (" (", false, false).toUpperCase();
     if (name.length() > 7 && name.containsChar (' ')) name = name.fromLastOccurrenceOf (" ", false, false);

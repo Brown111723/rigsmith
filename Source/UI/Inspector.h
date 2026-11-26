@@ -235,6 +235,16 @@ private:
     struct Strip;
     juce::OwnedArray<Strip> strips;
     juce::TextButton addPathButton { "+ Add path" };
+
+    // big blocks (Keysmith's Synth / Sampler): the controls in titled groups
+    struct Group
+    {
+        std::unique_ptr<juce::Component> header;
+        std::vector<juce::Component*> selectors, switches;
+        std::vector<Knob*> dials;
+    };
+    std::vector<Group> groups;
+    void layoutGroups (int h);
 };
 
 } // namespace rig

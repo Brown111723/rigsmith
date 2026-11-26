@@ -631,6 +631,8 @@ void FxDisplay::paint (juce::Graphics& g)
         case Visual::Cab:      drawResponse (g); drawCab (g); break;
         case Visual::Modulator:
         case Visual::Spectrum: drawGrid (g, true, 18.0f); drawSpectrum (g); break;
+        case Visual::Wavetable: drawWavetable (g); break;
+        case Visual::Sample:   drawSample (g); break;
         case Visual::None:     break;
     }
 
@@ -643,6 +645,112 @@ void FxDisplay::paint (juce::Graphics& g)
         g.setColour (text);
         g.drawText (highlight, r, juce::Justification::centred);
     }
+}
+
+//==============================================================================
+void FxDisplay::drawWavetable (juce::Graphics& g)
+{
+    // the table as a stack of frames in perspective, the one playing lit (Serum-style)
+    auto* sb = dynamic_cast<SynthBlock*> (&block);
+    if (sb == nullptr) return;
+    auto area = getLocalBounds().toFloat().reduced (14.0f, 12.0f);
+    auto label = area.removeFromBottom (14.0f);
+    const auto* t = sb->tableFor (0);
+    if (t == nullptr) return;
+    // where the notes are in it (with the envelope), or where the knob is while nothing plays
+    bool playing = false;
+    for (auto& w : sb->sounding) playing = playing || w.load (std::memory_order_relaxed) != 0;
+    const float pos = playing ? sb->livePosition (0) : sb->get (SynthBlock::pPosA) * 0.01f;
+    const int frames = t->frames, shown = juce::jmin (frames, 24);
+    const float depthX = area.getWidth() * 0.22f, depthY = area.getHeight() * 0.34f;
+    const auto face = area.withTrimmedRight (depthX).withTrimmedTop (depthY);
+    auto wavePath = [&] (int f, float dx, float dy)
+    {
+        juce::Path p;
+        const float* w = t->frame (f);
+        const int pts = 160;
+        for (int i = 0; i <= pts; ++i)
+        {
+            const float x = face.getX() + dx + face.getWidth() * (float) i / (float) pts;
+            const float y = face.getCentreY() - dy - w[(i * Wavetable::size / pts) & (Wavetable::size - 1)] * face.getHeight() * 0.42f;
+            if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+        }
+        return p;
+    };
+    for (int k = shown - 1; k >= 0; --k)
+    {
+        const float d = (float) k / (float) juce::jmax (1, shown - 1);
+        const int f = juce::roundToInt (d * (float) (frames - 1));
+        g.setColour (colour.withAlpha (0.10f + 0.12f * (1.0f - d)));
+        g.strokePath (wavePath (f, d * depthX, d * depthY), juce::PathStrokeType (1.0f));
+    }
+    // the frame playing now
+    const int now = juce::roundToInt (pos * (float) (frames - 1));
+    const float d = pos;
+    auto live = wavePath (now, d * depthX, d * depthY);
+    auto fill = live;
+    fill.lineTo (face.getRight() + d * depthX, face.getCentreY() - d * depthY);
+    fill.lineTo (face.getX() + d * depthX, face.getCentreY() - d * depthY);
+    fill.closeSubPath();
+    g.setColour (colour.withAlpha (0.14f));
+    g.fillPath (fill);
+    g.setColour (colour.withAlpha (0.25f));
+    g.strokePath (live, juce::PathStrokeType (5.0f));
+    g.setColour (colour);
+    g.strokePath (live, juce::PathStrokeType (1.8f));
+
+    g.setFont (mono (10.0f));
+    g.setColour (muted);
+    juce::String txt = "A  " + t->name + "  " + juce::String (juce::roundToInt (pos * 100.0f)) + "%";
+    if (sb->get (SynthBlock::pLevelB) > 0.5f)
+        if (const auto* tb = sb->tableFor (1))
+            txt << "      B  " << tb->name << "  " << juce::roundToInt ((playing ? sb->livePosition (1) : sb->get (SynthBlock::pPosB) * 0.01f) * 100.0f) << "%";
+    g.drawText (txt, label, juce::Justification::centredLeft);
+}
+
+void FxDisplay::drawSample (juce::Graphics& g)
+{
+    // the sound, its region and loop, and where every voice is in it
+    auto* sb = dynamic_cast<SamplerBlock*> (&block);
+    if (sb == nullptr) return;
+    auto area = getLocalBounds().toFloat().reduced (14.0f, 12.0f);
+    auto label = area.removeFromBottom (14.0f);
+    const auto* s = sb->currentSample();
+    g.setFont (mono (10.0f));
+    if (s == nullptr || s->peaks.empty())
+    {
+        g.setColour (dim);
+        g.drawText ("No sound loaded - open one, or drop a file on the block", area, juce::Justification::centred);
+        return;
+    }
+    const float start = sb->get (SamplerBlock::pStart) * 0.01f;
+    const float len = sb->get (SamplerBlock::pLength) * 0.01f * (1.0f - start);
+    const float x0 = area.getX() + area.getWidth() * start, x1 = area.getX() + area.getWidth() * juce::jmin (1.0f, start + len);
+    g.setColour (colour.withAlpha (0.08f));
+    g.fillRect (juce::Rectangle<float> (x0, area.getY(), juce::jmax (1.0f, x1 - x0), area.getHeight()));
+    const int cols = juce::jmax (1, (int) area.getWidth());
+    for (int x = 0; x < cols; ++x)
+    {
+        const float pk = s->peaks[(size_t) juce::jlimit (0, (int) s->peaks.size() - 1, x * (int) s->peaks.size() / cols)];
+        const float px = area.getX() + (float) x;
+        const bool in = px >= x0 && px <= x1;
+        g.setColour (in ? colour.withAlpha (0.85f) : dim.withAlpha (0.5f));
+        const float h = juce::jmax (0.5f, pk * area.getHeight() * 0.45f);
+        g.fillRect (px, area.getCentreY() - h, 1.0f, h * 2.0f);
+    }
+    g.setColour (colour);
+    g.fillRect (x0, area.getY(), 1.5f, area.getHeight());
+    if (sb->get (SamplerBlock::pLoop) > 0.5f) g.fillRect (x1 - 1.5f, area.getY(), 1.5f, area.getHeight());
+    for (auto& ph : sb->playheads)
+    {
+        const float p = ph.load (std::memory_order_relaxed);
+        if (p < 0.0f) continue;
+        const float x = area.getX() + area.getWidth() * juce::jlimit (0.0f, 1.0f, p);
+        g.setColour (text.withAlpha (0.9f));
+        g.fillRect (x - 0.5f, area.getY(), 1.5f, area.getHeight());
+    }
+    g.setColour (muted);
+    g.drawText (s->name + "   " + sb->formatValue (SamplerBlock::pModeS) + "   root " + sb->formatValue (SamplerBlock::pRoot), label, juce::Justification::centredLeft);
 }
 
 //==============================================================================

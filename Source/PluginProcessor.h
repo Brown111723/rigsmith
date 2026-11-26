@@ -6,7 +6,8 @@ class RigsmithProcessor : public juce::AudioProcessor,
                           private juce::AudioProcessorParameter::Listener
 {
 public:
-    RigsmithProcessor();
+    /** keysmith: the same rig as an instrument (Keysmith) - MIDI in, Synth and Sampler blocks in front. */
+    explicit RigsmithProcessor (bool keysmith = false);
     ~RigsmithProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -17,7 +18,7 @@ public:
 
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "Rigsmith"; }
+    const juce::String getName() const override { return engine.isKeys() ? "Keysmith" : "Rigsmith"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -38,7 +39,7 @@ public:
     rig::Engine engine;
 
 private:
-    static BusesProperties makeBuses();
+    static BusesProperties makeBuses (bool keysmith);
     juce::AudioProcessorEditor* createEditor() override;
     void parameterValueChanged (int, float) override;
     void parameterGestureChanged (int, bool) override {}

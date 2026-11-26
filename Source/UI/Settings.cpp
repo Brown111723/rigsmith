@@ -6,10 +6,21 @@ using namespace theme;
 
 SettingsPanel::SettingsPanel (Engine& e, bool isStandalone) : engine (e)
 {
+    if (engine.isKeys())
+    {
+        // Keysmith: where its sounds and wavetables live
+        setupSection (models, "Sample library folders", "Searched (with sub-folders) for .wav / .aif / .flac / .ogg / .mp3 sounds: the Sampler's browser and the dice pick from them");
+        models.list.setPath (engine.getPaths ("samplePaths"));
+        setupSection (irs, "Wavetable folders", "Where the Synth's Load button starts: .wav wavetables (Serum's 2048-sample frames) or single cycles");
+        irs.list.setPath (engine.getPaths ("wavetablePaths"));
+    }
+    else
+    {
     setupSection (models, "NAM model folders", "Searched (with sub-folders) for .nam files");
     models.list.setPath (engine.getPaths ("modelPaths"));
     setupSection (irs, "Cab IR folders", "Searched for .wav / .aif / .flac impulse responses");
     irs.list.setPath (engine.getPaths ("irPaths"));
+    }
 
     for (auto* f : engine.formatManager.getFormats())
     {
@@ -109,8 +120,17 @@ SettingsPanel::SettingsPanel (Engine& e, bool isStandalone) : engine (e)
 
 SettingsPanel::~SettingsPanel()
 {
-    engine.setPaths ("modelPaths", models.list.getPath());
-    engine.setPaths ("irPaths", irs.list.getPath());
+    if (engine.isKeys())
+    {
+        engine.setPaths ("samplePaths", models.list.getPath());
+        engine.setPaths ("wavetablePaths", irs.list.getPath());
+        engine.getSampleFiles (true);
+    }
+    else
+    {
+        engine.setPaths ("modelPaths", models.list.getPath());
+        engine.setPaths ("irPaths", irs.list.getPath());
+    }
     for (int i = 0; i < pluginFormats.size(); ++i)
         engine.setPluginPaths (*pluginFormats[i], pluginSections[i]->list.getPath());
     engine.ini.set ("TONE3000", "PublishableKey", t3kKey.getText().trim());

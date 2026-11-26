@@ -681,6 +681,7 @@ void Inspector::clearControls()
     pluginParamIndex.clear();
     modeButtons.clear();
     strips.clear();
+    groups.clear();
     for (auto* c : std::initializer_list<juce::Component*> { &openButton, &bypassButton, &autoGainButton, &prevFile, &nextFile,
                                                               &diceButton, &presetButton, &lockButton,
                                                               &autoGainSum, &addPathButton, &pluginHeader, &pluginScope, &captureName, &editCaptures })
@@ -756,14 +757,21 @@ void Inspector::buildBlock (Block& b)
     std::vector<int> order = b.panelOrder();
     builtOrder = order;
     builtNames = panelSignature (b);
+    const auto panelGroups = b.panelGroups();
+    if (! panelGroups.empty())
+    {
+        order.clear();
+        for (auto& [title, params] : panelGroups) order.insert (order.end(), params.begin(), params.end());
+    }
     if (order.empty())
         for (int i = 0; i < b.numParams(); ++i) order.push_back (i);
-    std::stable_sort (order.begin(), order.end(), [&b] (int x, int y)
-    {
-        const auto& sx = b.getSpecs()[(size_t) x];
-        const auto& sy = b.getSpecs()[(size_t) y];
-        return knobPriority (sx.id, sx.name) < knobPriority (sy.id, sy.name);
-    });
+    if (panelGroups.empty())
+        std::stable_sort (order.begin(), order.end(), [&b] (int x, int y)
+        {
+            const auto& sx = b.getSpecs()[(size_t) x];
+            const auto& sy = b.getSpecs()[(size_t) y];
+            return knobPriority (sx.id, sx.name) < knobPriority (sy.id, sy.name);
+        });
     for (int i : order)
     {
         const auto& sp = b.getSpecs()[(size_t) i];
@@ -825,6 +833,36 @@ void Inspector::buildBlock (Block& b)
         knobParam.push_back (i);
     }
 
+    // grouped: each group's selectors, switches and knobs under its title
+    for (auto& [title, params] : panelGroups)
+    {
+        struct Header : juce::Component
+        {
+            juce::String t; juce::Colour c;
+            void paint (juce::Graphics& g) override
+            {
+                g.setColour (c);
+                g.setFont (font (10.0f, true).withExtraKerningFactor (0.12f));
+                g.drawText (t, getLocalBounds().withTrimmedBottom (4), juce::Justification::centredLeft);
+                g.setColour (c.withAlpha (0.35f));
+                g.fillRect (0, getHeight() - 2, getWidth(), 1);
+            }
+        };
+        Group gr;
+        auto h = std::make_unique<Header>();
+        h->t = title;
+        h->c = c;
+        controls.addAndMakeVisible (*h);
+        gr.header = std::move (h);
+        for (int pi : params)
+        {
+            for (size_t k = 0; k < choiceParam.size(); ++k) if (choiceParam[k] == pi) gr.selectors.push_back (choices[(int) k]);
+            for (size_t k = 0; k < toggleParam.size(); ++k) if (toggleParam[k] == pi) gr.switches.push_back (toggles[(int) k]);
+            for (size_t k = 0; k < knobParam.size(); ++k) if (knobParam[k] == pi) gr.dials.push_back (knobs[(int) k]);
+        }
+        groups.push_back (std::move (gr));
+    }
+
     buildCaptureKnob (b);
     buildMeters (b);
 
@@ -874,6 +912,14 @@ void Inspector::buildBlock (Block& b)
         case NodeType::Plugin:
             openButton.setIcon (Icon::Open); openButton.setTooltip ("Open the plug-in's window");
             openButton.setVisible (true);
+            break;
+        case NodeType::Synth:
+            openButton.setIcon (Icon::Folder); openButton.setTooltip ("Load a wavetable (.wav: 2048-sample frames, or one cycle) onto oscillator A");
+            openButton.setVisible (true); prevFile.setVisible (true); nextFile.setVisible (true);
+            break;
+        case NodeType::Sampler:
+            openButton.setIcon (Icon::Folder); openButton.setTooltip ("Load a sound from your sample libraries (or drop a file on the block)");
+            openButton.setVisible (true); prevFile.setVisible (true); nextFile.setVisible (true);
             break;
         default: break;
     }
@@ -1805,6 +1851,8 @@ void Inspector::layoutControls()
         return;
     }
 
+    if (! groups.empty()) { layoutGroups (h); return; }
+
     int knobTop = 0, topRight = 0;
     if (! choices.isEmpty())
     {
@@ -1858,6 +1906,45 @@ void Inspector::layoutControls()
     }
 
     controls.setSize (juce::jmax (juce::jmax (x, topRight), 10), h);
+}
+
+void Inspector::layoutGroups (int h)
+{
+    int x = 0;
+    for (auto& gr : groups)
+    {
+        int cx = x, rowH = 0;
+        const int y0 = 22;
+        for (auto* c : gr.selectors)
+        {
+            auto* cc = dynamic_cast<ChoiceControl*> (c);
+            const int w = juce::jlimit (90, 200, cc != nullptr ? cc->preferredWidth() : 120);
+            c->setBounds (cx, y0, w, 52);
+            cx += w + 10;
+            rowH = 52;
+        }
+        for (auto* t : gr.switches)
+        {
+            auto* tb = dynamic_cast<juce::ToggleButton*> (t);
+            const int w = juce::GlyphArrangement::getStringWidthInt (font (13.0f), tb != nullptr ? tb->getButtonText() : juce::String()) + 40;
+            t->setBounds (cx, y0 + 22, w, 28);
+            cx += w + 6;
+            rowH = 52;
+        }
+        const int y = y0 + (rowH > 0 ? rowH + 8 : 0);
+        const int n = (int) gr.dials.size(), avail = h - y;
+        int rows = (n > 3 && avail >= 2 * 84 + 6) ? 2 : 1;
+        if (n > 8 && avail >= 3 * 84 + 12) rows = 3;
+        const int cols = juce::jmax (1, (n + rows - 1) / rows);
+        const int kH = juce::jlimit (80, 112, (avail - (rows - 1) * 6) / juce::jmax (1, rows));
+        const int kW = 68;
+        for (int i = 0; i < n; ++i)
+            gr.dials[(size_t) i]->setBounds (x + (i % cols) * (kW + 2), y + (i / cols) * (kH + 6), kW, kH);
+        const int w = juce::jmax (cx - x - 10, n > 0 ? cols * (kW + 2) - 2 : 0, 90);
+        gr.header->setBounds (x, 0, w, 20);
+        x += w + 26;
+    }
+    controls.setSize (juce::jmax (x, 10), h);
 }
 
 void Inspector::layoutIcons (juce::Rectangle<int> row)

@@ -5,8 +5,10 @@
 // The standalone app offers up to 8 inputs and 8 outputs of the audio interface (the main pair is the
 // rig; split paths can take any other input and send to Out 3/4, 5/6, 7/8). In a DAW: a stereo
 // input, an optional second stereo input (Inputs 3+4) and three optional extra stereo outputs.
-juce::AudioProcessor::BusesProperties RigsmithProcessor::makeBuses()
+juce::AudioProcessor::BusesProperties RigsmithProcessor::makeBuses (bool keysmith)
 {
+    if (keysmith)   // an instrument: notes in, stereo out
+        return BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true);
     if (juce::PluginHostType::getPluginLoadedAs() == juce::AudioProcessor::wrapperType_Standalone)
         return BusesProperties()
                    .withInput ("Input", juce::AudioChannelSet::discreteChannels (rig::RigIo::maxChannels), true)
@@ -20,9 +22,14 @@ juce::AudioProcessor::BusesProperties RigsmithProcessor::makeBuses()
                .withOutput ("Out 7/8", juce::AudioChannelSet::stereo(), false);
 }
 
-RigsmithProcessor::RigsmithProcessor()
-    : AudioProcessor (makeBuses())
+RigsmithProcessor::RigsmithProcessor (bool keysmith)
+    : AudioProcessor (makeBuses (keysmith))
 {
+    if (keysmith)
+    {
+        engine.setKeys (true);
+        engine.loadKeysPatch (0);
+    }
     rig::trace ("processor: start");
     sceneParam = new juce::AudioParameterChoice (juce::ParameterID { "scene", 1 }, "Scene",
                                                  juce::StringArray { "A", "B", "C", "D" }, 0);
@@ -68,6 +75,7 @@ bool RigsmithProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
     }
     if (out != juce::AudioChannelSet::stereo() && out != juce::AudioChannelSet::mono())
         return false;
+    if (engine.isKeys()) return layouts.inputBuses.isEmpty() || in.isDisabled();
     if (in != juce::AudioChannelSet::mono() && in != juce::AudioChannelSet::stereo())
         return false;
     // the extra buses: off, or mono / stereo
