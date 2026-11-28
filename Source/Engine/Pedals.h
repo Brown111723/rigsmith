@@ -54,6 +54,8 @@ struct PedalCircuit
 struct PedalModel
 {
     juce::String name, maker, year, blurb;
+    juce::String aka;   // the pedal that inspired it: for finding it by, never shown
+    juce::String orig;  // its circuit's key (the voicing switches below)
     std::vector<int> knobs;                      // the block's parameters this pedal has (beyond Level and Clean Blend)
     std::map<int, juce::String> labels;          // what the pedal calls them
     juce::String voiceName;                      // its switch, if any ("Mode", "Version", "Clipping")
@@ -79,6 +81,12 @@ public:
     std::vector<int> panelOrder() const override;
     juce::String getParamName (int i) const override;
     juce::StringArray getChoiceNames (int i) const override;
+    juce::StringArray getChoiceAliases (int i) const override
+    {
+        juce::StringArray a;
+        if (i == pModel) for (auto& m : models()) a.add (m.aka);
+        return a;
+    }
     juce::String formatValue (int i, float v) const override;
     using Block::formatValue;
 

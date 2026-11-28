@@ -116,6 +116,40 @@ AmpVoice V (const juce::String& n, float gain, float bright = 0, float tight = 1
     return v;
 }
 
+namespace
+{
+    const std::map<juce::String, juce::String>& ampNames()
+    {
+        static const std::map<juce::String, juce::String> m {
+            { "'65 Twin Reverb", "Glass" },
+            { "'65 Deluxe Reverb", "Warm" },
+            { "AC30 Top Boost", "Chime" },
+            { "JC-120 Jazz Chorus", "Jazz" },
+            { "Overdrive Special", "Smooth" },
+            { "'59 Bassman", "Tweed" },
+            { "JTM45", "Blues" },
+            { "1959 Super Lead \"Plexi\"", "Brit" },
+            { "JCM800 2203", "Eighties" },
+            { "DR103", "Stadium" },
+            { "Rockerverb 50", "Thick" },
+            { "BE-100", "Modded" },
+            { "Mark IIC+", "Lead" },
+            { "Dual Rectifier", "Heavy" },
+            { "SLO-100", "Saturated" },
+            { "5150 / 6505", "Chug" },
+            { "5150III (Red)", "Modern" },
+            { "Uberschall", "Doom" },
+            { "Powerball", "Tight" },
+            { "VH4 (channel 3)", "Massive" },
+            { "SVT-CL", "Rock" },
+            { "B-15N Portaflex", "Vintage" },
+            { "800RB", "Punch" },
+            { "AD200", "Grind" },
+        };
+        return m;
+    }
+}
+
 std::vector<AmpModel> makeModels()
 {
     std::vector<AmpModel> v;
@@ -125,6 +159,8 @@ std::vector<AmpModel> makeModels()
     {
         AmpModel m;
         m.section = section; m.maker = maker; m.name = name; m.year = year; m.blurb = blurb;
+        m.aka = maker + " " + name;
+        if (auto it = ampNames().find (name); it != ampNames().end()) { m.name = it->second; m.maker = {}; }
         m.bass = section == "Bass";
         m.knobs = std::move (knobs); m.labels = std::move (labels); m.stock = std::move (stock); m.c = c;
         m.voiceName = voiceName; m.voices = std::move (voices);
@@ -413,7 +449,7 @@ std::vector<AmpModel> makeModels()
 juce::StringArray modelChoiceNames()
 {
     juce::StringArray s;
-    for (auto& m : AmpBlock::models()) s.add (m.section == "Studio" ? juce::String ("Studio") : m.maker + " " + m.name);
+    for (auto& m : AmpBlock::models()) s.add (m.section == "Studio" ? juce::String ("Studio") : m.name);
     return s;
 }
 
@@ -487,7 +523,7 @@ juce::String AmpBlock::getName() const
 juce::String AmpBlock::getDetail() const
 {
     const auto& m = model();
-    juce::String d = m.section == "Studio" ? juce::String ("Studio") : m.maker;
+    juce::String d = m.section == "Studio" ? juce::String ("Studio") : m.section;
     if (m.voices.size() > 1) d << "  " << m.voices[(size_t) juce::jlimit (0, (int) m.voices.size() - 1, getChoice (pVoice))].name;
     return d;
 }

@@ -1,4 +1,5 @@
 #include "Inspector.h"
+#include "EffectPanel.h"
 
 namespace rig
 {
@@ -705,6 +706,30 @@ void Inspector::setNode (Node* n)
     }
     node = n;
     clearControls();
+    effectPanel.reset();
+    for (auto* c : std::initializer_list<juce::Component*> { &title, &subtitle, &info, &controlsView }) c->setVisible (true);
+
+    if (usesEffectPanel (node))
+    {
+        auto& b = *dynamic_cast<Block*> (node);
+        auto& eng = host.getEngine();
+        EffectPanel::Host h;
+        h.engine = &eng;
+        h.roll = [this] { if (node != nullptr) host.randomise (*node, GraphHost::RandomSettings); };
+        h.setLocked = [this] (bool) { if (node != nullptr) host.toggleLock (*node); };
+        h.beginEdit = [&eng] { eng.checkpoint(); };
+        h.edited = [&eng] { eng.markDirty(); };
+        h.paramMenu = [this, &b] (int p, juce::Component* anchor)
+        {
+            showKnobMenu (host.getEngine(), b, b.id, p, anchor, [this, p] { if (node != nullptr && onLearnParam) onLearnParam (*node, p); });
+        };
+        effectPanel = std::make_unique<EffectPanel> (b, h, std::make_unique<FxDisplay> (eng, b));
+        for (int i = 0; i < getNumChildComponents(); ++i) getChildComponent (i)->setVisible (false);
+        addAndMakeVisible (*effectPanel);
+        resized();
+        repaint();
+        return;
+    }
 
     if (node == nullptr)
     {
@@ -1598,7 +1623,7 @@ void Inspector::buildSplit (Split& s)
 //==============================================================================
 void Inspector::timerCallback()
 {
-    if (node == nullptr) return;
+    if (node == nullptr || effectPanel != nullptr) return;
     if (needsRebuild)
     {
         needsRebuild = false;
@@ -1679,14 +1704,14 @@ void Inspector::timerCallback()
     else if (auto* amp = dynamic_cast<AmpBlock*> (node))
     {
         const auto& m = amp->model();
-        sub = m.section == "Studio" ? juce::String ("AMP - STUDIO") : (m.maker + "  " + m.year + "  -  " + m.section).toUpperCase();
+        sub = m.section == "Studio" ? juce::String ("AMP - STUDIO") : ("AMP - " + m.name + "  -  " + m.section).toUpperCase();
         inf = m.blurb;
         if (m.section == "Studio") inf << ". Pick a Model to start from a famous amp";
     }
     else if (auto* pd = dynamic_cast<PedalBlock*> (node))
     {
         const auto& m = pd->model();
-        sub = (m.maker + "  " + m.year).toUpperCase();
+        sub = m.name.toUpperCase();
         inf = m.blurb;
     }
     else if (auto* wah = dynamic_cast<WahBlock*> (node))
@@ -1794,7 +1819,7 @@ void Inspector::timerCallback()
 void Inspector::paint (juce::Graphics& g)
 {
     g.fillAll (panel);
-    if (node == nullptr) return;
+    if (node == nullptr || effectPanel != nullptr) return;
     // the block as a piece of hardware: one faceplate, its screen on the left, its controls on the right
     const auto plate = getLocalBounds().toFloat().reduced (6.0f, 4.0f).withTrimmedBottom (3.0f);
     drawShadow (g, plate, 12.0f, 6.0f, 0.6f);
@@ -1972,8 +1997,17 @@ void Inspector::layoutIcons (juce::Rectangle<int> row)
     place (lockButton);
 }
 
+bool Inspector::usesEffectPanel (Node* n) const
+{
+    auto* b = dynamic_cast<Block*> (n);
+    if (b == nullptr || dynamic_cast<PluginBlock*> (n) != nullptr || dynamic_cast<Sweepable*> (n) != nullptr) return false;
+    const auto t = n->getType();
+    return t != NodeType::Tuner && b->getCategory() != Category::Source && b->getCategory() != Category::Routing;
+}
+
 void Inspector::resized()
 {
+    if (effectPanel != nullptr) { effectPanel->setBounds (getLocalBounds().reduced (8, 6)); return; }
     auto r = getLocalBounds().reduced (18, 13);
     r.removeFromBottom (2);
     const bool isSplit = dynamic_cast<Split*> (node) != nullptr;

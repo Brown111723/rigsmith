@@ -1962,7 +1962,7 @@ std::unique_ptr<Chain> Engine::buildFactory (int index, juce::StringArray& scene
         const auto& ms = AmpBlock::models();
         const auto want = isBass() ? juce::String ("SVT") : guitarModel;
         for (int i = 0; i < (int) ms.size(); ++i)
-            if (ms[(size_t) i].name.contains (want)) { a->set (AmpBlock::pModel, (float) i); a->onChoiceChanged (AmpBlock::pModel); break; }
+            if (ms[(size_t) i].name.contains (want) || ms[(size_t) i].aka.contains (want)) { a->set (AmpBlock::pModel, (float) i); a->onChoiceChanged (AmpBlock::pModel); break; }
         return a;
     };
 
@@ -1988,7 +1988,7 @@ std::unique_ptr<Chain> Engine::buildFactory (int index, juce::StringArray& scene
     {
         const auto& ms = fxModelsFor (b.getType());
         for (int i = 0; i < (int) ms.size(); ++i)
-            if (ms[(size_t) i].name.contains (name)) { b.set (b.getModelParam(), (float) i); b.applyModelStock(); return; }
+            if (ms[(size_t) i].name.contains (name) || ms[(size_t) i].aka.contains (name)) { b.set (b.getModelParam(), (float) i); b.applyModelStock(); return; }
     };
     auto plate = [] (float mix)
     {
@@ -2561,14 +2561,9 @@ Node* Engine::loadBlockPreset (const juce::String& id, const juce::File& f)
     return r;
 }
 
-bool Engine::applyFactoryPreset (const juce::String& id, int index)
+void applyFactoryPreset (Block& blk, const FactoryPreset& p)
 {
-    auto* b = dynamic_cast<Block*> (findNode (id));
-    if (b == nullptr || dynamic_cast<PluginBlock*> (b) != nullptr) return false;
-    const auto& presets = factoryPresets (b->getType());
-    if (! juce::isPositiveAndBelow (index, (int) presets.size())) return false;
-    const auto& p = presets[(size_t) index];
-    checkpoint();
+    auto* b = &blk;
     const bool nam = b->getType() == NodeType::Nam;
     for (int i = 0; i < b->numParams(); ++i)
     {
@@ -2583,6 +2578,19 @@ bool Engine::applyFactoryPreset (const juce::String& id, int index)
             if (const int i = b->indexOf (pid); i >= 0) { b->set (i, v); b->onChoiceChanged (i); }
     for (auto& [pid, v] : p.values)
         if (const int i = b->indexOf (pid); i >= 0 && pid != "model") b->set (i, v);
+    b->calibrated.store (true);
+}
+
+bool Engine::applyFactoryPreset (const juce::String& id, int index)
+{
+    auto* b = dynamic_cast<Block*> (findNode (id));
+    if (b == nullptr || dynamic_cast<PluginBlock*> (b) != nullptr) return false;
+    const auto& presets = factoryPresets (b->getType());
+    if (! juce::isPositiveAndBelow (index, (int) presets.size())) return false;
+    const auto& p = presets[(size_t) index];
+    checkpoint();
+    rig::applyFactoryPreset (*b, p);
+    b->presetName = p.name;
     b->calibrated.store (true);
     markDirty();
     message (b->getName() + ": " + p.name);

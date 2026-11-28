@@ -268,6 +268,9 @@ public:
     };
     static constexpr int oscParam (int osc, int k) noexcept { return pOscA + (osc > 0 ? 1 : 0) * numOscParams + k; }
     static constexpr int pMPan = pOscA + 2 * numOscParams, pMix = pMPan + 1, pTranspose = pMPan + 2;
+    /** Each oscillator on / off (its light). */
+    static constexpr int pOnA = pMPan + 3, pOnB = pMPan + 4;
+    static constexpr int oscOnParam (int osc) noexcept { return osc > 0 ? pOnB : pOnA; }
     /** The knobs a page (tab) of an oscillator shows: "WAVE", "UNISON", "HARM", "FM", "WS" (a wavetable),
         "SAMPLE", "PLAYBACK", "PITCH", "LOOP", "GRANULAR" (a sample). */
     std::vector<int> pageParams (int osc, const juce::String& page) const;

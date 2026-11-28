@@ -1228,7 +1228,9 @@ static std::vector<ParamSpec> synthSpecs()
     s.push_back (P ("mpan", "Pan", -100.0f, 100.0f, 0.0f, "%").dec (0).rand (-20.0f, 20.0f));
     s.push_back (P ("mix", "Mix A / B", -100.0f, 100.0f, 0.0f, "%").dec (0).rand (-60.0f, 60.0f));
     s.push_back (P ("transpose", "Transpose", -24.0f, 24.0f, 0.0f, "st").dec (0).fixed());
-    jassert ((int) s.size() == SynthBlock::pTranspose + 1);
+    s.push_back (Toggle ("aon", "Oscillator A", true).fixed());
+    s.push_back (Toggle ("bon", "Oscillator B", true).fixed());
+    jassert ((int) s.size() == SynthBlock::pOnB + 1);
     return s;
 }
 
@@ -1483,7 +1485,7 @@ void SynthBlock::beginChunk() noexcept
         K.fine = get (base + 3);
         K.uni = juce::jlimit (1, maxUnison, juce::roundToInt (get (base + 4)));
         K.det = get (base + 5) * 0.01f;
-        K.level = get (base + 6) * 0.01f;
+        K.level = get (oscOnParam (o)) > 0.5f ? get (base + 6) * 0.01f : 0.0f;
         K.pan = get (base + 7) * 0.01f;
         K.phase = get (P_ (oPhase)) * 0.01f;
         K.phaseRand = get (P_ (oPhaseRand)) * 0.01f;

@@ -436,15 +436,15 @@ void CrusherBlock::processImpl (juce::AudioBuffer<float>& b, int n) noexcept
 const std::array<WahBlock::WahModel, 5>& WahBlock::models()
 {
     static const std::array<WahModel, 5> m { {
-        { "Cry Baby GCB95", "Dunlop, 1966: the best-selling pedal of all time. Aggressive, mid-forward sweep: classic rock and funk",
+        { "Classic", "Dunlop, 1966: the best-selling pedal of all time. Aggressive, mid-forward sweep: classic rock and funk",
           350.0f, 2200.0f, 6.5f, 0.12f, 0.35f, 1.6f, 2.0f },
-        { "Vox V847A", "Vox, 1967 design: smoother, more vocal and subtle, with more low end kept (Clapton in Cream)",
+        { "Vocal", "Vox, 1967 design: smoother, more vocal and subtle, with more low end kept (Clapton in Cream)",
           450.0f, 1800.0f, 4.2f, 0.22f, 0.2f, 1.2f, 1.0f },
-        { "Cry Baby 535Q Multi-Wah", "Dunlop: the Swiss Army knife. Six sweep ranges, adjustable Q and a variable boost",
+        { "Multi", "Dunlop: the Swiss Army knife. Six sweep ranges, adjustable Q and a variable boost",
           300.0f, 2000.0f, 6.0f, 0.12f, 0.3f, 1.6f, 1.0f },
-        { "Morley Bad Horsie", "Steve Vai's optical wah, 1996: a wide, smooth sweep. Switchless: it turns on when you move it, off when you rest it heel-down",
+        { "Optical", "Steve Vai's optical wah, 1996: a wide, smooth sweep. Switchless: it turns on when you move it, off when you rest it heel-down",
           330.0f, 2700.0f, 7.5f, 0.1f, 0.25f, 1.0f, 2.0f },
-        { "Xotic XW-1", "The boutique benchmark, 2015: bias, treble, bass and Q on the outside, from vintage Italian Vox to modern funk",
+        { "Boutique", "The boutique benchmark, 2015: bias, treble, bass and Q on the outside, from vintage Italian Vox to modern funk",
           380.0f, 2300.0f, 5.5f, 0.15f, 0.3f, 1.4f, 1.0f },
     } };
     return m;

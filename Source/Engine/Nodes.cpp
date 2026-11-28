@@ -317,6 +317,8 @@ void Node::prepare (double sr, int block)
     outTrim.reset (sr, 0.03);
     inTrim.setCurrentAndTargetValue (dbToGain (inTrimDb.load()));
     outTrim.setCurrentAndTargetValue (dbToGain (outTrimDb.load()));
+    mixGain.reset (sr, 0.03);
+    mixGain.setCurrentAndTargetValue (juce::jlimit (0.0f, 1.0f, mixPct.load() * 0.01f));
     prepareImpl (sr, maxBlock);
 }
 
@@ -353,7 +355,9 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
     }
 
     const bool ag = autoGain.load (std::memory_order_relaxed);
-    const bool needDry = ag || wetGain.isSmoothing();
+    mixGain.setTargetValue (juce::jlimit (0.0f, 1.0f, mixPct.load (std::memory_order_relaxed) * 0.01f));
+    const bool mixing = mixGain.isSmoothing() || mixGain.getCurrentValue() < 0.9999f;
+    const bool needDry = ag || wetGain.isSmoothing() || mixing;
     if (needDry)
         for (int ch = 0; ch < 2; ++ch)
             dry.copyFrom (ch, 0, buffer, ch, 0, n);
@@ -385,6 +389,19 @@ void Node::process (juce::AudioBuffer<float>& buffer, int n) noexcept
                 if (! std::isfinite (l[i])) l[i] = 0.0f;
                 if (! std::isfinite (r[i])) r[i] = 0.0f;
             }
+    }
+
+    // the block's own dry / wet
+    if (mixing)
+    {
+        auto* dl = dry.getReadPointer (0);
+        auto* dr = dry.getReadPointer (1);
+        for (int i = 0; i < n; ++i)
+        {
+            const float m = mixGain.getNextValue();
+            l[i] = dl[i] + (l[i] - dl[i]) * m;
+            r[i] = dr[i] + (r[i] - dr[i]) * m;
+        }
     }
 
     if (ag)
@@ -476,6 +493,8 @@ juce::ValueTree Node::toState() const
     if (locked.load()) v.setProperty ("locked", true, nullptr);
     if (inTrimDb.load() != 0.0f) v.setProperty ("inTrim", inTrimDb.load(), nullptr);
     if (outTrimDb.load() != 0.0f) v.setProperty ("outTrim", outTrimDb.load(), nullptr);
+    if (mixPct.load() < 99.99f) v.setProperty ("mix", mixPct.load(), nullptr);
+    if (presetName.isNotEmpty()) v.setProperty ("presetName", presetName, nullptr);
     return v;
 }
 
@@ -491,6 +510,8 @@ void Node::fromState (const juce::ValueTree& v)
     locked = (bool) v.getProperty ("locked", false);
     inTrimDb = (float) v.getProperty ("inTrim", 0.0f);
     outTrimDb = (float) v.getProperty ("outTrim", 0.0f);
+    mixPct = (float) v.getProperty ("mix", 100.0f);
+    presetName = v["presetName"].toString();
 }
 
 //==============================================================================

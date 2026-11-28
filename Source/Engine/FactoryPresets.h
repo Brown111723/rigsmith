@@ -14,5 +14,8 @@ struct FactoryPreset
 };
 
 const std::vector<FactoryPreset>& factoryPresets (NodeType);
+class Block;
+/** Sets a block to a preset: its defaults (what's loaded and the NAM trims stay), the preset's model with its stock settings, then its values. */
+void applyFactoryPreset (Block&, const FactoryPreset&);
 
 } // namespace rig

@@ -167,6 +167,9 @@ private:
 
     GraphHost& host;
     Node* node = nullptr;
+    /** A built-in effect, amp, pedal or cab: drawn by the shared effect panel (the same in Tracksmith and Keysmith). */
+    std::unique_ptr<class EffectPanel> effectPanel;
+    bool usesEffectPanel (Node*) const;
     bool needsRebuild = false;
     bool showAllPluginParams = true;
 

@@ -312,7 +312,7 @@ int findModel (const Models& ms, const juce::String& want)
 {
     if (want.isEmpty()) return -1;
     for (int i = 0; i < (int) ms.size(); ++i)
-        if (ms[(size_t) i].name.containsIgnoreCase (want)) return i;
+        if (ms[(size_t) i].name.containsIgnoreCase (want) || ms[(size_t) i].aka.containsIgnoreCase (want)) return i;
     return -1;
 }
 

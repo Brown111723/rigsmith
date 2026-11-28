@@ -83,6 +83,7 @@ struct AmpVoice
 struct AmpModel
 {
     juce::String name, maker, year, blurb;
+    juce::String aka;   // the amp that inspired it: for finding it by, never shown
     juce::String section;                         // "Clean", "Crunch", "High gain", "Bass"
     bool bass = false;
     std::vector<int> knobs;                       // the block parameters this amp has (beyond Level)
@@ -109,6 +110,12 @@ public:
     std::vector<int> panelOrder() const override;
     juce::String getParamName (int i) const override;
     juce::StringArray getChoiceNames (int i) const override;
+    juce::StringArray getChoiceAliases (int i) const override
+    {
+        juce::StringArray a;
+        if (i == pModel) for (auto& m : models()) a.add (m.aka);
+        return a;
+    }
     std::vector<std::pair<int, juce::String>> getChoiceSections (int i) const override;
     juce::String formatValue (int i, float v) const override;
     using Block::formatValue;

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.18.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.19.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -135,6 +135,7 @@ target_sources(Rigsmith PRIVATE
     Source/UI/Library.cpp
     Source/UI/Header.cpp
     Source/UI/FxDisplay.cpp
+    Source/UI/EffectPanel.cpp
     Source/UI/Settings.cpp
     Source/UI/Tone3000Panel.cpp)
 

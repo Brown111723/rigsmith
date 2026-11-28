@@ -139,6 +139,12 @@ public:
     /** Locked blocks are kept when the rig is randomised. */
     std::atomic<bool> locked { false };
 
+    /** Dry / wet for any block, 0..100 % (the panel's Mix where the block has no mix of its own). */
+    std::atomic<float> mixPct { 100.0f };
+
+    /** The preset last applied to it (factory or yours), shown on its panel; empty: edited / none. */
+    juce::String presetName;
+
     /** Level trims around the block (the handles on the panel's IN / OUT meters), in dB. */
     std::atomic<float> inTrimDb { 0.0f }, outTrimDb { 0.0f };
     /** Peak levels in and out of the block since the UI last took them (linear). */
@@ -163,7 +169,7 @@ protected:
 private:
     const NodeType type;
     juce::AudioBuffer<float> dry;
-    juce::SmoothedValue<float> wetGain, compGain, inTrim, outTrim;
+    juce::SmoothedValue<float> wetGain, compGain, inTrim, outTrim, mixGain;
     std::atomic<juce::uint32> learnedEdit { 0 };
     double accIn = 0, accOut = 0;
     int accSamples = 0;
@@ -256,6 +262,7 @@ struct FxCharacter
 struct FxModel
 {
     juce::String name, maker, year, blurb;
+    juce::String aka;   // the unit that inspired it: for finding it by, never shown
     std::vector<std::pair<juce::String, float>> stock;              // knob settings it starts with
     juce::StringArray hide;                                         // parameters the real unit doesn't have
     std::vector<std::pair<juce::String, juce::String>> labels;      // what the real unit calls them
@@ -316,6 +323,13 @@ public:
     virtual juce::String getParamName (int i) const;
     /** A choice's options right now (a model's own switch positions). */
     virtual juce::StringArray getChoiceNames (int i) const { return specs[(size_t) i].choices; }
+    /** Other names a choice is known by (a model's inspiration), for finding it by words; never shown. */
+    virtual juce::StringArray getChoiceAliases (int i) const
+    {
+        juce::StringArray a;
+        if (i == modelParam && fxModels != nullptr) for (auto& m : *fxModels) a.add (m.aka);
+        return a;
+    }
     /** Headings to show in a long selector's list: (first choice index, heading). */
     virtual std::vector<std::pair<int, juce::String>> getChoiceSections (int) const { return {}; }
     /** Message thread: a choice was picked on the panel (a wah model sets its sweep, say). */

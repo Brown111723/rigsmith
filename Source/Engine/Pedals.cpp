@@ -6,12 +6,49 @@ using PB = PedalBlock;
 
 namespace
 {
+    const std::map<juce::String, juce::String>& pedalNames()
+    {
+        static const std::map<juce::String, juce::String> m {
+            { "Tube Screamer (TS808 / TS9)", "Mids" },
+            { "Klon Centaur", "Transparent" },
+            { "Super OverDrive SD-1", "Asymmetric" },
+            { "OCD (Obsessive Compulsive Drive)", "Open" },
+            { "Timmy", "Flat" },
+            { "Soul Food", "Everyday" },
+            { "Morning Glory", "Chime" },
+            { "OD-1 OverDrive", "First" },
+            { "King of Tone", "Royal" },
+            { "Lightspeed", "Organic" },
+            { "DS-1 Distortion", "Abrasive" },
+            { "RAT 2", "Filthy" },
+            { "Big Muff Pi", "Sustain" },
+            { "MT-2 Metal Zone", "Extreme" },
+            { "HM-2 Heavy Metal", "Chainsaw" },
+            { "Shredmaster", "Thrash" },
+            { "Distortion+", "Op-Amp" },
+            { "BE-OD", "Roar" },
+            { "SansAmp Bass Driver DI", "Driver" },
+            { "Microtubes B3K", "Grind" },
+            { "Microtubes B7K Ultra", "Growl" },
+            { "Alpha-Omega", "Dual" },
+            { "SVT preamp", "Tube" },
+            { "M80 Bass D.I.+", "Blend" },
+            { "Bass Big Muff Pi", "Fuzz" },
+            { "ODB-3 Bass OverDrive", "Buzz" },
+            { "Tone Hammer", "Round" },
+            { "Brassmaster", "Snarl" },
+        };
+        return m;
+    }
     PedalModel makeModel (const char* name, const char* maker, const char* year, const char* blurb,
                       std::vector<int> knobs, std::map<int, juce::String> labels, PedalCircuit c,
                       const char* voiceName = "", juce::StringArray voices = {})
     {
         PedalModel m;
         m.name = name; m.maker = maker; m.year = year; m.blurb = blurb;
+        m.aka = juce::String (maker) + " " + name;
+        m.orig = name;
+        if (auto it = pedalNames().find (name); it != pedalNames().end()) { m.name = it->second; m.maker = {}; }
         m.knobs = std::move (knobs); m.labels = std::move (labels); m.c = c;
         m.voiceName = voiceName; m.voices = std::move (voices);
         return m;
@@ -332,7 +369,7 @@ static juce::StringArray modelNames (NodeType t)
 {
     juce::StringArray s;
     for (auto& m : PedalBlock::modelsFor (t))
-        s.add (m.maker + " " + m.name);
+        s.add (m.maker.isEmpty() ? m.name : m.maker + " " + m.name);
     return s;
 }
 
@@ -379,7 +416,7 @@ juce::String PedalBlock::getDetail() const
     const auto& m = model();
     auto d = m.name.upToFirstOccurrenceOf (" (", false, false);
     const int v = getChoice (pVoice);
-    if (m.name.startsWith ("Tube")) d = m.voices[juce::jlimit (0, 1, v)];
+    if (m.aka.contains ("Tube Screamer")) d = m.voices[juce::jlimit (0, 1, v)];
     else if (m.voices.size() > 1 && v > 0) d << "  " << m.voices[juce::jlimit (0, m.voices.size() - 1, v)];
     return d;
 }
@@ -428,7 +465,7 @@ PedalCircuit PedalBlock::circuit() const noexcept
     const auto& m = model();
     auto c = m.c;
     const int v = juce::jlimit (0, juce::jmax (0, m.voices.size() - 1), getChoice (pVoice));
-    const auto& n = m.name;
+    const auto& n = m.orig;
     if (n.startsWith ("Tube Screamer") && v == 1)   { c.bandwidth = 7500; c.toneB = 6500; c.midPeakDb = -1.0f; c.makeupDb -= 0.7f; }      // TS9: brighter, a touch thinner
     else if (n.startsWith ("OCD") && v == 1)        { c.inHp = 25; c.gainMaxDb += 6; c.toneB = 9500; c.makeupDb -= 1.0f; }               // HP: more bass, gain, output
     else if (n.startsWith ("Timmy"))

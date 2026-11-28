@@ -1934,7 +1934,7 @@ int main (int argc, char** argv)
         ChorusBlock c;
         c.set (c.getModelParam(), 2.0f);   // CE-2
         c.onChoiceChanged (c.getModelParam());
-        CHECK (c.getModelTitle() == "Boss CE-2" && std::abs (c.getBase (c.indexOf ("delay")) - 12.0f) < 0.01f
+        CHECK (c.getModelTitle() == "Classic" && std::abs (c.getBase (c.indexOf ("delay")) - 12.0f) < 0.01f
                && c.getParamName (c.indexOf ("depth")) == "Depth", "picking a model sets its stock settings");
         CompBlock d;
         d.set (d.getModelParam(), 1.0f);
@@ -2102,7 +2102,7 @@ int main (int argc, char** argv)
         // the passive tone stack: a mid scoop at noon, and each knob does its job
         const auto& ms = AmpBlock::models();
         int bassman = 0;
-        for (int i = 0; i < (int) ms.size(); ++i) if (ms[(size_t) i].name.contains ("Bassman")) bassman = i;
+        for (int i = 0; i < (int) ms.size(); ++i) if (ms[(size_t) i].aka.contains ("Bassman")) bassman = i;
         const auto parts = ms[(size_t) bassman].c.parts;
         auto mag = [&] (double hz, double t, double m, double l) { return 20.0 * std::log10 (ToneStack::magnitude (parts, hz, t, m, l)); };
         CHECK (mag (700, .5, .5, .5) < mag (100, .5, .5, .5) - 3 && mag (700, .5, .5, .5) < mag (4000, .5, .5, .5) - 3, "the Bassman tone stack scoops the mids at noon");
@@ -2153,7 +2153,7 @@ int main (int argc, char** argv)
         auto ampNamed = [&] (const char* n)
         {
             auto a = std::make_unique<AmpBlock>();
-            for (int i = 0; i < (int) ms.size(); ++i) if (ms[(size_t) i].name.contains (n)) { a->set (AmpBlock::pModel, (float) i); a->onChoiceChanged (AmpBlock::pModel); break; }
+            for (int i = 0; i < (int) ms.size(); ++i) if (ms[(size_t) i].aka.contains (n)) { a->set (AmpBlock::pModel, (float) i); a->onChoiceChanged (AmpBlock::pModel); break; }
             return a;
         };
         auto twin = ampNamed ("Twin"); auto hg = ampNamed ("5150 /"); auto jc = ampNamed ("JC-120");
@@ -2170,11 +2170,11 @@ int main (int argc, char** argv)
         auto* a = dynamic_cast<AmpBlock*> (e.insert (e.createNode (NodeType::Amp), e.getRoot(), 0));
         const auto& presets = factoryPresets (NodeType::Amp);
         int recto = -1;
-        for (int i = 0; i < (int) presets.size(); ++i) if (presets[(size_t) i].name.startsWith ("Recto")) recto = i;
+        for (int i = 0; i < (int) presets.size(); ++i) if (presets[(size_t) i].name.startsWith ("Heavy")) recto = i;
         e.applyFactoryPreset (a->id, recto);
-        CHECK (a->model().name.contains ("Rectifier") && std::abs (a->get (AmpBlock::pMaster) - 5.0f) < 0.01f && std::abs (a->get (AmpBlock::pSag) - 7.0f) < 0.01f,
+        CHECK (a->model().aka.contains ("Rectifier") && std::abs (a->get (AmpBlock::pMaster) - 5.0f) < 0.01f && std::abs (a->get (AmpBlock::pSag) - 7.0f) < 0.01f,
                "an amp preset picks its amp, takes the amp's stock settings and then its own");
-        CHECK (a->getName() == "Dual Rectifier" && a->getDetail().contains ("Modern"), "the card names the amp and its switch");
+        CHECK (a->getName() == "Heavy" && a->getDetail().contains ("Modern"), "the card names the amp and its switch");
         bool sectioned = false;
         for (auto& [first, heading] : a->getChoiceSections (AmpBlock::pModel)) if (heading == "High gain") sectioned = true;
         CHECK (sectioned, "the amp list is grouped (Clean, Crunch, High gain, Bass)");
