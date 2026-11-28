@@ -1,5 +1,8 @@
 #include "Synth.h"
 #include "Dsp.h"
+#include "RigFonts.h"
+#include <map>
+#include <mutex>
 
 namespace rig
 {
@@ -290,6 +293,84 @@ juce::StringArray Wavetable::factoryNames()
     for (auto& t : factory()) n.add (t->name);
     return n;
 }
+
+//==============================================================================
+namespace keys
+{
+const std::vector<BankEntry>& banks()
+{
+    static const std::vector<BankEntry> all = []
+    {
+        std::vector<BankEntry> out;
+        const char* p = RigFonts::KeysmithBanks_bin;
+        const size_t n = (size_t) RigFonts::KeysmithBanks_binSize;
+        if (n < 8 || std::memcmp (p, "KSB1", 4) != 0) return out;
+        size_t at = 4;
+        auto u8 = [&] { return (int) (unsigned char) p[at++]; };
+        auto u16 = [&] { const int v = (int) (unsigned char) p[at] | ((int) (unsigned char) p[at + 1] << 8); at += 2; return v; };
+        auto u32 = [&] { juce::uint32 v = 0; for (int k = 0; k < 4; ++k) v |= (juce::uint32) (unsigned char) p[at + (size_t) k] << (8 * k); at += 4; return (size_t) v; };
+        auto str = [&] { const int len = u16(); juce::String s = juce::String::fromUTF8 (p + at, len); at += (size_t) len; return s; };
+        const size_t count = u32();
+        for (size_t i = 0; i < count && at < n; ++i)
+        {
+            BankEntry e;
+            e.sample = u8() == 1;
+            e.category = str();
+            e.name = str();
+            if (! e.sample)
+            {
+                e.frames = u16();
+                e.frameLen = u16();
+                e.data = p + at;
+                e.size = (size_t) (e.frames * e.frameLen * 2);
+            }
+            else
+            {
+                e.root = u8();
+                e.size = u32();
+                e.data = p + at;
+            }
+            at += e.size;
+            if (at > n) break;
+            out.push_back (e);
+        }
+        return out;
+    }();
+    return all;
+}
+
+const BankEntry* findBank (const juce::String& ref)
+{
+    for (auto& e : banks()) if (e.ref().equalsIgnoreCase (ref)) return &e;
+    return nullptr;
+}
+
+juce::StringArray bankCategories (bool samples)
+{
+    juce::StringArray c;
+    for (auto& e : banks()) if (e.sample == samples) c.addIfNotAlreadyThere (e.category);
+    return c;
+}
+
+static std::shared_ptr<const Wavetable> bankTable (const BankEntry& e)
+{
+    static std::mutex m;
+    static std::map<juce::String, std::shared_ptr<const Wavetable>> cache;
+    const std::lock_guard<std::mutex> g (m);
+    if (auto it = cache.find (e.ref()); it != cache.end()) return it->second;
+    std::vector<std::vector<float>> frames ((size_t) e.frames, std::vector<float> ((size_t) e.frameLen));
+    const auto* s = reinterpret_cast<const unsigned char*> (e.data);
+    for (int f = 0; f < e.frames; ++f)
+        for (int i = 0; i < e.frameLen; ++i)
+        {
+            const size_t k = ((size_t) f * (size_t) e.frameLen + (size_t) i) * 2;
+            frames[(size_t) f][(size_t) i] = (float) (juce::int16) (s[k] | (s[k + 1] << 8)) / 32767.0f;
+        }
+    auto t = Wavetable::fromFrames (e.name, frames);
+    cache[e.ref()] = t;
+    return t;
+}
+} // namespace keys
 
 //==============================================================================
 static ParamSpec timeParam (const char* id, const char* name, float def, float mx = 10000.0f)
@@ -600,8 +681,29 @@ const Wavetable* SynthBlock::tableFor (int o) const noexcept
     const int idx = getChoice (o == 0 ? pTableA : pTableB);
     const auto& f = Wavetable::factory();
     if (idx < (int) f.size()) return f[(size_t) idx].get();
+    if (auto* u = userOsc[(size_t) juce::jlimit (0, 1, o)].load()) return u;
     if (auto* u = user.load()) return u;
     return f[0].get();
+}
+
+juce::String SynthBlock::tableName (int o) const
+{
+    const auto* t = tableFor (o);
+    return t != nullptr ? t->name : juce::String();
+}
+
+bool SynthBlock::loadBankTable (const juce::String& ref, int o)
+{
+    const auto* e = keys::findBank (ref);
+    if (e == nullptr || e->sample) return false;
+    auto t = keys::bankTable (*e);
+    if (t == nullptr) return false;
+    o = juce::jlimit (0, 1, o);
+    keep.push_back (t);
+    userOsc[(size_t) o].store (t.get());
+    oscRef[(size_t) o] = "bank:" + e->ref();
+    set (o == 1 ? pTableB : pTableA, (float) Wavetable::factory().size());
+    return true;
 }
 
 bool SynthBlock::loadWavetable (const juce::File& file, int o, juce::String& error)
@@ -611,6 +713,8 @@ bool SynthBlock::loadWavetable (const juce::File& file, int o, juce::String& err
     keep.push_back (t);
     user.store (t.get());
     userFile = file;
+    userOsc[(size_t) juce::jlimit (0, 1, o)].store (t.get());
+    oscRef[(size_t) juce::jlimit (0, 1, o)] = file.getFullPathName();
     set (o == 1 ? pTableB : pTableA, (float) Wavetable::factory().size());
     return true;
 }
@@ -619,6 +723,8 @@ juce::ValueTree SynthBlock::toState() const
 {
     auto v = Block::toState();
     if (userFile != juce::File()) v.setProperty ("wavetable", userFile.getFullPathName(), nullptr);
+    if (oscRef[0].isNotEmpty()) v.setProperty ("tableA", oscRef[0], nullptr);
+    if (oscRef[1].isNotEmpty()) v.setProperty ("tableB", oscRef[1], nullptr);
     return v;
 }
 
@@ -634,13 +740,27 @@ void SynthBlock::fromState (const juce::ValueTree& v)
         set (pTableA, wa);
         set (pTableB, wb);
     }
+    // each oscillator's own: a bank table or a file
+    for (int o = 0; o < 2; ++o)
+        if (const auto ref = v.getProperty (o == 0 ? "tableA" : "tableB").toString(); ref.isNotEmpty())
+        {
+            const float wa = getBase (pTableA), wb = getBase (pTableB);
+            juce::String err;
+            if (ref.startsWith ("bank:")) loadBankTable (ref.substring (5), o);
+            else if (juce::File (ref).existsAsFile()) loadWavetable (juce::File (ref), o, err);
+            set (pTableA, wa);
+            set (pTableB, wb);
+        }
     juce::ignoreUnused (a, b);
 }
 
 juce::String SynthBlock::formatValue (int i, float v) const
 {
     if ((i == pTableA || i == pTableB) && juce::roundToInt (v) >= (int) Wavetable::factory().size())
+    {
+        if (auto* u = userOsc[i == pTableA ? 0u : 1u].load()) return u->name;
         return user.load() != nullptr ? user.load()->name : juce::String ("User (none)");
+    }
     if (i == pUniA || i == pUniB) return juce::String (juce::roundToInt (v)) + (juce::roundToInt (v) == 1 ? " voice" : " voices");
     return Block::formatValue (i, v);
 }
@@ -987,7 +1107,32 @@ bool SamplerBlock::loadSample (const juce::File& f, juce::String& error)
     keep.push_back (done);
     loaded.store (done.get());
     file = f;
+    bankRef = {};
     set (pSource, (float) factory().size());
+    return true;
+}
+
+bool SamplerBlock::loadBankSample (const juce::String& ref)
+{
+    const auto* e = keys::findBank (ref);
+    if (e == nullptr || ! e->sample) return false;
+    juce::FlacAudioFormat flac;
+    std::unique_ptr<juce::AudioFormatReader> r (flac.createReaderFor (new juce::MemoryInputStream (e->data, e->size, false), true));
+    if (r == nullptr || r->lengthInSamples < 32) return false;
+    const int len = (int) r->lengthInSamples;
+    auto s = std::make_shared<Sample>();
+    s->name = e->name;
+    s->rate = r->sampleRate > 0 ? r->sampleRate : 32000.0;
+    s->data.setSize (2, len);
+    r->read (&s->data, 0, len, 0, true, true);
+    if (r->numChannels < 2) s->data.copyFrom (1, 0, s->data, 0, 0, len);
+    auto done = finishSample (s);
+    keep.push_back (done);
+    loaded.store (done.get());
+    file = juce::File();
+    bankRef = e->ref();
+    set (pSource, (float) factory().size());
+    set (pRoot, (float) e->root);
     return true;
 }
 
@@ -995,6 +1140,7 @@ juce::ValueTree SamplerBlock::toState() const
 {
     auto v = Block::toState();
     if (file != juce::File()) v.setProperty ("file", file.getFullPathName(), nullptr);
+    if (bankRef.isNotEmpty()) v.setProperty ("bank", bankRef, nullptr);
     return v;
 }
 
@@ -1007,6 +1153,13 @@ void SamplerBlock::fromState (const juce::ValueTree& v)
         juce::String err;
         loadSample (juce::File (path), err);
         set (pSource, src);
+    }
+    if (const auto ref = v.getProperty ("bank").toString(); ref.isNotEmpty())
+    {
+        const float src = getBase (pSource), root = getBase (pRoot);
+        loadBankSample (ref);
+        set (pSource, src);
+        set (pRoot, root);
     }
 }
 

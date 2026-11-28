@@ -1,6 +1,7 @@
 // Headless smoke tests for the Rigsmith engine. Build with -DRIGSMITH_TESTS=ON.
 #include "Engine/Engine.h"
 #include "Engine/Randomiser.h"
+#include "Engine/Synth.h"
 #include "T3K/Tone3000.h"
 #include "Engine/PluginScanner.h"
 #include "Engine/FactoryPresets.h"
@@ -425,6 +426,48 @@ int main (int argc, char** argv)
         const int before = (int) e.getRoot().nodes.size();
         e.remove (delayId);
         CHECK (e.undo() && (int) e.getRoot().nodes.size() == before, "undo restores a removed block");
+    }
+
+    // Keysmith's banks: tables and instruments, built in
+    {
+        const auto& b = keys::banks();
+        int tables = 0, samples = 0;
+        for (auto& e : b) (e.sample ? samples : tables)++;
+        CHECK (tables >= 50 && samples >= 20, "the banks: " + juce::String (tables) + " wavetables, " + juce::String (samples) + " instruments");
+        SynthBlock syn;
+        CHECK (syn.loadBankTable ("Instruments/Cello", 1) && syn.tableName (1) == "Cello" && syn.tableFor (1)->frames > 4 && syn.tableName (0) != "Cello",
+               "a bank table on oscillator B only (" + syn.tableName (1) + ")");
+        auto st = syn.toState();
+        SynthBlock back; back.fromState (st);
+        CHECK (back.tableName (1) == "Cello", "...and it's saved with the block");
+        SamplerBlock smp;
+        CHECK (smp.loadBankSample ("Strings/Cellos") && smp.currentSample() != nullptr && smp.currentSample()->data.getNumSamples() > 32000
+               && juce::roundToInt (smp.get (SamplerBlock::pRoot)) == 60, "a bank instrument in the Sampler, its root set (Cellos at C4 = 60)");
+    }
+
+    // a removed block is gone from the sound too: with every block removed, the rig passes the signal straight through
+    {
+        Engine e; e.prepare (48000.0, 256);
+        juce::AudioBuffer<float> buf (2, 256); juce::MidiBuffer midi;
+        auto runSine = [&] (int blocks)
+        {
+            double diff = 0;
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int i = 0; i < 256; ++i) { const float x = 0.2f * std::sin ((float) (b * 256 + i) * 0.05f); buf.setSample (0, i, x); buf.setSample (1, i, x); }
+                juce::AudioBuffer<float> dry (buf);
+                e.process (buf, midi);
+                if (b >= blocks / 2) for (int i = 0; i < 256; ++i) diff = juce::jmax (diff, (double) std::abs (buf.getSample (0, i) - dry.getSample (0, i)));
+            }
+            return diff;
+        };
+        e.insert (e.createNode (NodeType::Fuzz), e.getRoot(), 0);
+        e.insert (e.createNode (NodeType::Delay), e.getRoot(), -1);
+        runSine (40);
+        while (! e.getRoot().nodes.empty()) e.remove (e.getRoot().nodes.front()->id);
+        const double left = runSine (120);
+        std::printf ("  (all removed: %.6f from the dry signal)\n", left);
+        CHECK (e.getRoot().nodes.empty() && left < 1.0e-3, "with every block removed, nothing of them is heard (" + juce::String (left, 5) + ")");
     }
 
     // block presets

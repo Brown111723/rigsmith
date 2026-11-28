@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Rigsmith VERSION 0.16.0 LANGUAGES C CXX)
+project(Rigsmith VERSION 0.17.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -150,7 +150,8 @@ juce_add_binary_data(RigsmithFonts
         Resources/fonts/Inter-Medium.ttf
         Resources/fonts/Inter-SemiBold.ttf
         Resources/fonts/IBMPlexMono-Regular.ttf
-        Resources/fonts/Michroma-Regular.ttf)
+        Resources/fonts/Michroma-Regular.ttf
+        Resources/keys/KeysmithBanks.bin)
 set_target_properties(RigsmithFonts PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_compile_definitions(Rigsmith PUBLIC
@@ -251,5 +252,5 @@ if(RIGSMITH_TESTS)
         RIGSMITH_EXAMPLE_MODELS="${NAM_DIR}/example_models")
     target_link_libraries(RigsmithTests PRIVATE
         "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" juce::juce_audio_utils juce::juce_audio_processors juce::juce_dsp juce::juce_gui_extra juce::juce_cryptography
-        juce::juce_recommended_config_flags)
+        RigsmithFonts juce::juce_recommended_config_flags)
 endif()

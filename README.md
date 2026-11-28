@@ -311,3 +311,5 @@ installer/  Inno Setup script used by CI
 Rigsmith is released under the **GNU AGPLv3** (see `LICENSE`), because it's built on the open-source edition of [JUCE](https://juce.com), which is AGPLv3. Distributing a closed-source build would require a commercial JUCE licence.
 
 NeuralAmpModelerCore is © Steven Atkinson, MIT licence. The built-in typefaces - Inter, IBM Plex Mono and Michroma - are under the SIL Open Font License (see `Resources/fonts`). The TONE3000 sign-in code is adapted from TONE3000's MIT-licensed API examples (github.com/tone-3000/api); TONE3000 is a trademark of its owners, and tones belong to their creators under the licence shown on each tone. VST is a registered trademark of Steinberg Media Technologies GmbH.
+
+Keysmith's banks are public domain (CC0): the Adventure Kid Waveforms (AKWF) by Kristoffer Ekstrand, and the Versilian Community Sample Library (VSCO 2 CE) by Versilian Studios. See `Resources/keys`.

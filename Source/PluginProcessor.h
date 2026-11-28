@@ -38,9 +38,10 @@ public:
 
     rig::Engine engine;
 
+    juce::AudioProcessorEditor* createEditor() override;
+
 private:
     static BusesProperties makeBuses (bool keysmith);
-    juce::AudioProcessorEditor* createEditor() override;
     void parameterValueChanged (int, float) override;
     void parameterGestureChanged (int, bool) override {}
 

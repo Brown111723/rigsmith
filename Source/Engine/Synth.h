@@ -43,6 +43,23 @@ struct Svf
 const juce::StringArray& filterTypes();   // LP 12, LP 24, BP, HP, Notch, Off
 /** Note number -> "C3" (60 = C3, as most DAWs show it). */
 juce::String noteName (int note);
+
+/** Keysmith's built-in banks: single-cycle waveforms made into wavetables (the Adventure Kid AKWF
+    collection, CC0) and pitched instruments for the Sampler (the Versilian VSCO 2 Community Edition,
+    CC0). A reference is "Category/Name". */
+struct BankEntry
+{
+    bool sample = false;
+    juce::String category, name;
+    int root = 60;                 // samples: the note it plays
+    int frames = 0, frameLen = 0;  // tables
+    const char* data = nullptr;
+    size_t size = 0;
+    juce::String ref() const { return category + "/" + name; }
+};
+const std::vector<BankEntry>& banks();
+const BankEntry* findBank (const juce::String& ref);
+juce::StringArray bankCategories (bool samples);
 } // namespace keys
 
 //==============================================================================
@@ -155,6 +172,12 @@ public:
 
     /** A wavetable from a file: it becomes the "User" table, on oscillator A (or B). */
     bool loadWavetable (const juce::File&, int osc, juce::String& error);
+    /** A table from Keysmith's banks ("Instruments/Cello") on oscillator A (or B). */
+    bool loadBankTable (const juce::String& ref, int osc);
+    /** What an oscillator's "User" slot holds: a bank reference or a file path ("" = none). */
+    juce::String userRef (int osc) const { return oscRef[(size_t) juce::jlimit (0, 1, osc)]; }
+    /** The name of the table an oscillator plays. */
+    juce::String tableName (int osc) const;
     juce::File getUserFile() const { return userFile; }
     /** For the display: the table an oscillator plays and where it is in it (0..1, with modulation). */
     const Wavetable* tableFor (int osc) const noexcept;
@@ -177,6 +200,8 @@ private:
     std::array<std::array<Osc, 2>, maxVoices> osc {};
     std::array<double, maxVoices> subPhase {};
     std::atomic<const Wavetable*> user { nullptr };
+    std::array<std::atomic<const Wavetable*>, 2> userOsc { nullptr, nullptr };   // each oscillator's own (banks)
+    std::array<juce::String, 2> oscRef;
     std::vector<std::shared_ptr<const Wavetable>> keep;   // every table ever loaded stays alive
     juce::File userFile;
     std::array<std::atomic<float>, 2> livePos {};
@@ -219,6 +244,9 @@ public:
     };
     /** Load a sound file (wav, aiff, flac, ogg, mp3): it becomes the "File" source. */
     bool loadSample (const juce::File&, juce::String& error);
+    /** An instrument from Keysmith's banks ("Strings/Cellos"): the "File" source, its root set. */
+    bool loadBankSample (const juce::String& ref);
+    juce::String getBankRef() const { return bankRef; }
     juce::File getFile() const { return file; }
     const Sample* currentSample() const noexcept;
     /** Playheads of the sounding voices (0..1 through the sound), for the display; -1 = none. */
@@ -247,6 +275,7 @@ private:
     std::atomic<const Sample*> loaded { nullptr };
     std::vector<std::shared_ptr<const Sample>> keep;
     juce::File file;
+    juce::String bankRef;
     const Sample* now = nullptr;   // this chunk's sound
     int modeNow = 0;
     float startNow = 0, lengthNow = 1, speedNow = 1, sprayNow = 0, pitchSpreadNow = 0, spreadNow = 0, posEnvNow = 0;

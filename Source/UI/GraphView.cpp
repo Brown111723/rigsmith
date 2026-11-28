@@ -159,6 +159,13 @@ juce::Rectangle<float> BlockCard::footswitchArea() const
     return { r.getCentreX() - 14.5f, r.getBottom() - 46.0f, 29.0f, 29.0f };
 }
 
+juce::Rectangle<float> BlockCard::closeArea() const
+{
+    // a small X, top right: take the block out of the rig
+    const auto r = plateArea();
+    return { r.getRight() - 21.0f, r.getY() + 8.0f, 13.0f, 13.0f };
+}
+
 juce::Rectangle<float> BlockCard::diceArea() const
 {
     const auto r = plateArea();
@@ -296,6 +303,8 @@ juce::String BlockCard::getTooltip()
     if (const int kp = knobParamAt (p); kp >= 0)
         if (auto* b = dynamic_cast<const Block*> (&node))
             return b->getParamName (kp) + ": " + b->formatValue (kp, b->getBase (kp)) + "\nDrag up / down to turn it (Shift = fine), double-click to reset";
+    if (closeArea().expanded (3.0f).contains (p))
+        return "Remove this block (Ctrl+Z puts it back)";
     if (hasDice() && lockArea().expanded (3.0f).contains (p))
         return node.locked.load() ? "Locked: the dice leave this block alone. Click to unlock"
                                   : "Lock this block so the dice leave it alone";
@@ -507,7 +516,7 @@ void BlockCard::paint (juce::Graphics& g)
     g.setColour ((selected ? text : muted).withMultipliedAlpha (live ? 0.9f : 0.5f));
     g.setFont (font (9.0f, true).withExtraKerningFactor (0.12f));
     const int kx = X + (twoLeds ? 32 : 23);
-    const int rightUsed = hasReadout ? 48 : (tone.valid ? 36 : 0);
+    const int rightUsed = 18 + (hasReadout ? 48 : (tone.valid ? 36 : 0));
     g.drawFittedText (kindLabel (node), kx, Y + 8, X + RW - 8 - kx - rightUsed, 14, juce::Justification::centredLeft, 1, 0.75f);
 
     // top right: latency or gain compensation, else the TONE3000 mark
@@ -515,7 +524,7 @@ void BlockCard::paint (juce::Graphics& g)
     {
         g.setColour (dim);
         g.setFont (mono (9.0f));
-        g.drawText (juce::String (lat) + " smp", X + RW - 70, Y + 8, 60, 14, juce::Justification::centredRight);
+        g.drawText (juce::String (lat) + " smp", X + RW - 88, Y + 8, 60, 14, juce::Justification::centredRight);
     }
     else if (node.autoGain.load())
     {
@@ -523,16 +532,33 @@ void BlockCard::paint (juce::Graphics& g)
         g.setFont (mono (9.0f));
         const float db = node.autoGainDb.load();
         g.drawText (node.autoGainProgress.load() < 1.0f ? juce::String ("AG ...") : "AG " + juce::String (db > 0.05f ? "+" : "") + juce::String (db, 1),
-                    X + RW - 70, Y + 8, 60, 14, juce::Justification::centredRight);
+                    X + RW - 88, Y + 8, 60, 14, juce::Justification::centredRight);
     }
     else if (tone.valid)
     {
-        const juce::Rectangle<float> badge (r.getRight() - 38.0f, r.getY() + 9.0f, 27.0f, 12.0f);
+        const juce::Rectangle<float> badge (r.getRight() - 56.0f, r.getY() + 9.0f, 27.0f, 12.0f);
         g.setColour (text.withAlpha (0.10f * alpha + 0.04f));
         g.fillRoundedRectangle (badge, 3.5f);
         g.setColour (text.withMultipliedAlpha (0.75f * alpha));
         g.setFont (font (8.0f, true));
         g.drawText ("T3K", badge, juce::Justification::centred);
+    }
+
+    // the X: dim until the mouse is on the block, red under the pointer
+    {
+        const auto x = closeArea();
+        const bool overX = over && x.expanded (3.0f).contains (getMouseXYRelative().toFloat());
+        if (overX)
+        {
+            g.setColour (red.withAlpha (0.18f));
+            g.fillRoundedRectangle (x.expanded (3.0f), 4.0f);
+        }
+        juce::Path p;
+        const auto q = x.reduced (3.0f);
+        p.startNewSubPath (q.getTopLeft()); p.lineTo (q.getBottomRight());
+        p.startNewSubPath (q.getTopRight()); p.lineTo (q.getBottomLeft());
+        g.setColour (overX ? red : (over || selected ? muted : dim.withAlpha (0.55f)));
+        g.strokePath (p, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
     // amp heads have a grille with the amp's name on it; cabs show their speakers
@@ -744,6 +770,15 @@ void BlockCard::mouseDown (const juce::MouseEvent& e)
         repaint();
         return;
     }
+    if (closeArea().expanded (3.0f).contains (e.position))
+    {
+        pressedSwitch = true;   // not a drag
+        auto* engine = &host.getEngine();
+        const auto id = node.id;
+        // after this click: removing the block deletes this card
+        juce::MessageManager::callAsync ([engine, id] { engine->remove (id); });
+        return;
+    }
     if (hasDice() && lockArea().expanded (3.0f).contains (e.position))
     {
         pressedSwitch = true;   // not a drag
@@ -823,7 +858,7 @@ void BlockCard::mouseDoubleClick (const juce::MouseEvent& e)
         repaint();
         return;
     }
-    if (! footswitchArea().expanded (6.0f).contains (e.position) && ! (hasDice() && diceArea().expanded (3.0f).contains (e.position))
+    if (! footswitchArea().expanded (6.0f).contains (e.position) && ! closeArea().expanded (3.0f).contains (e.position) && ! (hasDice() && diceArea().expanded (3.0f).contains (e.position))
         && ! (hasDice() && lockArea().expanded (3.0f).contains (e.position))
         && ! (selector().valid() && knobArea().expanded (4.0f).contains (e.position)))
         host.openNode (node);

@@ -120,6 +120,7 @@ private:
     juce::uint64 signature() const;
     juce::uint64 lastSignature = 0;
     juce::Rectangle<float> footswitchArea() const;
+    juce::Rectangle<float> closeArea() const;
     juce::Rectangle<float> diceArea() const;
     juce::Rectangle<float> lockArea() const;
     bool hasDice() const;
