@@ -266,7 +266,7 @@ public:
         oGran, oGSize, oGDens, oGPos, oGPosRand, oGPitch, oGOver, oGSpread,   // GRANULAR
         numOscParams
     };
-    static constexpr int oscParam (int osc, int k) noexcept { return pOscA + juce::jlimit (0, 1, osc) * numOscParams + k; }
+    static constexpr int oscParam (int osc, int k) noexcept { return pOscA + (osc > 0 ? 1 : 0) * numOscParams + k; }
     static constexpr int pMPan = pOscA + 2 * numOscParams, pMix = pMPan + 1, pTranspose = pMPan + 2;
     /** The knobs a page (tab) of an oscillator shows: "WAVE", "UNISON", "HARM", "FM", "WS" (a wavetable),
         "SAMPLE", "PLAYBACK", "PITCH", "LOOP", "GRANULAR" (a sample). */
