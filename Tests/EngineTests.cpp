@@ -445,6 +445,42 @@ int main (int argc, char** argv)
                && juce::roundToInt (smp.get (SamplerBlock::pRoot)) == 60, "a bank instrument in the Sampler, its root set (Cellos at C4 = 60)");
     }
 
+    // Keysmith's engine: every patch plays a note (wavetables, samples, both), nothing blows up
+    {
+        Engine e; e.prepare (48000.0, 256);
+        juce::String silent, broken;
+        for (int pi = 0; pi < Engine::getKeysPatchNames().size(); ++pi)
+        {
+            e.loadKeysPatch (pi);
+            double sum = 0; bool finite = true;
+            for (int blk = 0; blk < 60; ++blk)
+            {
+                juce::AudioBuffer<float> buf (2, 256); buf.clear();
+                juce::MidiBuffer midi;
+                if (blk == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+                if (blk == 40) midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+                e.process (buf, midi);
+                for (int i = 0; i < 256; ++i) { const float x = buf.getSample (0, i); if (! std::isfinite (x)) finite = false; sum += (double) x * x; }
+            }
+            if (! finite) broken << Engine::getKeysPatchNames()[pi] << " ";
+            else if (std::sqrt (sum / (60.0 * 256)) < 0.0005) silent << Engine::getKeysPatchNames()[pi] << " ";
+        }
+        CHECK (silent.isEmpty() && broken.isEmpty(), "every Keysmith patch sounds (silent: " + silent + ", broken: " + broken + ")");
+        // the dice never touch the tuning
+        SynthBlock syn;
+        syn.set (SynthBlock::pSemiA, 7.0f); syn.set (SynthBlock::pFineB, -12.0f); syn.set (SynthBlock::pTranspose, -5.0f);
+        syn.set (SynthBlock::oscParam (0, SynthBlock::oRoot), 48.0f);
+        juce::Random rng (3);
+        for (int k = 0; k < 20; ++k) syn.randomise (rng, 1.0f);
+        CHECK (syn.getBase (SynthBlock::pSemiA) == 7.0f && syn.getBase (SynthBlock::pFineB) == -12.0f && syn.getBase (SynthBlock::pTranspose) == -5.0f
+               && syn.getBase (SynthBlock::oscParam (0, SynthBlock::oRoot)) == 48.0f, "randomising Keysmith leaves every tuning knob alone");
+        // a sample on oscillator B, a wavetable on A: both kept with the patch
+        SynthBlock two;
+        CHECK (two.loadBankSample ("Strings/Violins", 1) && two.isSampleOsc (1) && ! two.isSampleOsc (0), "oscillator B a sample, A a wavetable");
+        SynthBlock back; back.fromState (two.toState());
+        CHECK (back.isSampleOsc (1) && back.sampleFor (1) != nullptr && back.sampleFor (1)->name == "Violins", "...and saved that way");
+    }
+
     // a removed block is gone from the sound too: with every block removed, the rig passes the signal straight through
     {
         Engine e; e.prepare (48000.0, 256);

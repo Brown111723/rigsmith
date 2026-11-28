@@ -50,7 +50,7 @@ void delay (Chain& c, Engine& e, const char* mode, float ms, float fb, float mix
 }
 
 /** A split whose paths are layers, all playing every note. */
-Split& layers (Chain& c, int paths)
+[[maybe_unused]] Split& layers (Chain& c, int paths)
 {
     auto s = std::make_unique<Split>();
     for (int i = 0; i < paths; ++i) s->branches.push_back (std::make_unique<Split::Branch>());
@@ -67,8 +67,9 @@ const std::vector<KeysPatch>& patches()
         { "Piano", "Keys", [] (Engine& e)
           {
               auto c = std::make_unique<Chain>();
-              auto& s = add<SamplerBlock> (*c, e, NodeType::Sampler);
-              setChoice (s, "source", "Felt Keys"); setP (s, "loop", 0.0f);
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              s.loadBankSample ("Keys/Upright Piano", 0);
+              setChoice (s, "asmode", "Gate"); setP (s, "auni", 1.0f); setChoice (s, "ftype", "Off");
               setP (s, "sustain", 0.0f); setP (s, "decay", 4500.0f); setP (s, "release", 420.0f); setP (s, "velocity", 75.0f);
               reverb (*c, e, "Room", 1.3f, 14.0f);
               return c;
@@ -156,10 +157,10 @@ const std::vector<KeysPatch>& patches()
         { "Glass Grains", "Texture", [] (Engine& e)
           {
               auto c = std::make_unique<Chain>();
-              auto& s = add<SamplerBlock> (*c, e, NodeType::Sampler);
-              setChoice (s, "source", "Glass Pad"); setChoice (s, "mode", "Granular");
-              setP (s, "start", 25.0f); setP (s, "length", 60.0f); setP (s, "speed", 20.0f);
-              setP (s, "grain", 140.0f); setP (s, "density", 6.0f); setP (s, "spray", 35.0f); setP (s, "pspread", 0.15f); setP (s, "spread", 90.0f);
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              setChoice (s, "atype", "Sample"); setChoice (s, "asrc", "Glass Pad"); setP (s, "auni", 2.0f); setP (s, "adet", 8.0f);
+              setP (s, "agran", 1.0f); setP (s, "agpos", 30.0f); setP (s, "agsize", 140.0f); setP (s, "agdens", 6.0f);
+              setP (s, "agposrand", 35.0f); setP (s, "agspread", 90.0f); setChoice (s, "ftype", "Off");
               setP (s, "attack", 600.0f); setP (s, "release", 2200.0f);
               delay (*c, e, "Ping-Pong", 500.0f, 45.0f, 25.0f);
               reverb (*c, e, "Shimmer", 7.0f, 40.0f, 35.0f);
@@ -168,14 +169,12 @@ const std::vector<KeysPatch>& patches()
         { "Layered Keys", "Keys", [] (Engine& e)
           {
               auto c = std::make_unique<Chain>();
-              auto& sp = layers (*c, 2);
-              auto& keys = add<SamplerBlock> (*sp.branches[0]->chain, e, NodeType::Sampler);
-              setChoice (keys, "source", "Felt Keys"); setP (keys, "loop", 0.0f);
-              setP (keys, "sustain", 0.0f); setP (keys, "decay", 3500.0f); setP (keys, "release", 500.0f);
-              auto& pad = add<SynthBlock> (*sp.branches[1]->chain, e, NodeType::Synth);
-              setChoice (pad, "atable", "Basic Shapes"); setP (pad, "apos", 8.0f); setP (pad, "auni", 2.0f); setP (pad, "adet", 10.0f);
-              setP (pad, "attack", 700.0f); setP (pad, "release", 1200.0f); setP (pad, "cutoff", 1500.0f);
-              sp.branches[1]->level = 0.45f;
+              // oscillator A a sample, B a wavetable: two layers in one engine
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              setChoice (s, "atype", "Sample"); setChoice (s, "asrc", "Felt Keys"); setChoice (s, "asmode", "Gate"); setP (s, "auni", 1.0f);
+              setChoice (s, "btable", "Basic Shapes"); setP (s, "bpos", 8.0f); setP (s, "buni", 2.0f); setP (s, "bdet", 10.0f); setP (s, "blvl", 40.0f); setP (s, "bsemi", 0.0f); setP (s, "bfine", 0.0f);
+              setP (s, "cutoff", 2600.0f); setP (s, "res", 6.0f);
+              setP (s, "sustain", 35.0f); setP (s, "decay", 3500.0f); setP (s, "release", 900.0f);
               fx (*c, e, NodeType::Chorus);
               reverb (*c, e, "Plate", 2.2f, 22.0f);
               return c;
@@ -183,9 +182,9 @@ const std::vector<KeysPatch>& patches()
         { "Choir Stretch", "Pad", [] (Engine& e)
           {
               auto c = std::make_unique<Chain>();
-              auto& s = add<SamplerBlock> (*c, e, NodeType::Sampler);
-              setChoice (s, "source", "Choir Air"); setChoice (s, "mode", "Stretch");
-              setP (s, "start", 15.0f); setP (s, "length", 70.0f); setP (s, "speed", 25.0f); setP (s, "grain", 120.0f);
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              setChoice (s, "atype", "Sample"); setChoice (s, "asrc", "Choir Air"); setP (s, "auni", 1.0f);
+              setP (s, "asstart", 15.0f); setP (s, "asend", 85.0f); setP (s, "astretch", 400.0f); setChoice (s, "ftype", "Off");
               setP (s, "attack", 400.0f); setP (s, "release", 1600.0f);
               reverb (*c, e, "Hall", 4.0f, 32.0f);
               return c;
@@ -193,14 +192,11 @@ const std::vector<KeysPatch>& patches()
         { "Bell Layers", "Keys", [] (Engine& e)
           {
               auto c = std::make_unique<Chain>();
-              auto& sp = layers (*c, 2);
-              auto& bell = add<SamplerBlock> (*sp.branches[0]->chain, e, NodeType::Sampler);
-              setChoice (bell, "source", "Bell Tines"); setP (bell, "loop", 0.0f); setP (bell, "sustain", 0.0f); setP (bell, "decay", 4000.0f);
-              auto& fm = add<SynthBlock> (*sp.branches[1]->chain, e, NodeType::Synth);
-              setChoice (fm, "atable", "FM Bell"); setP (fm, "apos", 20.0f); setP (fm, "posenv", 60.0f);
-              setP (fm, "matk", 1.0f); setP (fm, "mdec", 700.0f); setP (fm, "msus", 0.0f);
-              setP (fm, "sustain", 0.0f); setP (fm, "decay", 2500.0f); setP (fm, "release", 900.0f); setP (fm, "asemi", 12.0f);
-              sp.branches[1]->level = 0.5f;
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              setChoice (s, "atype", "Sample"); setChoice (s, "asrc", "Bell Tines"); setChoice (s, "asmode", "Gate"); setP (s, "auni", 1.0f);
+              setChoice (s, "btable", "FM Bell"); setP (s, "bpos", 20.0f); setP (s, "blvl", 45.0f); setP (s, "bsemi", 12.0f); setP (s, "bfine", 0.0f);
+              setP (s, "posenv", 60.0f); setP (s, "matk", 1.0f); setP (s, "mdec", 700.0f); setP (s, "msus", 0.0f); setChoice (s, "ftype", "Off");
+              setP (s, "sustain", 0.0f); setP (s, "decay", 3500.0f); setP (s, "release", 900.0f);
               delay (*c, e, "Digital", 330.0f, 28.0f, 18.0f);
               reverb (*c, e, "Hall", 3.0f, 28.0f);
               return c;
@@ -219,31 +215,58 @@ const std::vector<KeysPatch>& patches()
         { "Pluck", "Pluck", [] (Engine& e)
           {
               auto c = std::make_unique<Chain>();
-              auto& s = add<SamplerBlock> (*c, e, NodeType::Sampler);
-              setChoice (s, "source", "Pluck"); setP (s, "loop", 0.0f); setP (s, "sustain", 0.0f); setP (s, "decay", 1500.0f);
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              setChoice (s, "atype", "Sample"); setChoice (s, "asrc", "Pluck"); setChoice (s, "asmode", "Gate"); setP (s, "auni", 1.0f);
+              setP (s, "sustain", 0.0f); setP (s, "decay", 1500.0f);
               setChoice (s, "ftype", "LP 12"); setP (s, "cutoff", 3000.0f); setP (s, "fenv", 30.0f); setP (s, "mdec", 300.0f); setP (s, "msus", 0.0f);
               delay (*c, e, "Ping-Pong", 250.0f, 48.0f, 30.0f);
               reverb (*c, e, "Room", 1.4f, 18.0f);
               return c;
           } },
-        { "Four-Layer Atmos", "Texture", [] (Engine& e)
+        { "Two-Engine Atmos", "Texture", [] (Engine& e)
           {
-              // the full stack: four layers, each its own engine
+              // a choir stretched slow on A, a moving spectral table on B, a little noise
               auto c = std::make_unique<Chain>();
-              auto& sp = layers (*c, 4);
-              auto& a = add<SamplerBlock> (*sp.branches[0]->chain, e, NodeType::Sampler);
-              setChoice (a, "source", "Choir Air"); setChoice (a, "mode", "Stretch"); setP (a, "speed", 15.0f); setP (a, "attack", 1200.0f); setP (a, "release", 2500.0f);
-              auto& b = add<SamplerBlock> (*sp.branches[1]->chain, e, NodeType::Sampler);
-              setChoice (b, "source", "Noise Swell"); setChoice (b, "mode", "Granular"); setP (b, "spray", 60.0f); setP (b, "speed", 10.0f);
-              setChoice (b, "ftype", "Band"); setP (b, "cutoff", 2500.0f); setP (b, "keytrack", 100.0f); setP (b, "attack", 1500.0f);
-              auto& s = add<SynthBlock> (*sp.branches[2]->chain, e, NodeType::Synth);
-              setChoice (s, "atable", "Spectral"); setP (s, "apos", 10.0f); setP (s, "posenv", 80.0f); setP (s, "matk", 4000.0f); setP (s, "mdec", 6000.0f);
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              setChoice (s, "atype", "Sample"); setChoice (s, "asrc", "Choir Air"); setP (s, "astretch", 300.0f); setP (s, "auni", 2.0f); setP (s, "adet", 10.0f);
+              setChoice (s, "btable", "Spectral"); setP (s, "bpos", 10.0f); setP (s, "blvl", 55.0f); setP (s, "bsemi", 12.0f); setP (s, "bfine", 0.0f);
+              setP (s, "posenv", 80.0f); setP (s, "matk", 4000.0f); setP (s, "mdec", 6000.0f); setP (s, "noise", 8.0f);
               setP (s, "attack", 1500.0f); setP (s, "release", 3000.0f); setP (s, "cutoff", 2500.0f);
-              auto& g = add<SamplerBlock> (*sp.branches[3]->chain, e, NodeType::Sampler);
-              setChoice (g, "source", "Bell Tines"); setChoice (g, "mode", "Granular"); setP (g, "tune", 12.0f); setP (g, "spray", 40.0f); setP (g, "density", 3.0f);
-              setP (g, "grain", 200.0f); setP (g, "attack", 2000.0f); setP (g, "release", 3000.0f);
-              sp.branches[0]->level = 0.7f; sp.branches[1]->level = 0.35f; sp.branches[2]->level = 0.55f; sp.branches[3]->level = 0.4f;
               reverb (*c, e, "Shimmer", 9.0f, 45.0f, 40.0f);
+              return c;
+          } },
+        { "Cello Ensemble", "Strings", [] (Engine& e)
+          {
+              auto c = std::make_unique<Chain>();
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              s.loadBankSample ("Strings/Cellos", 0);
+              setChoice (s, "asmode", "Loop"); setP (s, "alstart", 35.0f); setP (s, "alend", 85.0f); setP (s, "alxfade", 60.0f);
+              setP (s, "auni", 2.0f); setP (s, "adet", 6.0f); setChoice (s, "ftype", "Off");
+              setP (s, "attack", 180.0f); setP (s, "sustain", 95.0f); setP (s, "release", 600.0f);
+              reverb (*c, e, "Hall", 3.0f, 26.0f);
+              return c;
+          } },
+        { "FM Keys", "Keys", [] (Engine& e)
+          {
+              auto c = std::make_unique<Chain>();
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              setChoice (s, "atable", "Basic Shapes"); setP (s, "apos", 0.0f); setP (s, "auni", 1.0f);
+              setP (s, "afm", 38.0f); setP (s, "afmratio", 2.0f); setP (s, "afmfb", 10.0f);
+              setChoice (s, "ftype", "LP 12"); setP (s, "cutoff", 6000.0f); setP (s, "keytrack", 60.0f);
+              setP (s, "attack", 2.0f); setP (s, "decay", 2200.0f); setP (s, "sustain", 20.0f); setP (s, "release", 500.0f);
+              fx (*c, e, NodeType::Chorus);
+              reverb (*c, e, "Plate", 1.8f, 18.0f);
+              return c;
+          } },
+        { "Harmonic Pad", "Pad", [] (Engine& e)
+          {
+              auto c = std::make_unique<Chain>();
+              auto& s = add<SynthBlock> (*c, e, NodeType::Synth);
+              setChoice (s, "atable", "Basic Shapes"); setP (s, "apos", 0.0f); setP (s, "auni", 5.0f); setP (s, "adet", 20.0f);
+              setP (s, "ahamt", 60.0f); setP (s, "ahcount", 14.0f); setP (s, "ahoddeven", -60.0f); setP (s, "ahdecay", 40.0f);
+              setChoice (s, "ftype", "Vowel O"); setP (s, "cutoff", 1100.0f); setP (s, "res", 40.0f);
+              setP (s, "attack", 900.0f); setP (s, "sustain", 90.0f); setP (s, "release", 1800.0f);
+              reverb (*c, e, "Hall", 5.0f, 34.0f);
               return c;
           } },
     };

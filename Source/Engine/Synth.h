@@ -113,6 +113,10 @@ protected:
         double pitch = 60.0, target = 60.0;   // with glide
         keys::Env amp, mod;
         keys::Svf fl[2], fl2[2];
+        keys::Svf fv[3][2];                  // vowel filters: three formants
+        float ap[4][2] {}, onePole[2] {};    // phaser all-passes, the 6 dB low pass
+        std::vector<float> comb[2];          // comb filters' delay lines
+        int combAt = 0;
         juce::Random rng;
         bool active() const noexcept { return amp.active(); }
     };
@@ -126,6 +130,8 @@ protected:
     virtual void renderVoice (Voice&, int index, float* l, float* r, int n) noexcept = 0;
     /** Once per chunk, before the voices: read the knobs. */
     virtual void beginChunk() noexcept {}
+    /** A one-shot sound plays to its end: note-off doesn't release it. */
+    virtual bool holdsThroughNoteOff() const noexcept { return false; }
 
     std::array<Voice, maxVoices> voices;
     // parameter indices, set by the derived block's constructor
@@ -145,71 +151,6 @@ private:
     juce::uint32 clock = 0;
     bool pedal = false;
     std::vector<int> monoStack;
-};
-
-//==============================================================================
-/** Keysmith's synth engine: two wavetable oscillators with unison, a sub and noise, a filter
-    and two envelopes. The second envelope moves the wavetables and the filter. */
-class SynthBlock : public NoteBlock
-{
-public:
-    SynthBlock();
-    juce::String getName() const override { return "Synth"; }
-    std::vector<int> cardParams() const override { return { pPosA, pFCut, pAAtk, pARel }; }
-    juce::String getDetail() const override;
-    Visual getVisual() const override { return Visual::Wavetable; }
-
-    enum
-    {
-        pTableA, pPosA, pSemiA, pFineA, pUniA, pDetA, pLevelA, pPanA,
-        pTableB, pPosB, pSemiB, pFineB, pUniB, pDetB, pLevelB, pPanB,
-        pSub, pSubOct, pNoise,
-        pFType, pFCut, pFRes, pFDrive, pFKey, pFEnv,
-        pAAtk, pADec, pASus, pARel, pAVel,
-        pEAtk, pEDec, pESus, pERel, pEPos,
-        pVVoices, pVMode, pVGlide, pVBend, pVLevel
-    };
-
-    /** A wavetable from a file: it becomes the "User" table, on oscillator A (or B). */
-    bool loadWavetable (const juce::File&, int osc, juce::String& error);
-    /** A table from Keysmith's banks ("Instruments/Cello") on oscillator A (or B). */
-    bool loadBankTable (const juce::String& ref, int osc);
-    /** What an oscillator's "User" slot holds: a bank reference or a file path ("" = none). */
-    juce::String userRef (int osc) const { return oscRef[(size_t) juce::jlimit (0, 1, osc)]; }
-    /** The name of the table an oscillator plays. */
-    juce::String tableName (int osc) const;
-    juce::File getUserFile() const { return userFile; }
-    /** For the display: the table an oscillator plays and where it is in it (0..1, with modulation). */
-    const Wavetable* tableFor (int osc) const noexcept;
-    float livePosition (int osc) const noexcept { return livePos[(size_t) juce::jlimit (0, 1, osc)].load (std::memory_order_relaxed); }
-
-    juce::ValueTree toState() const override;
-    void fromState (const juce::ValueTree&) override;
-    using Block::formatValue;
-    juce::String formatValue (int i, float v) const override;
-    void randomise (juce::Random&, float amount) override;
-
-protected:
-    void startVoice (Voice&, bool fresh) noexcept override;
-    void renderVoice (Voice&, int index, float* l, float* r, int n) noexcept override;
-    void beginChunk() noexcept override;
-
-private:
-    static constexpr int maxUnison = 8;
-    struct Osc { std::array<double, maxUnison> phase {}; };
-    std::array<std::array<Osc, 2>, maxVoices> osc {};
-    std::array<double, maxVoices> subPhase {};
-    std::atomic<const Wavetable*> user { nullptr };
-    std::array<std::atomic<const Wavetable*>, 2> userOsc { nullptr, nullptr };   // each oscillator's own (banks)
-    std::array<juce::String, 2> oscRef;
-    std::vector<std::shared_ptr<const Wavetable>> keep;   // every table ever loaded stays alive
-    juce::File userFile;
-    std::array<std::atomic<float>, 2> livePos {};
-    // knobs, read once per chunk
-    struct OscKnobs { const Wavetable* table = nullptr; float pos = 0, semi = 0, fine = 0, det = 0, level = 0, pan = 0; int uni = 1; };
-    std::array<OscKnobs, 2> k {};
-    float subLevel = 0, noiseLevel = 0, posEnv = 0;
-    int subOct = 1;
 };
 
 //==============================================================================
@@ -282,6 +223,141 @@ private:
     int grainLen = 4096;
     double grainGap = 1024;
     bool loopNow = false, reverseNow = false;
+};
+
+//==============================================================================
+/** Keysmith's engine: two oscillators, each a wavetable (with unison, harmonics, FM, waveshaping
+    and hard sync) or a sample (pitched, looped, time-stretched or granular, with unison), then a
+    filter and two envelopes, a sub and noise. The second envelope moves the wavetables, the
+    filter and the samples' pitch. */
+class SynthBlock : public NoteBlock
+{
+public:
+    SynthBlock();
+    juce::String getName() const override { return "Synth"; }
+    std::vector<int> cardParams() const override { return { pPosA, pFCut, pAAtk, pARel }; }
+    juce::String getDetail() const override;
+    Visual getVisual() const override { return Visual::Wavetable; }
+
+    enum
+    {
+        pTableA, pPosA, pSemiA, pFineA, pUniA, pDetA, pLevelA, pPanA,
+        pTableB, pPosB, pSemiB, pFineB, pUniB, pDetB, pLevelB, pPanB,
+        pSub, pSubOct, pNoise,
+        pFType, pFCut, pFRes, pFDrive, pFKey, pFEnv,
+        pAAtk, pADec, pASus, pARel, pAVel,
+        pEAtk, pEDec, pESus, pERel, pEPos,
+        pVVoices, pVMode, pVGlide, pVBend, pVLevel,
+        pOscA   // each oscillator's own knobs follow (OscParam), then the master's
+    };
+    /** An oscillator's knobs, from oscParam (osc, k). */
+    enum OscParam
+    {
+        oType,
+        oPhase, oPhaseRand, oSym, oSync,                       // WAVE (with table, position)
+        oUSpread, oWidth, oBlend,                              // UNISON (with voices, detune)
+        oHAmt, oHCount, oHTilt, oHOddEven, oHDecay,            // HARM
+        oFm, oFmRatio, oFmFine, oFmShape, oFmFb,               // FM
+        oWs, oWsDrive, oWsBias, oWsSym, oWsMix,                // WS
+        oSrc, oSStart, oSEnd, oRoot, oSGain, oSRev,            // SAMPLE
+        oSMode, oSSpeed, oSDir, oSRand, oSRetrig,              // PLAYBACK
+        oTrack, oPEnv, oStretch, oFormant,                     // PITCH (with tune = semi, fine)
+        oLoop, oLStart, oLEnd, oLXfade, oLMode,                // LOOP
+        oGran, oGSize, oGDens, oGPos, oGPosRand, oGPitch, oGOver, oGSpread,   // GRANULAR
+        numOscParams
+    };
+    static constexpr int oscParam (int osc, int k) noexcept { return pOscA + juce::jlimit (0, 1, osc) * numOscParams + k; }
+    static constexpr int pMPan = pOscA + 2 * numOscParams, pMix = pMPan + 1, pTranspose = pMPan + 2;
+    /** The knobs a page (tab) of an oscillator shows: "WAVE", "UNISON", "HARM", "FM", "WS" (a wavetable),
+        "SAMPLE", "PLAYBACK", "PITCH", "LOOP", "GRANULAR" (a sample). */
+    std::vector<int> pageParams (int osc, const juce::String& page) const;
+    bool isSampleOsc (int osc) const noexcept { return getChoice (oscParam (osc, oType)) == 1; }
+    /** Knobs the dice never touch: anything that changes the tuning. */
+    static bool isTuning (const juce::String& paramId);
+
+    /** A wavetable from a file: it becomes the "User" table, on oscillator A (or B). */
+    bool loadWavetable (const juce::File&, int osc, juce::String& error);
+    /** A table from Keysmith's banks ("Instruments/Cello") on oscillator A (or B). */
+    bool loadBankTable (const juce::String& ref, int osc);
+    /** What an oscillator's "User" slot holds: a bank reference or a file path ("" = none). */
+    juce::String userRef (int osc) const { return oscRef[(size_t) juce::jlimit (0, 1, osc)]; }
+    /** The name of the table an oscillator plays. */
+    juce::String tableName (int osc) const;
+    juce::File getUserFile() const { return userFile; }
+    /** For the display: the table an oscillator plays and where it is in it (0..1, with modulation). */
+    const Wavetable* tableFor (int osc) const noexcept;
+    float livePosition (int osc) const noexcept { return livePos[(size_t) juce::jlimit (0, 1, osc)].load (std::memory_order_relaxed); }
+
+    // the sample side of an oscillator
+    bool loadSample (const juce::File&, int osc, juce::String& error);
+    bool loadBankSample (const juce::String& ref, int osc);
+    juce::String sampleRef (int osc) const { return smpRef[(size_t) juce::jlimit (0, 1, osc)]; }
+    const SamplerBlock::Sample* sampleFor (int osc) const noexcept;
+    /** Where the newest voice is in an oscillator's sample (0..1), for the display; -1 = none. */
+    float samplePlayhead (int osc) const noexcept { return liveHead[(size_t) juce::jlimit (0, 1, osc)].load (std::memory_order_relaxed); }
+
+    juce::ValueTree toState() const override;
+    void fromState (const juce::ValueTree&) override;
+    using Block::formatValue;
+    juce::String formatValue (int i, float v) const override;
+    void randomise (juce::Random&, float amount) override;
+
+protected:
+    void startVoice (Voice&, bool fresh) noexcept override;
+    void renderVoice (Voice&, int index, float* l, float* r, int n) noexcept override;
+    void beginChunk() noexcept override;
+    bool holdsThroughNoteOff() const noexcept override;
+
+private:
+    static constexpr int maxUnison = 8, maxGrains = 24;
+    struct Grain { double pos = 0, step = 0; int age = 0, length = 0; float panL = 1, panR = 1; bool on = false; };
+    struct Osc
+    {
+        std::array<double, maxUnison> phase {}, slave {}, fmPhase {};
+        std::array<float, maxUnison> fmLast {};
+        // the sample side
+        std::array<double, maxUnison> head {};
+        std::array<int, maxUnison> dir {};
+        double gHead = 0, untilGrain = 0;
+        bool done = false;
+        std::array<Grain, maxGrains> grains {};
+        float fz1[2] {}, fz2[2] {};   // the formant peak
+    };
+    std::array<std::array<Osc, 2>, maxVoices> osc {};
+    std::array<double, maxVoices> subPhase {};
+    std::atomic<const Wavetable*> user { nullptr };
+    std::array<std::atomic<const Wavetable*>, 2> userOsc { nullptr, nullptr };   // each oscillator's own (banks)
+    std::array<juce::String, 2> oscRef, smpRef;
+    std::vector<std::shared_ptr<const Wavetable>> keep;   // every table ever loaded stays alive
+    std::array<std::atomic<const SamplerBlock::Sample*>, 2> smpLoaded { nullptr, nullptr };
+    std::vector<std::shared_ptr<const SamplerBlock::Sample>> keepSmp;
+    juce::File userFile;
+    std::array<std::atomic<float>, 2> livePos {}, liveHead {};
+    std::array<double, 2> lastHead {};   // Continue: where the last note was in each sample
+    // knobs, read once per chunk
+    struct OscKnobs
+    {
+        bool sample = false;
+        const Wavetable* table = nullptr;
+        const SamplerBlock::Sample* smp = nullptr;
+        float pos = 0, semi = 0, fine = 0, det = 0, level = 0, pan = 0;
+        int uni = 1;
+        float phase = 0, phaseRand = 1, sym = 0, sync = 0, uspread = 0.75f, width = 1, blend = 0.5f;
+        float hAmt = 0, hTilt = 0, hOdd = 0, hDecay = 0.5f; int hCount = 8;
+        std::array<float, 33> hGain {};
+        float fm = 0, fmRatio = 2, fmFb = 0; int fmShape = 0;
+        int ws = 0; float wsDrive = 0, wsBias = 0, wsSym = 0, wsMix = 1;
+        float sStart = 0, sEnd = 1, root = 60, gain = 1; bool rev = false;
+        int mode = 2, dir = 0, retrig = 0; float speed = 1, sRand = 0;
+        float track = 1, pEnv = 0, stretch = 0, formant = 0;
+        bool loop = true; float lStart = 0, lEnd = 1, lXfade = 0; int lMode = 0;
+        bool gran = false; float gSize = 0.09f, gDens = 4, gPos = 0, gPosRand = 0, gPitch = 0, gOver = 0.5f, gSpread = 0.5f;
+    };
+    std::array<OscKnobs, 2> k {};
+    float subLevel = 0, noiseLevel = 0, posEnv = 0, mixAB = 0, mPan = 0, transpose = 0;
+    int subOct = 1;
+    void renderWave (Voice&, int vi, int o, float* l, float* r, int m) noexcept;
+    void renderSample (Voice&, int vi, int o, float* l, float* r, int m) noexcept;
 };
 
 } // namespace rig
